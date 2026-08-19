@@ -5,7 +5,7 @@ import autoTable from 'jspdf-autotable';
 import { 
   Building2, User, KeyRound, Phone, LogOut, 
   PiggyBank, TrendingUp, Briefcase, PlusCircle, 
-  Calculator, CheckCircle, XCircle, Clock, ShieldCheck, Download, AlertTriangle, Users, Trash2, Plus
+  Calculator, CheckCircle, XCircle, Clock, ShieldCheck, Download, Users, Trash2, Plus, Menu, X
 } from 'lucide-react';
 
 export default function App() {
@@ -13,6 +13,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [authMode, setAuthMode] = useState('login');
   const [activeTab, setActiveTab] = useState('overview'); // overview, loans, guarantors, admin
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Auth Form State
   const [email, setEmail] = useState('');
@@ -75,7 +76,6 @@ export default function App() {
 
   const fetchUserData = async (userId) => {
     setLoading(true);
-    // Profile
     const { data: profileData } = await supabase
       .from('profiles')
       .select('*, companies(name)')
@@ -91,7 +91,6 @@ export default function App() {
       }
     }
 
-    // Savings
     const { data: savingsData } = await supabase
       .from('savings_ledger')
       .select('*')
@@ -99,7 +98,6 @@ export default function App() {
       .order('created_at', { ascending: false });
     if (savingsData) setSavings(savingsData);
 
-    // Loans
     const { data: loanData } = await supabase
       .from('loans')
       .select('*, loan_guarantors(*, profiles:guarantor_id(full_name, member_number))')
@@ -194,7 +192,7 @@ export default function App() {
   const calculatedTotal = Number(loanPrincipal) + calculatedInterest;
   const monthlyInstallment = calculatedTotal / loanMonths;
 
-  // Multi-Guarantor Add / Remove Handlers
+  // Dynamic Guarantor Row Management
   const addGuarantorRow = () => {
     setGuarantorList([...guarantorList, { guarantorId: '', amount: '' }]);
   };
@@ -218,12 +216,11 @@ export default function App() {
     setMessage({ text: '', type: '' });
 
     if (loanPrincipal > loanLimit) {
-      setMessage({ text: `Loan exceeds maximum limit of KES ${loanLimit.toLocaleString()} (3x Savings).`, type: 'error' });
+      setMessage({ text: `Loan exceeds limit of KES ${loanLimit.toLocaleString()} (3x Savings).`, type: 'error' });
       setLoading(false);
       return;
     }
 
-    // Validate guarantors
     const validGuarantors = guarantorList.filter((g) => g.guarantorId && Number(g.amount) > 0);
     if (validGuarantors.length === 0) {
       setMessage({ text: 'Please add at least 1 guarantor with an assigned amount.', type: 'error' });
@@ -231,15 +228,13 @@ export default function App() {
       return;
     }
 
-    // Check for duplicate selected guarantors
     const selectedIds = validGuarantors.map((g) => g.guarantorId);
     if (new Set(selectedIds).size !== selectedIds.length) {
-      setMessage({ text: 'You selected the same guarantor multiple times. Please select unique members.', type: 'error' });
+      setMessage({ text: 'You cannot select the same guarantor multiple times.', type: 'error' });
       setLoading(false);
       return;
     }
 
-    // Step 1: Create Loan
     const { data: loanData, error: loanError } = await supabase.from('loans').insert([
       {
         member_id: session.user.id,
@@ -258,7 +253,6 @@ export default function App() {
       return;
     }
 
-    // Step 2: Insert All Dynamic Guarantors (Up to 10+)
     const guarantorsToInsert = validGuarantors.map((g) => ({
       loan_id: loanData.id,
       guarantor_id: g.guarantorId,
@@ -268,7 +262,7 @@ export default function App() {
 
     await supabase.from('loan_guarantors').insert(guarantorsToInsert);
 
-    setMessage({ text: `Loan submitted with ${validGuarantors.length} guarantors assigned!`, type: 'success' });
+    setMessage({ text: `Loan submitted successfully with ${validGuarantors.length} guarantors!`, type: 'success' });
     setGuarantorList([{ guarantorId: '', amount: '' }]);
     fetchUserData(session.user.id);
     setLoading(false);
@@ -323,11 +317,9 @@ export default function App() {
     }
   };
 
-  // PDF Generator Function
   const generatePDFStatement = (loan = null) => {
     try {
       const doc = new jsPDF();
-      
       doc.setFillColor(6, 78, 59);
       doc.rect(0, 0, 210, 35, 'F');
       doc.setTextColor(255, 255, 255);
@@ -403,9 +395,9 @@ export default function App() {
   const pendingGuaranteesCount = guarantorRequests.filter((g) => g.status === 'pending').length;
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100 font-sans pb-12">
-      {/* Header */}
-      <header className="border-b border-slate-800 bg-slate-950/90 backdrop-blur px-4 sm:px-6 py-4 flex justify-between items-center sticky top-0 z-50">
+    <div className="min-h-screen bg-slate-900 text-slate-100 font-sans pb-20 sm:pb-12">
+      {/* Top Header */}
+      <header className="border-b border-slate-800 bg-slate-950/95 backdrop-blur px-4 sm:px-6 py-3.5 flex justify-between items-center sticky top-0 z-50">
         <div className="flex items-center gap-3">
           <div className="bg-emerald-600 p-2 rounded-xl shadow-lg shadow-emerald-900/30">
             <Building2 className="w-5 h-5 text-white" />
@@ -417,58 +409,131 @@ export default function App() {
         </div>
 
         {session && (
-          <button
-            onClick={() => supabase.auth.signOut()}
-            className="flex items-center gap-1.5 bg-slate-800 hover:bg-rose-900/40 text-slate-300 hover:text-rose-300 px-3 py-1.5 rounded-lg text-xs font-semibold transition border border-slate-700 cursor-pointer"
-          >
-            <LogOut className="w-3.5 h-3.5" /> Sign Out
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Desktop Navigation */}
+            <div className="hidden md:flex items-center gap-1.5 bg-slate-900 p-1 rounded-xl border border-slate-800">
+              <button
+                onClick={() => setActiveTab('overview')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition ${
+                  activeTab === 'overview' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Overview
+              </button>
+              <button
+                onClick={() => setActiveTab('loans')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition ${
+                  activeTab === 'loans' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Loans & Limits
+              </button>
+              <button
+                onClick={() => setActiveTab('guarantors')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
+                  activeTab === 'guarantors' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Guarantor Desk
+                {pendingGuaranteesCount > 0 && (
+                  <span className="bg-rose-500 text-white text-[10px] px-1.5 rounded-full font-bold">
+                    {pendingGuaranteesCount}
+                  </span>
+                )}
+              </button>
+              {(profile?.role === 'admin' || profile?.role === 'treasurer') && (
+                <button
+                  onClick={() => setActiveTab('admin')}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1 ${
+                    activeTab === 'admin' ? 'bg-amber-600 text-white' : 'text-amber-400 hover:text-white'
+                  }`}
+                >
+                  <ShieldCheck className="w-3.5 h-3.5" /> Admin
+                </button>
+              )}
+            </div>
+
+            <button
+              onClick={() => supabase.auth.signOut()}
+              className="hidden md:flex items-center gap-1.5 bg-slate-800 hover:bg-rose-900/40 text-slate-300 hover:text-rose-300 px-3 py-1.5 rounded-lg text-xs font-semibold transition border border-slate-700"
+            >
+              <LogOut className="w-3.5 h-3.5" /> Exit
+            </button>
+
+            {/* Mobile Extended Menu Button */}
+            <button
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="md:hidden flex items-center justify-center p-2 rounded-xl bg-slate-900 border border-slate-700 text-white hover:bg-slate-800 transition"
+              aria-label="Toggle Menu"
+            >
+              {mobileMenuOpen ? <X className="w-5 h-5 text-rose-400" /> : <Menu className="w-5 h-5 text-emerald-400" />}
+            </button>
+          </div>
         )}
       </header>
 
-      {/* Responsive Mobile & Desktop Tab Bar */}
-      {session && (
-        <div className="bg-slate-950 border-b border-slate-800 sticky top-[65px] z-40 px-4 py-2.5 overflow-x-auto">
-          <div className="flex gap-2 min-w-max mx-auto max-w-6xl">
-            <button
-              onClick={() => setActiveTab('overview')}
-              className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                activeTab === 'overview' ? 'bg-emerald-600 text-white shadow-md' : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
-              }`}
-            >
-              <PiggyBank className="w-3.5 h-3.5" /> Overview
-            </button>
-            <button
-              onClick={() => setActiveTab('loans')}
-              className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                activeTab === 'loans' ? 'bg-emerald-600 text-white shadow-md' : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
-              }`}
-            >
-              <Calculator className="w-3.5 h-3.5" /> Loans & Limits
-            </button>
-            <button
-              onClick={() => setActiveTab('guarantors')}
-              className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer relative ${
-                activeTab === 'guarantors' ? 'bg-emerald-600 text-white shadow-md' : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
-              }`}
-            >
-              <Users className="w-3.5 h-3.5" /> Guarantor Desk
-              {pendingGuaranteesCount > 0 && (
-                <span className="bg-rose-500 text-white text-[10px] px-1.5 py-0.2 rounded-full font-extrabold animate-pulse">
-                  {pendingGuaranteesCount}
-                </span>
-              )}
-            </button>
-            {(profile?.role === 'admin' || profile?.role === 'treasurer') && (
-              <button
-                onClick={() => setActiveTab('admin')}
-                className={`px-4 py-2 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                  activeTab === 'admin' ? 'bg-amber-600 text-white shadow-md' : 'bg-slate-900 text-amber-400 hover:text-white border border-amber-900/50'
-                }`}
-              >
-                <ShieldCheck className="w-3.5 h-3.5" /> Admin Panel
-              </button>
+      {/* Mobile Extended Dropdown Drawer */}
+      {session && mobileMenuOpen && (
+        <div className="md:hidden bg-slate-950 border-b border-slate-800 px-4 py-4 space-y-2 sticky top-[57px] z-40 shadow-2xl animate-in slide-in-from-top-2">
+          <div className="pb-2 border-b border-slate-800 flex justify-between items-center text-xs text-slate-400">
+            <span>Signed in as: <strong className="text-slate-200">{profile?.full_name}</strong></span>
+            <span className="bg-emerald-950 text-emerald-300 px-2 py-0.5 rounded border border-emerald-800 text-[10px] uppercase font-bold">
+              {profile?.role || 'Member'}
+            </span>
+          </div>
+
+          <button
+            onClick={() => { setActiveTab('overview'); setMobileMenuOpen(false); }}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition ${
+              activeTab === 'overview' ? 'bg-emerald-600 text-white' : 'bg-slate-900/50 text-slate-300'
+            }`}
+          >
+            <PiggyBank className="w-4 h-4" /> Overview Dashboard
+          </button>
+
+          <button
+            onClick={() => { setActiveTab('loans'); setMobileMenuOpen(false); }}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition ${
+              activeTab === 'loans' ? 'bg-emerald-600 text-white' : 'bg-slate-900/50 text-slate-300'
+            }`}
+          >
+            <Calculator className="w-4 h-4" /> Loans, Limits & Multi-Guarantor
+          </button>
+
+          <button
+            onClick={() => { setActiveTab('guarantors'); setMobileMenuOpen(false); }}
+            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-semibold transition ${
+              activeTab === 'guarantors' ? 'bg-emerald-600 text-white' : 'bg-slate-900/50 text-slate-300'
+            }`}
+          >
+            <span className="flex items-center gap-3">
+              <Users className="w-4 h-4" /> Guarantor Requests Desk
+            </span>
+            {pendingGuaranteesCount > 0 && (
+              <span className="bg-rose-500 text-white text-xs px-2 py-0.5 rounded-full font-bold">
+                {pendingGuaranteesCount} new
+              </span>
             )}
+          </button>
+
+          {(profile?.role === 'admin' || profile?.role === 'treasurer') && (
+            <button
+              onClick={() => { setActiveTab('admin'); setMobileMenuOpen(false); }}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition ${
+                activeTab === 'admin' ? 'bg-amber-600 text-white' : 'bg-slate-900/50 text-amber-300'
+              }`}
+            >
+              <ShieldCheck className="w-4 h-4" /> Admin Management Panel
+            </button>
+          )}
+
+          <div className="pt-2 border-t border-slate-800">
+            <button
+              onClick={() => supabase.auth.signOut()}
+              className="w-full flex items-center justify-center gap-2 bg-rose-950/40 border border-rose-900/50 text-rose-300 hover:bg-rose-900/60 py-2.5 rounded-xl text-sm font-semibold transition"
+            >
+              <LogOut className="w-4 h-4" /> Sign Out of Account
+            </button>
           </div>
         </div>
       )}
@@ -595,7 +660,7 @@ export default function App() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2.5 rounded-lg text-sm transition mt-2 shadow-lg shadow-emerald-950/50 disabled:opacity-50 cursor-pointer"
+                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2.5 rounded-lg text-sm transition mt-2 shadow-lg shadow-emerald-950/50 disabled:opacity-50"
               >
                 {loading ? 'Processing...' : authMode === 'login' ? 'Sign In' : 'Complete Registration'}
               </button>
@@ -605,14 +670,14 @@ export default function App() {
               {authMode === 'login' ? (
                 <>
                   New member?{' '}
-                  <button onClick={() => setAuthMode('register')} className="text-emerald-400 hover:underline font-semibold cursor-pointer">
+                  <button onClick={() => setAuthMode('register')} className="text-emerald-400 hover:underline font-semibold">
                     Register Account
                   </button>
                 </>
               ) : (
                 <>
                   Already registered?{' '}
-                  <button onClick={() => setAuthMode('login')} className="text-emerald-400 hover:underline font-semibold cursor-pointer">
+                  <button onClick={() => setAuthMode('login')} className="text-emerald-400 hover:underline font-semibold">
                     Sign In
                   </button>
                 </>
@@ -622,7 +687,7 @@ export default function App() {
         ) : (
           /* AUTHENTICATED TABS */
           <div className="space-y-6">
-            {/* Header Member Summary */}
+            {/* Header Member Card */}
             <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 sm:p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
               <div>
                 <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-emerald-950 border border-emerald-800 text-emerald-300">
@@ -719,10 +784,9 @@ export default function App() {
               </>
             )}
 
-            {/* TAB 2: LOANS & MULTI-GUARANTOR APPLICATION (1 to 10+ Guarantors) */}
+            {/* TAB 2: LOANS & MULTI-GUARANTOR APPLICATION */}
             {activeTab === 'loans' && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Calculator & Form */}
                 <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
                   <div className="flex items-center gap-2 mb-4">
                     <Calculator className="w-5 h-5 text-emerald-400" />
@@ -777,7 +841,7 @@ export default function App() {
                         <button
                           type="button"
                           onClick={addGuarantorRow}
-                          className="flex items-center gap-1 bg-emerald-950 border border-emerald-800 text-emerald-300 text-xs px-2.5 py-1 rounded-lg hover:bg-emerald-900 transition cursor-pointer"
+                          className="flex items-center gap-1 bg-emerald-950 border border-emerald-800 text-emerald-300 text-xs px-2.5 py-1 rounded-lg hover:bg-emerald-900 transition"
                         >
                           <Plus className="w-3.5 h-3.5" /> Add Guarantor
                         </button>
@@ -818,7 +882,7 @@ export default function App() {
                             <button
                               type="button"
                               onClick={() => removeGuarantorRow(index)}
-                              className="self-end sm:self-center mt-1 sm:mt-5 text-rose-400 hover:text-rose-300 p-1.5 rounded cursor-pointer"
+                              className="self-end sm:self-center mt-1 sm:mt-5 text-rose-400 hover:text-rose-300 p-1.5 rounded"
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
@@ -853,14 +917,14 @@ export default function App() {
                     <button
                       type="submit"
                       disabled={loading}
-                      className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2.5 rounded-lg text-sm transition cursor-pointer"
+                      className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2.5 rounded-lg text-sm transition"
                     >
                       Submit for Guarantor Sign-off
                     </button>
                   </form>
                 </div>
 
-                {/* Member's Existing Loans & PDF Actions */}
+                {/* Member's Existing Loans */}
                 <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
                   <h3 className="text-base sm:text-lg font-bold text-white mb-4">My Loan Applications</h3>
                   {loans.length === 0 ? (
@@ -886,13 +950,12 @@ export default function App() {
                             </div>
                             <button
                               onClick={() => generatePDFStatement(l)}
-                              className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-emerald-400 px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-700 transition cursor-pointer"
+                              className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-emerald-400 px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-700 transition"
                             >
                               <Download className="w-3.5 h-3.5" /> PDF Schedule
                             </button>
                           </div>
 
-                          {/* Guarantor list for this loan */}
                           {l.loan_guarantors && l.loan_guarantors.length > 0 && (
                             <div className="border-t border-slate-800 pt-2 text-xs">
                               <p className="text-[11px] font-semibold text-slate-400 mb-1">Guarantor Approvals ({l.loan_guarantors.length}):</p>
@@ -1096,6 +1159,56 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* Persistent Mobile Bottom Navigation Bar */}
+      {session && (
+        <div className="md:hidden fixed bottom-0 left-0 right-0 bg-slate-950/95 backdrop-blur border-t border-slate-800 flex justify-around items-center py-2 px-2 z-50">
+          <button
+            onClick={() => setActiveTab('overview')}
+            className={`flex flex-col items-center gap-1 text-[10px] font-semibold py-1 px-3 rounded-lg transition ${
+              activeTab === 'overview' ? 'text-emerald-400' : 'text-slate-400'
+            }`}
+          >
+            <PiggyBank className="w-5 h-5" />
+            <span>Overview</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('loans')}
+            className={`flex flex-col items-center gap-1 text-[10px] font-semibold py-1 px-3 rounded-lg transition ${
+              activeTab === 'loans' ? 'text-emerald-400' : 'text-slate-400'
+            }`}
+          >
+            <Calculator className="w-5 h-5" />
+            <span>Loans</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('guarantors')}
+            className={`flex flex-col items-center gap-1 text-[10px] font-semibold py-1 px-3 rounded-lg relative transition ${
+              activeTab === 'guarantors' ? 'text-emerald-400' : 'text-slate-400'
+            }`}
+          >
+            <Users className="w-5 h-5" />
+            <span>Guarantors</span>
+            {pendingGuaranteesCount > 0 && (
+              <span className="absolute top-0 right-2 w-2 h-2 bg-rose-500 rounded-full animate-ping" />
+            )}
+          </button>
+
+          {(profile?.role === 'admin' || profile?.role === 'treasurer') && (
+            <button
+              onClick={() => setActiveTab('admin')}
+              className={`flex flex-col items-center gap-1 text-[10px] font-semibold py-1 px-3 rounded-lg transition ${
+                activeTab === 'admin' ? 'text-amber-400' : 'text-slate-400'
+              }`}
+            >
+              <ShieldCheck className="w-5 h-5" />
+              <span>Admin</span>
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

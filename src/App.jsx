@@ -10,7 +10,7 @@ import {
   Users, Trash2, Plus, Menu, X, UploadCloud, FileSpreadsheet, 
   ArrowDownRight, ArrowUpRight, HeartHandshake, Bell, Smartphone, 
   Award, ShieldAlert, FileText, Send, History, CheckSquare, Paperclip, FileCheck, HelpCircle,
-  Eye, EyeOff, FolderDown, FileArchive
+  Eye, EyeOff, FolderDown, FileArchive, Shield
 } from 'lucide-react';
 
 export default function App() {
@@ -18,7 +18,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [authMode, setAuthMode] = useState('login'); // login, register, forgot, reset
   const [showPassword, setShowPassword] = useState(false);
-  const [activeTab, setActiveTab] = useState('overview'); // overview, loans, guarantors, beneficiaries, documents, mpesa, admin
+  const [activeTab, setActiveTab] = useState('overview'); // overview, loans, guarantors, documents, beneficiaries, mpesa, admin
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Auth State
@@ -50,12 +50,14 @@ export default function App() {
   const [auditLogs, setAuditLogs] = useState([]);
   const [message, setMessage] = useState({ text: '', type: '' });
 
-  // Loan Application State
+  // Loan Application & Terms Modal State
   const [loanProduct, setLoanProduct] = useState('main_loan');
   const [loanPrincipal, setLoanPrincipal] = useState(20000);
   const [loanMonths, setLoanMonths] = useState(12);
   const [interestRate, setInterestRate] = useState(1.0);
   const [guarantorList, setGuarantorList] = useState([{ guarantorId: '', amount: '' }]);
+  const [showTermsModal, setShowTermsModal] = useState(false);
+  const [termsAgreed, setTermsAgreed] = useState(false);
 
   // Document Upload Form State (Admin)
   const [docTitle, setDocTitle] = useState('');
@@ -88,10 +90,6 @@ export default function App() {
 
   // Admin Hub State
   const [targetMemberId, setTargetMemberId] = useState('');
-  const [entryCategory, setEntryCategory] = useState('savings');
-  const [depositAmount, setDepositAmount] = useState('');
-  const [depositType, setDepositType] = useState('monthly_contribution');
-  const [depositRef, setDepositRef] = useState('');
   const [batchPreview, setBatchPreview] = useState([]);
   const [batchMonth, setBatchMonth] = useState('AUG-2026');
   const [newNoticeTitle, setNewNoticeTitle] = useState('');
@@ -389,7 +387,6 @@ export default function App() {
     setLoading(false);
   };
 
-  // --- UPLOAD OFFICIAL SACCO DOCUMENT (LEADERSHIP) ---
   const handleUploadSaccoDocument = async (e) => {
     e.preventDefault();
     if (!docFile) {
@@ -481,23 +478,38 @@ export default function App() {
     setGuarantorList(updated);
   };
 
-  const handleApplyLoan = async (e) => {
+  // Step 1: Pre-validation & Opening Terms & Conditions Modal
+  const handleInitiateLoan = (e) => {
     e.preventDefault();
-    setLoading(true);
     setMessage({ text: '', type: '' });
 
     if (loanPrincipal > maxLimitForSelectedProduct) {
       setMessage({ text: `Loan exceeds maximum product limit of KES ${maxLimitForSelectedProduct.toLocaleString()}.`, type: 'error' });
-      setLoading(false);
       return;
     }
 
     const validGuarantors = guarantorList.filter((g) => g.guarantorId && Number(g.amount) > 0);
     if (loanProduct !== 'monthly_shylock' && validGuarantors.length === 0) {
       setMessage({ text: 'Please assign at least 1 guarantor for this loan product.', type: 'error' });
-      setLoading(false);
       return;
     }
+
+    // Open Terms and Conditions Modal
+    setTermsAgreed(false);
+    setShowTermsModal(true);
+  };
+
+  // Step 2: Final Loan Submission after Terms Acceptance
+  const handleConfirmLoanSubmission = async () => {
+    if (!termsAgreed) {
+      alert('Please check the box agreeing to the KEWA SACCO Loan Terms & Conditions.');
+      return;
+    }
+
+    setShowTermsModal(false);
+    setLoading(true);
+
+    const validGuarantors = guarantorList.filter((g) => g.guarantorId && Number(g.amount) > 0);
 
     const { data: loanData, error: loanError } = await supabase.from('loans').insert([
       {
@@ -531,9 +543,9 @@ export default function App() {
       await supabase.from('loan_guarantors').insert(guarantorsToInsert);
     }
 
-    logAuditAction('LOAN_APPLICATION_SUBMITTED', `${loanProduct.toUpperCase()} applied: KES ${loanPrincipal.toLocaleString()}`);
+    logAuditAction('LOAN_APPLICATION_SUBMITTED', `${loanProduct.toUpperCase()} applied: KES ${loanPrincipal.toLocaleString()} (Terms Accepted)`);
 
-    setMessage({ text: `Loan request for ${loanProduct.replace('_', ' ').toUpperCase()} submitted for 3-Signatory sign-off!`, type: 'success' });
+    setMessage({ text: `Loan request for ${loanProduct.replace('_', ' ').toUpperCase()} submitted with digital terms acceptance!`, type: 'success' });
     setGuarantorList([{ guarantorId: '', amount: '' }]);
     fetchUserData(session.user.id);
     setLoading(false);
@@ -1632,7 +1644,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 2: LOANS */}
+            {/* TAB 2: LOANS & PRODUCT SELECTION */}
             {activeTab === 'loans' && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
@@ -1695,7 +1707,7 @@ export default function App() {
                     </button>
                   </div>
 
-                  <form onSubmit={handleApplyLoan} className="space-y-4">
+                  <form onSubmit={handleInitiateLoan} className="space-y-4">
                     <div>
                       <div className="flex justify-between items-center mb-1">
                         <label className="text-xs font-semibold text-slate-300">Principal Amount</label>
@@ -1814,7 +1826,7 @@ export default function App() {
                       disabled={loading}
                       className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2.5 rounded-lg text-sm transition cursor-pointer"
                     >
-                      Submit for 3-Signatory Authorization
+                      Review Terms & Continue Application
                     </button>
                   </form>
                 </div>
@@ -1933,18 +1945,16 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 4: OFFICIAL REPORTS & AGM DOCUMENTS LIBRARY (FOR ALL MEMBERS) */}
+            {/* TAB 4: OFFICIAL REPORTS & AGM DOCUMENTS LIBRARY */}
             {activeTab === 'documents' && (
               <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-8 space-y-6">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-                  <div>
-                    <h3 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
-                      <FolderDown className="w-6 h-6 text-emerald-400" /> Official Reports & AGM Booklets
-                    </h3>
-                    <p className="text-xs text-slate-400 mt-1">
-                      Access certified annual audit reports, AGM booklets, and society policies digitally without paperwork.
-                    </p>
-                  </div>
+                <div>
+                  <h3 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
+                    <FolderDown className="w-6 h-6 text-emerald-400" /> Official Reports & AGM Booklets
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Access certified annual audit reports, AGM booklets, and society policies digitally.
+                  </p>
                 </div>
 
                 {saccoDocs.length === 0 ? (
@@ -1971,7 +1981,7 @@ export default function App() {
 
                           <h4 className="text-base font-bold text-white mt-2 leading-snug">{doc.title}</h4>
                           <p className="text-xs text-slate-400 mt-1 flex items-center gap-2">
-                            <span>File Size: {doc.file_size || 'PDF Document'}</span> • 
+                            <span>File Size: {doc.file_size || 'PDF'}</span> • 
                             <span>Published: {new Date(doc.created_at).toLocaleDateString()}</span>
                           </p>
                         </div>
@@ -2294,7 +2304,7 @@ export default function App() {
                     <h3 className="text-base sm:text-lg font-bold text-white">Publish Official Report / Audit Booklet</h3>
                   </div>
                   <p className="text-xs text-slate-400 mb-4">
-                    Upload verified PDF documents (Audit Reports, AGM Booklets, By-laws). Members will be able to read and download them instantly on their phones.
+                    Upload verified PDF documents (Audit Reports, AGM Booklets, By-laws). Members will be able to read and download them instantly.
                   </p>
 
                   <form onSubmit={handleUploadSaccoDocument} className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -2386,7 +2396,7 @@ export default function App() {
                         type="file"
                         accept=".csv"
                         onChange={handleCSVUpload}
-                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-300 file:mr-3 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-xs file:bg-amber-600 file:text-white cursor-pointer"
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-300 file:mr-3 file:py-1 file:px-2.5 file:rounded-md file:border-0 file:text-xs file:bg-amber-600 file:text-white cursor-pointer"
                       />
                     </div>
                   </div>
@@ -2668,6 +2678,95 @@ export default function App() {
           </>
         )}
       </main>
+
+      {/* LOAN TERMS & CONDITIONS MODAL */}
+      {showTermsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-slate-950 border border-emerald-900/60 rounded-2xl max-w-lg w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+            {/* Modal Header */}
+            <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/80">
+              <div className="flex items-center gap-2">
+                <Shield className="w-5 h-5 text-emerald-400" />
+                <h3 className="font-bold text-white text-base">KEWA SACCO Loan Terms & Conditions</h3>
+              </div>
+              <button 
+                onClick={() => setShowTermsModal(false)} 
+                className="text-slate-400 hover:text-white p-1"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Terms Content Body */}
+            <div className="p-5 overflow-y-auto space-y-3.5 text-xs text-slate-300 leading-relaxed">
+              <div className="p-3 bg-emerald-950/40 border border-emerald-800/40 rounded-xl space-y-1">
+                <p className="font-bold text-emerald-300 text-sm capitalize">
+                  Application Summary: {loanProduct.replace('_', ' ').toUpperCase()}
+                </p>
+                <div className="flex justify-between text-slate-300">
+                  <span>Principal: <strong>KES {Number(loanPrincipal).toLocaleString()}</strong></span>
+                  <span>Duration: <strong>{loanMonths} Month(s)</strong></span>
+                  <span>Payable: <strong>KES {calculatedTotal.toLocaleString()}</strong></span>
+                </div>
+              </div>
+
+              <h4 className="font-bold text-white text-xs uppercase tracking-wide">1. Payroll Deduction Authorization</h4>
+              <p>
+                By submitting this loan request, I irrevocably authorize the payroll department of my employer (Kenya Builders & Concrete Co. Ltd, Warren Concrete Ltd, or Eurocon Tiles Ltd) to deduct the agreed monthly installment of <strong>KES {monthlyInstallment.toFixed(2)}</strong> directly from my monthly salary checkoff until the loan is cleared in full.
+              </p>
+
+              <h4 className="font-bold text-white text-xs uppercase tracking-wide">2. Interest Rate & Repayment Schedules</h4>
+              <p>
+                Interest on the loan facility is charged at the approved rate of <strong>{interestRate}% per month</strong>. Default or late repayment will attract penal interest under the Co-operative Societies Act guidelines.
+              </p>
+
+              <h4 className="font-bold text-white text-xs uppercase tracking-wide">3. Guarantor Liability & Recovery</h4>
+              <p>
+                In the event of default or cessation of employment, my accumulated shares and deposits will first be liquidated to offset the running balance. Any remaining deficit will be recovered proportionately from my assigned guarantors’ savings balances without prejudice[cite: 1].
+              </p>
+
+              <h4 className="font-bold text-white text-xs uppercase tracking-wide">4. 3-Signatory Approval Quorum</h4>
+              <p>
+                No funds will be disbursed until all assigned guarantors sign off digitally and the application is formally approved by the <strong>Chairperson</strong>, <strong>Treasurer</strong>, and <strong>Assistant Chair</strong>[cite: 1].
+              </p>
+            </div>
+
+            {/* Modal Footer / Acceptance Checkbox */}
+            <div className="p-4 border-t border-slate-800 bg-slate-900/60 space-y-3">
+              <div className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  id="agreeTerms"
+                  checked={termsAgreed}
+                  onChange={(e) => setTermsAgreed(e.target.checked)}
+                  className="mt-0.5 accent-emerald-500 w-4 h-4 rounded cursor-pointer"
+                />
+                <label htmlFor="agreeTerms" className="text-xs text-slate-300 font-medium cursor-pointer">
+                  I have read, understood, and accept all the terms, policies, and payroll recovery conditions above[cite: 1].
+                </label>
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowTermsModal(false)}
+                  className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold py-2.5 rounded-xl text-xs transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={!termsAgreed || loading}
+                  onClick={handleConfirmLoanSubmission}
+                  className="flex-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-bold py-2.5 rounded-xl text-xs transition cursor-pointer shadow-lg flex items-center justify-center gap-1.5"
+                >
+                  <CheckCircle className="w-4 h-4" /> Confirm & Submit Loan
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Persistent Bottom Mobile Nav */}
       {session && (

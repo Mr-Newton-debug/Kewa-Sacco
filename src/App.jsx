@@ -6,17 +6,20 @@ import Papa from 'papaparse';
 import { 
   Building2, User, KeyRound, Phone, LogOut, 
   PiggyBank, TrendingUp, Briefcase, PlusCircle, 
-  Calculator, CheckCircle, XCircle, Clock, ShieldCheck, Download, Users, Trash2, Plus, Menu, X, UploadCloud, FileSpreadsheet, ArrowDownRight, ArrowUpRight
+  Calculator, CheckCircle, XCircle, Clock, ShieldCheck, Download, 
+  Users, Trash2, Plus, Menu, X, UploadCloud, FileSpreadsheet, 
+  ArrowDownRight, ArrowUpRight, HeartHandshake, Bell, Smartphone, 
+  Award, ShieldAlert, FileText, Send
 } from 'lucide-react';
 
 export default function App() {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(false);
   const [authMode, setAuthMode] = useState('login');
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState('overview'); // overview, loans, guarantors, beneficiaries, mpesa, admin
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Auth Form State
+  // Auth State
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
@@ -25,7 +28,7 @@ export default function App() {
   const [phone, setPhone] = useState('');
   const [companyId, setCompanyId] = useState('');
 
-  // Data State
+  // Core Data State
   const [companies, setCompanies] = useState([]);
   const [profile, setProfile] = useState(null);
   const [savings, setSavings] = useState([]);
@@ -33,7 +36,12 @@ export default function App() {
   const [repayments, setRepayments] = useState([]);
   const [allMembers, setAllMembers] = useState([]);
   const [guarantorRequests, setGuarantorRequests] = useState([]);
+  const [myGuaranteesCommitted, setMyGuaranteesCommitted] = useState([]);
+  const [beneficiaries, setBeneficiaries] = useState([]);
+  const [announcements, setAnnouncements] = useState([]);
+  const [welfareClaims, setWelfareClaims] = useState([]);
   const [allPendingLoans, setAllPendingLoans] = useState([]);
+  const [allPendingClaims, setAllPendingClaims] = useState([]);
   const [message, setMessage] = useState({ text: '', type: '' });
 
   // Loan Application State
@@ -42,14 +50,39 @@ export default function App() {
   const [interestRate] = useState(1.0);
   const [guarantorList, setGuarantorList] = useState([{ guarantorId: '', amount: '' }]);
 
+  // Beneficiary Form State
+  const [nokName, setNokName] = useState('');
+  const [nokRel, setNokRel] = useState('Spouse');
+  const [nokId, setNokId] = useState('');
+  const [nokPhone, setNokPhone] = useState('');
+  const [nokPercent, setNokPercent] = useState('');
+
+  // Welfare Claim Form State
+  const [claimType, setClaimType] = useState('hospitalization');
+  const [claimAmount, setClaimAmount] = useState('');
+  const [claimDesc, setClaimDesc] = useState('');
+
+  // M-Pesa Simulation Form State
+  const [mpesaPhone, setMpesaPhone] = useState('');
+  const [mpesaAmount, setMpesaAmount] = useState('');
+  const [mpesaType, setMpesaType] = useState('savings_deposit');
+  const [mpesaCode, setMpesaCode] = useState('');
+
+  // Dividend Simulator State
+  const [dividendRate, setDividendRate] = useState(10.0); // % on Share Capital
+  const [interestOnDepositsRate, setInterestOnDepositsRate] = useState(8.5); // % on Savings
+
   // Admin Batch / Checkoff State
   const [targetMemberId, setTargetMemberId] = useState('');
-  const [entryCategory, setEntryCategory] = useState('savings'); // savings or loan_repayment
+  const [entryCategory, setEntryCategory] = useState('savings');
   const [depositAmount, setDepositAmount] = useState('');
   const [depositType, setDepositType] = useState('monthly_contribution');
   const [depositRef, setDepositRef] = useState('');
   const [batchPreview, setBatchPreview] = useState([]);
   const [batchMonth, setBatchMonth] = useState('AUG-2026');
+  const [newNoticeTitle, setNewNoticeTitle] = useState('');
+  const [newNoticeContent, setNewNoticeContent] = useState('');
+  const [newNoticeCategory, setNewNoticeCategory] = useState('general');
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -65,10 +98,12 @@ export default function App() {
         setSavings([]);
         setLoans([]);
         setRepayments([]);
+        setBeneficiaries([]);
       }
     });
 
     fetchCompanies();
+    fetchAnnouncements();
     return () => subscription.unsubscribe();
   }, []);
 
@@ -78,6 +113,14 @@ export default function App() {
       setCompanies(data);
       setCompanyId(data[0].id);
     }
+  };
+
+  const fetchAnnouncements = async () => {
+    const { data } = await supabase
+      .from('announcements')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (data) setAnnouncements(data);
   };
 
   const fetchUserData = async (userId) => {
@@ -91,13 +134,14 @@ export default function App() {
     if (profileData) {
       setProfile(profileData);
       fetchAllMembers(userId);
-      fetchGuarantorRequests(userId);
+      fetchGuarantorData(userId);
+      fetchBeneficiaries(userId);
+      fetchWelfareClaims(userId);
       if (profileData.role === 'admin' || profileData.role === 'treasurer') {
         fetchAdminData();
       }
     }
 
-    // Savings Ledger
     const { data: savingsData } = await supabase
       .from('savings_ledger')
       .select('*')
@@ -105,7 +149,6 @@ export default function App() {
       .order('created_at', { ascending: false });
     if (savingsData) setSavings(savingsData);
 
-    // Loans
     const { data: loanData } = await supabase
       .from('loans')
       .select('*, loan_guarantors(*, profiles:guarantor_id(full_name, member_number))')
@@ -113,7 +156,6 @@ export default function App() {
       .order('created_at', { ascending: false });
     if (loanData) setLoans(loanData);
 
-    // Repayments Ledger
     const { data: repaymentData } = await supabase
       .from('loan_repayments')
       .select('*, loans(principal_amount)')
@@ -132,13 +174,45 @@ export default function App() {
     if (data) setAllMembers(data);
   };
 
-  const fetchGuarantorRequests = async (userId) => {
-    const { data } = await supabase
+  const fetchGuarantorData = async (userId) => {
+    // Requests received to guarantee others
+    const { data: requests } = await supabase
       .from('loan_guarantors')
       .select('*, loans(*, profiles:member_id(full_name, member_number, companies(name)))')
       .eq('guarantor_id', userId)
       .order('created_at', { ascending: false });
-    if (data) setGuarantorRequests(data);
+    if (requests) setGuarantorRequests(requests);
+
+    // Active guarantees currently accepted that tie up savings
+    const { data: activeGuarantees } = await supabase
+      .from('loan_guarantors')
+      .select('*, loans(status, balance_remaining)')
+      .eq('guarantor_id', userId)
+      .eq('status', 'accepted');
+    if (activeGuarantees) {
+      const activeRunning = activeGuarantees.filter(
+        (g) => g.loans?.status === 'approved' || g.loans?.status === 'disbursed'
+      );
+      setMyGuaranteesCommitted(activeRunning);
+    }
+  };
+
+  const fetchBeneficiaries = async (userId) => {
+    const { data } = await supabase
+      .from('next_of_kin')
+      .select('*')
+      .eq('member_id', userId)
+      .order('created_at', { ascending: false });
+    if (data) setBeneficiaries(data);
+  };
+
+  const fetchWelfareClaims = async (userId) => {
+    const { data } = await supabase
+      .from('welfare_claims')
+      .select('*')
+      .eq('member_id', userId)
+      .order('created_at', { ascending: false });
+    if (data) setWelfareClaims(data);
   };
 
   const fetchAdminData = async () => {
@@ -151,8 +225,14 @@ export default function App() {
     const { data: pendingLoans } = await supabase
       .from('loans')
       .select('*, profiles(full_name, member_number, companies(name)), loan_guarantors(*, profiles:guarantor_id(full_name, member_number))')
-      .eq('status', 'pending');
+      .in('status', ['pending', 'guaranteed']);
     if (pendingLoans) setAllPendingLoans(pendingLoans);
+
+    const { data: claims } = await supabase
+      .from('welfare_claims')
+      .select('*, profiles(full_name, member_number, companies(name))')
+      .eq('status', 'pending');
+    if (claims) setAllPendingClaims(claims);
   };
 
   const handleLogin = async (e) => {
@@ -197,17 +277,27 @@ export default function App() {
     setLoading(false);
   };
 
-  // Financial Balances
+  // --- SASRA COMPLIANT FINANCIAL CALCULATIONS ---
   const totalSavings = savings.reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
-  const loanLimit = Math.max(totalSavings * 3, 10000);
   const activeLoanBalance = loans
     .filter((l) => l.status === 'approved' || l.status === 'disbursed')
     .reduce((acc, curr) => acc + Number(curr.balance_remaining || 0), 0);
+
+  // Active liability committed to guarantee other members
+  const totalGuaranteesCommittedAmount = myGuaranteesCommitted.reduce(
+    (acc, curr) => acc + Number(curr.amount_guaranteed || 0),
+    0
+  );
+
+  // Free Shares Safeguard Formula
+  const freeSharesAvailable = Math.max(0, totalSavings - activeLoanBalance - totalGuaranteesCommittedAmount);
+  const loanLimit = Math.max(totalSavings * 3, 10000);
 
   const calculatedInterest = (loanPrincipal * (interestRate / 100)) * loanMonths;
   const calculatedTotal = Number(loanPrincipal) + calculatedInterest;
   const monthlyInstallment = calculatedTotal / loanMonths;
 
+  // Multi-Guarantor Handlers
   const addGuarantorRow = () => {
     setGuarantorList([...guarantorList, { guarantorId: '', amount: '' }]);
   };
@@ -231,7 +321,7 @@ export default function App() {
     setMessage({ text: '', type: '' });
 
     if (loanPrincipal > loanLimit) {
-      setMessage({ text: `Loan exceeds limit of KES ${loanLimit.toLocaleString()} (3x Savings).`, type: 'error' });
+      setMessage({ text: `Loan exceeds maximum limit of KES ${loanLimit.toLocaleString()} (3x Savings).`, type: 'error' });
       setLoading(false);
       return;
     }
@@ -259,6 +349,8 @@ export default function App() {
         total_payable: calculatedTotal,
         balance_remaining: calculatedTotal,
         status: 'pending',
+        credit_officer_approval: false,
+        chairman_approval: false,
       },
     ]).select().single();
 
@@ -277,25 +369,173 @@ export default function App() {
 
     await supabase.from('loan_guarantors').insert(guarantorsToInsert);
 
-    setMessage({ text: `Loan submitted successfully with ${validGuarantors.length} guarantors!`, type: 'success' });
+    setMessage({ text: `Loan request submitted with ${validGuarantors.length} assigned guarantors!`, type: 'success' });
     setGuarantorList([{ guarantorId: '', amount: '' }]);
     fetchUserData(session.user.id);
     setLoading(false);
   };
 
-  const handleRespondGuarantor = async (guaranteeId, status) => {
+  const handleRespondGuarantor = async (guaranteeId, status, pledgeAmount) => {
+    // Check if guarantor has enough free shares
+    if (status === 'accepted' && Number(pledgeAmount) > freeSharesAvailable) {
+      setMessage({
+        text: `Cannot accept guarantee: Pledged KES ${Number(pledgeAmount).toLocaleString()} exceeds your available Free Shares (KES ${freeSharesAvailable.toLocaleString()}).`,
+        type: 'error',
+      });
+      return;
+    }
+
     const { error } = await supabase
       .from('loan_guarantors')
       .update({ status })
       .eq('id', guaranteeId);
 
     if (!error) {
-      fetchGuarantorRequests(session.user.id);
-      setMessage({ text: `Guarantor request marked as ${status}.`, type: 'success' });
+      fetchGuarantorData(session.user.id);
+      fetchUserData(session.user.id);
+      setMessage({ text: `Guarantor response recorded: ${status}.`, type: 'success' });
     }
   };
 
-  // --- AUTOMATED PAYROLL CHECKOFF INGESTION (SAVINGS + LOANS SEPARATION) ---
+  // --- BENEFICIARY / NEXT OF KIN HANDLERS ---
+  const handleAddBeneficiary = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+
+    const currentTotalAlloc = beneficiaries.reduce((sum, b) => sum + Number(b.allocation_percentage || 0), 0);
+    const newTotal = currentTotalAlloc + Number(nokPercent);
+
+    if (newTotal > 100) {
+      setMessage({ text: `Total allocation exceeds 100%. Currently assigned: ${currentTotalAlloc}%.`, type: 'error' });
+      setLoading(false);
+      return;
+    }
+
+    const { error } = await supabase.from('next_of_kin').insert([
+      {
+        member_id: session.user.id,
+        full_name: nokName,
+        relationship: nokRel,
+        id_number: nokId,
+        phone: nokPhone,
+        allocation_percentage: Number(nokPercent),
+      },
+    ]);
+
+    if (error) setMessage({ text: error.message, type: 'error' });
+    else {
+      setMessage({ text: 'Beneficiary registered successfully!', type: 'success' });
+      setNokName('');
+      setNokId('');
+      setNokPhone('');
+      setNokPercent('');
+      fetchBeneficiaries(session.user.id);
+    }
+    setLoading(false);
+  };
+
+  const handleDeleteBeneficiary = async (id) => {
+    await supabase.from('next_of_kin').delete().eq('id', id);
+    fetchBeneficiaries(session.user.id);
+  };
+
+  // --- WELFARE / BENEVOLENT CLAIM HANDLERS ---
+  const handleSubmitWelfareClaim = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+
+    const { error } = await supabase.from('welfare_claims').insert([
+      {
+        member_id: session.user.id,
+        claim_type: claimType,
+        amount_requested: Number(claimAmount),
+        description: claimDesc,
+        status: 'pending',
+      },
+    ]);
+
+    if (error) setMessage({ text: error.message, type: 'error' });
+    else {
+      setMessage({ text: 'Welfare claim submitted for committee review.', type: 'success' });
+      setClaimAmount('');
+      setClaimDesc('');
+      fetchWelfareClaims(session.user.id);
+    }
+    setLoading(false);
+  };
+
+  // --- M-PESA INSTANT REPAYMENT / DEPOSIT HANDLER ---
+  const handleMpesaTransaction = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+
+    // Generate reference code if not provided
+    const receipt = mpesaCode.trim().toUpperCase() || `MP${Math.random().toString(36).substr(2, 8).toUpperCase()}`;
+
+    // Record M-Pesa Transaction
+    await supabase.from('mpesa_transactions').insert([
+      {
+        member_id: session.user.id,
+        phone_number: mpesaPhone || profile?.phone,
+        amount: Number(mpesaAmount),
+        transaction_type: mpesaType,
+        mpesa_receipt_code: receipt,
+        status: 'verified',
+      },
+    ]);
+
+    if (mpesaType === 'savings_deposit') {
+      await supabase.from('savings_ledger').insert([
+        {
+          member_id: session.user.id,
+          amount: Number(mpesaAmount),
+          transaction_type: 'monthly_contribution',
+          reference_code: `MPESA-${receipt}`,
+        },
+      ]);
+      setMessage({ text: `M-Pesa payment received! KES ${Number(mpesaAmount).toLocaleString()} credited to Savings.`, type: 'success' });
+    } else if (mpesaType === 'loan_repayment') {
+      const { data: memberLoan } = await supabase
+        .from('loans')
+        .select('id, balance_remaining')
+        .eq('member_id', session.user.id)
+        .in('status', ['approved', 'disbursed'])
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (memberLoan) {
+        await supabase.from('loan_repayments').insert([
+          {
+            loan_id: memberLoan.id,
+            member_id: session.user.id,
+            amount: Number(mpesaAmount),
+            reference_code: `MPESA-${receipt}`,
+          },
+        ]);
+
+        const newBal = Math.max(0, Number(memberLoan.balance_remaining) - Number(mpesaAmount));
+        await supabase
+          .from('loans')
+          .update({
+            balance_remaining: newBal,
+            status: newBal === 0 ? 'completed' : 'approved',
+          })
+          .eq('id', memberLoan.id);
+
+        setMessage({ text: `M-Pesa payment received! KES ${Number(mpesaAmount).toLocaleString()} deducted from active loan.`, type: 'success' });
+      } else {
+        setMessage({ text: 'No active loan found to apply repayment. Credited to savings instead.', type: 'error' });
+      }
+    }
+
+    setMpesaAmount('');
+    setMpesaCode('');
+    fetchUserData(session.user.id);
+    setLoading(false);
+  };
+
+  // --- ADMIN CHECKOFF & MULTI-SIG APPROVALS ---
   const handleCSVUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -307,7 +547,6 @@ export default function App() {
         const rows = results.data;
         const matchedEntries = [];
 
-        // Fetch all active loans to map loan repayments
         const { data: activeLoans } = await supabase
           .from('loans')
           .select('id, member_id, balance_remaining')
@@ -322,7 +561,6 @@ export default function App() {
             const memberObj = allMembers.find(
               (m) => m.member_number?.toLowerCase() === memberNum.toLowerCase()
             );
-
             const activeLoan = activeLoans?.find((l) => l.member_id === memberObj?.id);
 
             matchedEntries.push({
@@ -344,14 +582,9 @@ export default function App() {
 
   const handleExecuteBatchCheckoff = async () => {
     const validRows = batchPreview.filter((r) => r.valid && r.member_id);
-    if (validRows.length === 0) {
-      setMessage({ text: 'No valid matching member rows found.', type: 'error' });
-      return;
-    }
+    if (validRows.length === 0) return;
 
     setLoading(true);
-
-    // 1. Process Savings Checkoffs
     const savingsInserts = validRows
       .filter((r) => r.savings_amount > 0)
       .map((r) => ({
@@ -365,10 +598,8 @@ export default function App() {
       await supabase.from('savings_ledger').insert(savingsInserts);
     }
 
-    // 2. Process Loan Repayment Checkoffs
     const loanRows = validRows.filter((r) => r.loan_amount > 0 && r.active_loan_id);
     for (const r of loanRows) {
-      // Record repayment
       await supabase.from('loan_repayments').insert([
         {
           loan_id: r.active_loan_id,
@@ -378,7 +609,6 @@ export default function App() {
         },
       ]);
 
-      // Deduct balance from loan
       const { data: currentLoan } = await supabase
         .from('loans')
         .select('balance_remaining')
@@ -398,7 +628,7 @@ export default function App() {
     }
 
     setMessage({
-      text: `Payroll Checkoff Processed: ${savingsInserts.length} savings credits and ${loanRows.length} loan repayments applied!`,
+      text: `Batch checkoff processed: ${savingsInserts.length} savings credits and ${loanRows.length} loan deductions applied!`,
       type: 'success',
     });
     setBatchPreview([]);
@@ -406,84 +636,48 @@ export default function App() {
     setLoading(false);
   };
 
-  const handleRecordDeposit = async (e) => {
+  const handlePublishNotice = async (e) => {
     e.preventDefault();
-    setLoading(true);
-    setMessage({ text: '', type: '' });
+    if (!newNoticeTitle || !newNoticeContent) return;
 
-    if (entryCategory === 'savings') {
-      const { error } = await supabase.from('savings_ledger').insert([
-        {
-          member_id: targetMemberId,
-          amount: Number(depositAmount),
-          transaction_type: depositType,
-          reference_code: depositRef || 'DIRECT-SAVINGS',
-        },
-      ]);
-      if (error) setMessage({ text: error.message, type: 'error' });
-      else setMessage({ text: 'Savings contribution posted successfully!', type: 'success' });
-    } else {
-      // Individual Loan Repayment
-      const { data: memberLoan } = await supabase
-        .from('loans')
-        .select('id, balance_remaining')
-        .eq('member_id', targetMemberId)
-        .in('status', ['approved', 'disbursed'])
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
+    await supabase.from('announcements').insert([
+      {
+        title: newNoticeTitle,
+        content: newNoticeContent,
+        category: newNoticeCategory,
+        posted_by: session.user.id,
+      },
+    ]);
 
-      if (!memberLoan) {
-        setMessage({ text: 'Selected member has no active loan to repay.', type: 'error' });
-        setLoading(false);
-        return;
-      }
+    setNewNoticeTitle('');
+    setNewNoticeContent('');
+    fetchAnnouncements();
+    setMessage({ text: 'Announcement published to Member Board!', type: 'success' });
+  };
 
-      await supabase.from('loan_repayments').insert([
-        {
-          loan_id: memberLoan.id,
-          member_id: targetMemberId,
-          amount: Number(depositAmount),
-          reference_code: depositRef || 'DIRECT-LOAN-PAY',
-        },
-      ]);
-
-      const newBal = Math.max(0, Number(memberLoan.balance_remaining) - Number(depositAmount));
-      await supabase
-        .from('loans')
-        .update({
-          balance_remaining: newBal,
-          status: newBal === 0 ? 'completed' : 'approved',
-        })
-        .eq('id', memberLoan.id);
-
-      setMessage({ text: `Loan repayment of KES ${Number(depositAmount).toLocaleString()} deducted from loan!`, type: 'success' });
-    }
-
-    setDepositAmount('');
-    setDepositRef('');
+  const handleApproveWelfareClaim = async (claimId) => {
+    await supabase.from('welfare_claims').update({ status: 'approved' }).eq('id', claimId);
+    fetchAdminData();
     fetchUserData(session.user.id);
-    setLoading(false);
   };
 
-  const handleApproveLoan = async (loanId) => {
-    const { error } = await supabase
-      .from('loans')
-      .update({ status: 'approved' })
-      .eq('id', loanId);
-
-    if (!error) {
-      fetchAdminData();
-      fetchUserData(session.user.id);
-      setMessage({ text: 'Loan approved & marked ready for disbursement.', type: 'success' });
-    }
+  const handleCreditOfficerApprove = async (loanId) => {
+    await supabase.from('loans').update({ credit_officer_approval: true }).eq('id', loanId);
+    fetchAdminData();
   };
 
-  // --- UNIFIED COMPREHENSIVE PDF STATEMENT WITH SEPARATE SECTIONS ---
+  const handleChairmanFinalDisburse = async (loanId) => {
+    await supabase.from('loans').update({ chairman_approval: true, status: 'approved' }).eq('id', loanId);
+    fetchAdminData();
+    fetchUserData(session.user.id);
+    setMessage({ text: 'Loan approved with multi-signature authorization and disbursed!', type: 'success' });
+  };
+
+  // --- PDF GENERATOR (CONSOLIDATED AUDIT REPORT) ---
   const generatePDFStatement = (loan = null) => {
     try {
       const doc = new jsPDF();
-      doc.setFillColor(6, 78, 59); // Emerald Branding
+      doc.setFillColor(6, 78, 59);
       doc.rect(0, 0, 210, 35, 'F');
       doc.setTextColor(255, 255, 255);
       doc.setFontSize(18);
@@ -494,7 +688,7 @@ export default function App() {
 
       doc.setTextColor(30, 41, 59);
       doc.setFontSize(12);
-      doc.text('OFFICIAL MEMBER FINANCIAL STATEMENT', 14, 46);
+      doc.text('OFFICIAL MEMBER AUDIT STATEMENT', 14, 46);
 
       doc.setFontSize(9);
       doc.text(`Member Name: ${profile?.full_name || 'N/A'}`, 14, 54);
@@ -502,13 +696,11 @@ export default function App() {
       doc.text(`Branch / Company: ${profile?.companies?.name || 'KEWA'}`, 14, 66);
       doc.text(`National ID: ${profile?.id_number || 'N/A'}`, 120, 54);
       doc.text(`Total Shares/Savings: KES ${totalSavings.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`, 120, 60);
-      doc.text(`Active Loan Debt: KES ${activeLoanBalance.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`, 120, 66);
+      doc.text(`Free Unencumbered Shares: KES ${freeSharesAvailable.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`, 120, 66);
 
       if (loan) {
-        // Individual Loan Amortization Schedule
         doc.setFontSize(11);
-        doc.text('Specific Loan Repayment Schedule', 14, 78);
-
+        doc.text('Loan Amortization & Repayment Schedule', 14, 78);
         const loanRows = [
           ['Principal Amount', `KES ${Number(loan.principal_amount).toLocaleString()}`],
           ['Interest Rate', `${loan.interest_rate}% / month`],
@@ -526,42 +718,42 @@ export default function App() {
           headStyles: { fillColor: [6, 78, 59] },
         });
       } else {
-        // 1. Savings Ledger Table
+        // 1. Savings
         doc.setFontSize(11);
         doc.setTextColor(6, 78, 59);
-        doc.text('1. Monthly Savings & Shares Contributions Ledger', 14, 78);
+        doc.text('1. Monthly Savings & Shares Contributions', 14, 78);
 
         const savingsRows = savings.length > 0 ? savings.map((s) => [
           new Date(s.created_at).toLocaleDateString('en-GB'),
           (s.transaction_type || '').replace('_', ' ').toUpperCase(),
           s.reference_code || '-',
           `+KES ${Number(s.amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`
-        ]) : [['-', 'No savings contributions recorded', '-', 'KES 0.00']];
+        ]) : [['-', 'No contributions recorded', '-', 'KES 0.00']];
 
         autoTable(doc, {
           startY: 83,
-          head: [['Date', 'Contribution Type', 'Payroll Reference', 'Credit Amount']],
+          head: [['Date', 'Type', 'Batch Ref', 'Credit Amount']],
           body: savingsRows,
           theme: 'striped',
           headStyles: { fillColor: [6, 78, 59] },
         });
 
-        // 2. Loan Deductions Table
-        const loanTableY = doc.lastAutoTable.finalY + 12;
+        // 2. Loan Deductions
+        const loanY = doc.lastAutoTable.finalY + 10;
         doc.setFontSize(11);
-        doc.setTextColor(180, 83, 9); // Amber
-        doc.text('2. Monthly Loan Repayments Deducted From Salary', 14, loanTableY);
+        doc.setTextColor(180, 83, 9);
+        doc.text('2. Monthly Loan Repayment Deductions', 14, loanY);
 
         const repaymentRows = repayments.length > 0 ? repayments.map((r) => [
           new Date(r.created_at).toLocaleDateString('en-GB'),
-          'LOAN PRINCIPAL + INTEREST REPAYMENT',
+          'LOAN REPAYMENT',
           r.reference_code || '-',
           `-KES ${Number(r.amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`
-        ]) : [['-', 'No loan repayments on record', '-', 'KES 0.00']];
+        ]) : [['-', 'No repayments recorded', '-', 'KES 0.00']];
 
         autoTable(doc, {
-          startY: loanTableY + 4,
-          head: [['Date', 'Deduction Type', 'Payroll Reference', 'Repayment Paid']],
+          startY: loanY + 4,
+          head: [['Date', 'Type', 'Batch Ref', 'Repayment Paid']],
           body: repaymentRows,
           theme: 'striped',
           headStyles: { fillColor: [180, 83, 9] },
@@ -571,7 +763,7 @@ export default function App() {
       const finalY = doc.lastAutoTable ? doc.lastAutoTable.finalY + 15 : 150;
       doc.setFontSize(8);
       doc.setTextColor(100, 116, 139);
-      doc.text('This is a computer-generated official statement issued by KEWA SACCO core financial system.', 14, finalY);
+      doc.text('This is an official computer-generated statement issued by KEWA SACCO core financial system.', 14, finalY);
 
       doc.save(`KEWA_Statement_${profile?.member_number || 'Member'}.pdf`);
     } catch (err) {
@@ -583,7 +775,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 font-sans pb-20 sm:pb-12">
-      {/* Header */}
+      {/* Top Header */}
       <header className="border-b border-slate-800 bg-slate-950/95 backdrop-blur px-4 sm:px-6 py-3.5 flex justify-between items-center sticky top-0 z-50">
         <div className="flex items-center gap-3">
           <div className="bg-emerald-600 p-2 rounded-xl shadow-lg shadow-emerald-900/30">
@@ -597,10 +789,11 @@ export default function App() {
 
         {session && (
           <div className="flex items-center gap-2">
-            <div className="hidden md:flex items-center gap-1.5 bg-slate-900 p-1 rounded-xl border border-slate-800">
+            {/* Desktop Navigation */}
+            <div className="hidden lg:flex items-center gap-1.5 bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs font-semibold">
               <button
                 onClick={() => setActiveTab('overview')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition ${
+                className={`px-3 py-1.5 rounded-lg transition ${
                   activeTab === 'overview' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -608,7 +801,7 @@ export default function App() {
               </button>
               <button
                 onClick={() => setActiveTab('loans')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition ${
+                className={`px-3 py-1.5 rounded-lg transition ${
                   activeTab === 'loans' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -616,7 +809,7 @@ export default function App() {
               </button>
               <button
                 onClick={() => setActiveTab('guarantors')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
+                className={`px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 ${
                   activeTab === 'guarantors' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -627,28 +820,45 @@ export default function App() {
                   </span>
                 )}
               </button>
+              <button
+                onClick={() => setActiveTab('beneficiaries')}
+                className={`px-3 py-1.5 rounded-lg transition ${
+                  activeTab === 'beneficiaries' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Beneficiaries & Welfare
+              </button>
+              <button
+                onClick={() => setActiveTab('mpesa')}
+                className={`px-3 py-1.5 rounded-lg transition flex items-center gap-1 ${
+                  activeTab === 'mpesa' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Smartphone className="w-3.5 h-3.5" /> M-Pesa Top-Up
+              </button>
               {(profile?.role === 'admin' || profile?.role === 'treasurer') && (
                 <button
                   onClick={() => setActiveTab('admin')}
-                  className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1 ${
+                  className={`px-3 py-1.5 rounded-lg transition flex items-center gap-1 ${
                     activeTab === 'admin' ? 'bg-amber-600 text-white' : 'text-amber-400 hover:text-white'
                   }`}
                 >
-                  <ShieldCheck className="w-3.5 h-3.5" /> Admin Panel
+                  <ShieldCheck className="w-3.5 h-3.5" /> Admin Hub
                 </button>
               )}
             </div>
 
             <button
               onClick={() => supabase.auth.signOut()}
-              className="hidden md:flex items-center gap-1.5 bg-slate-800 hover:bg-rose-900/40 text-slate-300 hover:text-rose-300 px-3 py-1.5 rounded-lg text-xs font-semibold transition border border-slate-700"
+              className="hidden lg:flex items-center gap-1.5 bg-slate-800 hover:bg-rose-900/40 text-slate-300 hover:text-rose-300 px-3 py-1.5 rounded-lg text-xs font-semibold transition border border-slate-700"
             >
               <LogOut className="w-3.5 h-3.5" /> Exit
             </button>
 
+            {/* Mobile Extended Drawer Button */}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="md:hidden flex items-center justify-center p-2 rounded-xl bg-slate-900 border border-slate-700 text-white"
+              className="lg:hidden flex items-center justify-center p-2 rounded-xl bg-slate-900 border border-slate-700 text-white"
             >
               {mobileMenuOpen ? <X className="w-5 h-5 text-rose-400" /> : <Menu className="w-5 h-5 text-emerald-400" />}
             </button>
@@ -658,7 +868,7 @@ export default function App() {
 
       {/* Mobile Drawer */}
       {session && mobileMenuOpen && (
-        <div className="md:hidden bg-slate-950 border-b border-slate-800 px-4 py-4 space-y-2 sticky top-[57px] z-40 shadow-2xl">
+        <div className="lg:hidden bg-slate-950 border-b border-slate-800 px-4 py-4 space-y-2 sticky top-[57px] z-40 shadow-2xl">
           <button
             onClick={() => { setActiveTab('overview'); setMobileMenuOpen(false); }}
             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition ${
@@ -667,16 +877,14 @@ export default function App() {
           >
             <PiggyBank className="w-4 h-4" /> Overview Dashboard
           </button>
-
           <button
             onClick={() => { setActiveTab('loans'); setMobileMenuOpen(false); }}
             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition ${
               activeTab === 'loans' ? 'bg-emerald-600 text-white' : 'bg-slate-900/50 text-slate-300'
             }`}
           >
-            <Calculator className="w-4 h-4" /> Loans & Multi-Guarantor
+            <Calculator className="w-4 h-4" /> Loans & Guarantor Limit
           </button>
-
           <button
             onClick={() => { setActiveTab('guarantors'); setMobileMenuOpen(false); }}
             className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-semibold transition ${
@@ -688,11 +896,26 @@ export default function App() {
             </span>
             {pendingGuaranteesCount > 0 && (
               <span className="bg-rose-500 text-white text-xs px-2 py-0.5 rounded-full font-bold">
-                {pendingGuaranteesCount}
+                {pendingGuaranteesCount} new
               </span>
             )}
           </button>
-
+          <button
+            onClick={() => { setActiveTab('beneficiaries'); setMobileMenuOpen(false); }}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition ${
+              activeTab === 'beneficiaries' ? 'bg-emerald-600 text-white' : 'bg-slate-900/50 text-slate-300'
+            }`}
+          >
+            <HeartHandshake className="w-4 h-4" /> Next of Kin & Welfare
+          </button>
+          <button
+            onClick={() => { setActiveTab('mpesa'); setMobileMenuOpen(false); }}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition ${
+              activeTab === 'mpesa' ? 'bg-emerald-600 text-white' : 'bg-slate-900/50 text-slate-300'
+            }`}
+          >
+            <Smartphone className="w-4 h-4" /> M-Pesa Top-Up & Repay
+          </button>
           {(profile?.role === 'admin' || profile?.role === 'treasurer') && (
             <button
               onClick={() => { setActiveTab('admin'); setMobileMenuOpen(false); }}
@@ -700,10 +923,9 @@ export default function App() {
                 activeTab === 'admin' ? 'bg-amber-600 text-white' : 'bg-slate-900/50 text-amber-300'
               }`}
             >
-              <ShieldCheck className="w-4 h-4" /> Admin & Payroll Checkoff
+              <ShieldCheck className="w-4 h-4" /> Admin Hub & Checkoff
             </button>
           )}
-
           <div className="pt-2 border-t border-slate-800">
             <button
               onClick={() => supabase.auth.signOut()}
@@ -715,11 +937,11 @@ export default function App() {
         </div>
       )}
 
-      {/* Main App */}
-      <main className="max-w-6xl mx-auto p-4 sm:p-6">
+      {/* Main Container */}
+      <main className="max-w-6xl mx-auto p-4 sm:p-6 space-y-6">
         {message.text && (
           <div
-            className={`mb-6 p-4 rounded-xl text-sm font-medium border ${
+            className={`p-4 rounded-xl text-sm font-medium border ${
               message.type === 'error'
                 ? 'bg-rose-950/40 border-rose-800 text-rose-300'
                 : 'bg-emerald-950/40 border-emerald-800 text-emerald-300'
@@ -730,7 +952,7 @@ export default function App() {
         )}
 
         {!session ? (
-          /* AUTHENTICATION VIEW */
+          /* AUTH VIEW */
           <div className="max-w-md mx-auto mt-4 sm:mt-8 bg-slate-950 border border-slate-800 rounded-2xl p-6 sm:p-8 shadow-2xl">
             <div className="text-center mb-6">
               <h2 className="text-2xl font-bold text-white">
@@ -755,7 +977,6 @@ export default function App() {
                       className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
                     />
                   </div>
-
                   <div>
                     <label className="block text-xs font-semibold text-slate-300 mb-1">Employer / Branch</label>
                     <select
@@ -770,7 +991,6 @@ export default function App() {
                       ))}
                     </select>
                   </div>
-
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-semibold text-slate-300 mb-1">Member No.</label>
@@ -795,7 +1015,6 @@ export default function App() {
                       />
                     </div>
                   </div>
-
                   <div>
                     <label className="block text-xs font-semibold text-slate-300 mb-1">Phone Number</label>
                     <input
@@ -821,7 +1040,6 @@ export default function App() {
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
                 />
               </div>
-
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1">Password</label>
                 <input
@@ -837,7 +1055,7 @@ export default function App() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2.5 rounded-lg text-sm transition mt-2"
+                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2.5 rounded-lg text-sm transition mt-2 cursor-pointer"
               >
                 {loading ? 'Processing...' : authMode === 'login' ? 'Sign In' : 'Complete Registration'}
               </button>
@@ -847,14 +1065,14 @@ export default function App() {
               {authMode === 'login' ? (
                 <>
                   New member?{' '}
-                  <button onClick={() => setAuthMode('register')} className="text-emerald-400 hover:underline font-semibold">
+                  <button onClick={() => setAuthMode('register')} className="text-emerald-400 hover:underline font-semibold cursor-pointer">
                     Register Account
                   </button>
                 </>
               ) : (
                 <>
                   Already registered?{' '}
-                  <button onClick={() => setAuthMode('login')} className="text-emerald-400 hover:underline font-semibold">
+                  <button onClick={() => setAuthMode('login')} className="text-emerald-400 hover:underline font-semibold cursor-pointer">
                     Sign In
                   </button>
                 </>
@@ -862,8 +1080,9 @@ export default function App() {
             </div>
           </div>
         ) : (
-          /* AUTHENTICATED TABS */
-          <div className="space-y-6">
+          /* AUTHENTICATED SYSTEM */
+          <>
+            {/* Header Member Information Banner */}
             <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 sm:p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
               <div>
                 <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-emerald-950 border border-emerald-800 text-emerald-300">
@@ -877,63 +1096,147 @@ export default function App() {
                 onClick={() => generatePDFStatement()}
                 className="flex items-center justify-center gap-2 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white px-3.5 py-2 rounded-xl text-xs font-semibold border border-emerald-700/50 transition cursor-pointer"
               >
-                <Download className="w-4 h-4" /> Download Consolidated Statement
+                <Download className="w-4 h-4" /> Download PDF Statement
               </button>
             </div>
 
-            {/* TAB 1: OVERVIEW */}
+            {/* TAB 1: OVERVIEW & NOTICE BOARD & DIVIDEND SIMULATOR */}
             {activeTab === 'overview' && (
-              <>
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+              <div className="space-y-6">
+                {/* 4 Core Financial KPI Metric Cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 flex items-center justify-between">
                     <div>
                       <p className="text-xs font-medium text-slate-400">Total Savings & Shares</p>
-                      <h3 className="text-2xl font-extrabold text-white mt-1">
+                      <h3 className="text-xl font-extrabold text-white mt-1">
                         KES {totalSavings.toLocaleString('en-KE', { minimumFractionDigits: 2 })}
                       </h3>
                     </div>
                     <div className="bg-emerald-950/60 border border-emerald-800/40 p-3 rounded-xl text-emerald-400">
-                      <PiggyBank className="w-6 h-6" />
+                      <PiggyBank className="w-5 h-5" />
                     </div>
                   </div>
 
                   <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 flex items-center justify-between">
                     <div>
-                      <p className="text-xs font-medium text-slate-400">Max Loan Limit (3X)</p>
-                      <h3 className="text-2xl font-extrabold text-emerald-400 mt-1">
-                        KES {loanLimit.toLocaleString('en-KE', { minimumFractionDigits: 2 })}
+                      <p className="text-xs font-medium text-emerald-400 font-bold">Free Unencumbered Shares</p>
+                      <h3 className="text-xl font-extrabold text-emerald-400 mt-1">
+                        KES {freeSharesAvailable.toLocaleString('en-KE', { minimumFractionDigits: 2 })}
                       </h3>
                     </div>
                     <div className="bg-emerald-950/60 border border-emerald-800/40 p-3 rounded-xl text-emerald-400">
-                      <Calculator className="w-6 h-6" />
+                      <ShieldCheck className="w-5 h-5" />
                     </div>
                   </div>
 
-                  <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 flex items-center justify-between sm:col-span-2 md:col-span-1">
+                  <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-medium text-slate-400">Guarantees Committed</p>
+                      <h3 className="text-xl font-extrabold text-rose-400 mt-1">
+                        KES {totalGuaranteesCommittedAmount.toLocaleString('en-KE', { minimumFractionDigits: 2 })}
+                      </h3>
+                    </div>
+                    <div className="bg-rose-950/60 border border-rose-800/40 p-3 rounded-xl text-rose-400">
+                      <ShieldAlert className="w-5 h-5" />
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 flex items-center justify-between">
                     <div>
                       <p className="text-xs font-medium text-slate-400">Active Loan Balance</p>
-                      <h3 className="text-2xl font-extrabold text-white mt-1">
+                      <h3 className="text-xl font-extrabold text-amber-400 mt-1">
                         KES {activeLoanBalance.toLocaleString('en-KE', { minimumFractionDigits: 2 })}
                       </h3>
                     </div>
                     <div className="bg-amber-950/60 border border-amber-800/40 p-3 rounded-xl text-amber-400">
-                      <TrendingUp className="w-6 h-6" />
+                      <TrendingUp className="w-5 h-5" />
                     </div>
                   </div>
                 </div>
 
+                {/* OFFICIAL NOTICE BOARD */}
+                <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Bell className="w-5 h-5 text-emerald-400" />
+                    <h4 className="text-base font-bold text-white">Official Notice Board & Announcements</h4>
+                  </div>
+                  {announcements.length === 0 ? (
+                    <p className="text-xs text-slate-500">No active announcements.</p>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {announcements.map((a) => (
+                        <div key={a.id} className="bg-slate-900 border border-slate-800/80 p-3.5 rounded-xl">
+                          <div className="flex justify-between items-center mb-1">
+                            <h5 className="text-sm font-bold text-emerald-300">{a.title}</h5>
+                            <span className="text-[10px] text-slate-500">{new Date(a.created_at).toLocaleDateString()}</span>
+                          </div>
+                          <p className="text-xs text-slate-300 leading-relaxed">{a.content}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* ANNUAL DIVIDEND & REBATE PROJECTION SIMULATOR */}
+                <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Award className="w-5 h-5 text-amber-400" />
+                    <h4 className="text-base font-bold text-white">Annual Dividend & Interest on Deposits Simulator</h4>
+                  </div>
+                  <p className="text-xs text-slate-400 mb-4">
+                    Estimate your year-end payout based on SACCO declared rates.
+                  </p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-900 p-4 rounded-xl border border-slate-800 text-xs">
+                    <div>
+                      <label className="block text-slate-400 mb-1">
+                        Interest on Savings Rate: <strong className="text-emerald-400">{interestOnDepositsRate}%</strong>
+                      </label>
+                      <input
+                        type="range"
+                        min="4"
+                        max="15"
+                        step="0.5"
+                        value={interestOnDepositsRate}
+                        onChange={(e) => setInterestOnDepositsRate(Number(e.target.value))}
+                        className="w-full accent-emerald-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-400 mb-1">
+                        Dividend on Share Capital: <strong className="text-emerald-400">{dividendRate}%</strong>
+                      </label>
+                      <input
+                        type="range"
+                        min="5"
+                        max="20"
+                        step="0.5"
+                        value={dividendRate}
+                        onChange={(e) => setDividendRate(Number(e.target.value))}
+                        className="w-full accent-emerald-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mt-4 p-3.5 bg-emerald-950/40 border border-emerald-800/40 rounded-xl flex justify-between items-center text-xs">
+                    <span className="text-slate-300">Projected Year-End Net Return:</span>
+                    <span className="text-base font-bold text-emerald-300">
+                      KES {((totalSavings * (interestOnDepositsRate / 100))).toLocaleString('en-KE', { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                </div>
+
+                {/* DUAL LEDGER DISPLAY */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* SAVINGS LEDGER */}
+                  {/* SAVINGS */}
                   <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
                     <div className="flex items-center gap-2 mb-4">
                       <ArrowUpRight className="w-5 h-5 text-emerald-400" />
-                      <h4 className="text-base font-bold text-white">Monthly Savings / Shares Contributions</h4>
+                      <h4 className="text-base font-bold text-white">Monthly Savings Checkoff Ledger</h4>
                     </div>
 
                     {savings.length === 0 ? (
-                      <div className="text-center py-8 text-slate-500 text-sm">
-                        No savings checkoff records found yet.
-                      </div>
+                      <div className="text-center py-8 text-slate-500 text-sm">No savings records found.</div>
                     ) : (
                       <div className="overflow-x-auto">
                         <table className="w-full text-left text-xs">
@@ -941,7 +1244,7 @@ export default function App() {
                             <tr className="border-b border-slate-800 text-slate-400 uppercase">
                               <th className="pb-2">Date</th>
                               <th className="pb-2">Batch Ref</th>
-                              <th className="pb-2 text-right">Credit (KES)</th>
+                              <th className="pb-2 text-right">Credit</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-800/50">
@@ -950,7 +1253,7 @@ export default function App() {
                                 <td className="py-2.5 text-slate-300">{new Date(s.created_at).toLocaleDateString()}</td>
                                 <td className="py-2.5 text-slate-400 font-mono">{s.reference_code || '-'}</td>
                                 <td className="py-2.5 text-right font-bold text-emerald-400">
-                                  +{Number(s.amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })}
+                                  +KES {Number(s.amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })}
                                 </td>
                               </tr>
                             ))}
@@ -960,17 +1263,15 @@ export default function App() {
                     )}
                   </div>
 
-                  {/* LOAN REPAYMENTS LEDGER */}
+                  {/* LOAN REPAYMENTS */}
                   <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
                     <div className="flex items-center gap-2 mb-4">
                       <ArrowDownRight className="w-5 h-5 text-amber-400" />
-                      <h4 className="text-base font-bold text-white">Monthly Loan Repayments (Deductions)</h4>
+                      <h4 className="text-base font-bold text-white">Monthly Loan Repayments Ledger</h4>
                     </div>
 
                     {repayments.length === 0 ? (
-                      <div className="text-center py-8 text-slate-500 text-sm">
-                        No loan repayments deducted yet.
-                      </div>
+                      <div className="text-center py-8 text-slate-500 text-sm">No loan repayments deducted yet.</div>
                     ) : (
                       <div className="overflow-x-auto">
                         <table className="w-full text-left text-xs">
@@ -978,7 +1279,7 @@ export default function App() {
                             <tr className="border-b border-slate-800 text-slate-400 uppercase">
                               <th className="pb-2">Date</th>
                               <th className="pb-2">Batch Ref</th>
-                              <th className="pb-2 text-right">Repayment (KES)</th>
+                              <th className="pb-2 text-right">Deducted</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-800/50">
@@ -997,10 +1298,10 @@ export default function App() {
                     )}
                   </div>
                 </div>
-              </>
+              </div>
             )}
 
-            {/* TAB 2: LOANS */}
+            {/* TAB 2: LOANS & FREE SHARES CALCULATOR */}
             {activeTab === 'loans' && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
@@ -1009,9 +1310,15 @@ export default function App() {
                     <h3 className="text-base sm:text-lg font-bold text-white">Apply for a Loan</h3>
                   </div>
 
-                  <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 mb-4 flex justify-between items-center text-xs">
-                    <span className="text-slate-400">Borrowing Limit (3X):</span>
-                    <span className="text-emerald-400 font-bold text-sm">KES {loanLimit.toLocaleString()}</span>
+                  <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 mb-4 space-y-1 text-xs">
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Max Loan Limit (3X Savings):</span>
+                      <span className="text-emerald-400 font-bold">KES {loanLimit.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Your Free Shares Available:</span>
+                      <span className="text-emerald-300 font-bold">KES {freeSharesAvailable.toLocaleString()}</span>
+                    </div>
                   </div>
 
                   <form onSubmit={handleApplyLoan} className="space-y-4">
@@ -1050,13 +1357,13 @@ export default function App() {
                     <div className="border-t border-slate-800 pt-4 space-y-3">
                       <div className="flex justify-between items-center">
                         <div>
-                          <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wide">Assign Guarantors</h4>
-                          <p className="text-[11px] text-slate-400">Add 1 to 10+ colleagues to guarantee this loan</p>
+                          <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wide">Assign Member Guarantors</h4>
+                          <p className="text-[11px] text-slate-400">Select colleagues across Kenya Builders, Warren, or Eurocon</p>
                         </div>
                         <button
                           type="button"
                           onClick={addGuarantorRow}
-                          className="flex items-center gap-1 bg-emerald-950 border border-emerald-800 text-emerald-300 text-xs px-2.5 py-1 rounded-lg"
+                          className="flex items-center gap-1 bg-emerald-950 border border-emerald-800 text-emerald-300 text-xs px-2.5 py-1 rounded-lg cursor-pointer"
                         >
                           <Plus className="w-3.5 h-3.5" /> Add Guarantor
                         </button>
@@ -1097,7 +1404,7 @@ export default function App() {
                             <button
                               type="button"
                               onClick={() => removeGuarantorRow(index)}
-                              className="self-end sm:self-center mt-1 sm:mt-5 text-rose-400 hover:text-rose-300 p-1.5"
+                              className="self-end sm:self-center mt-1 sm:mt-5 text-rose-400 hover:text-rose-300 p-1.5 cursor-pointer"
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
@@ -1126,17 +1433,15 @@ export default function App() {
                       disabled={loading}
                       className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2.5 rounded-lg text-sm transition cursor-pointer"
                     >
-                      Submit for Guarantor Sign-off
+                      Submit for Committee & Guarantor Sign-off
                     </button>
                   </form>
                 </div>
 
                 <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
-                  <h3 className="text-base sm:text-lg font-bold text-white mb-4">My Active & Past Loans</h3>
+                  <h3 className="text-base sm:text-lg font-bold text-white mb-4">My Loan Applications</h3>
                   {loans.length === 0 ? (
-                    <div className="text-center py-12 text-slate-500 text-sm">
-                      No active or past loans found.
-                    </div>
+                    <div className="text-center py-12 text-slate-500 text-sm">No active or past loans found.</div>
                   ) : (
                     <div className="space-y-4">
                       {loans.map((l) => (
@@ -1193,19 +1498,20 @@ export default function App() {
 
             {/* TAB 3: GUARANTOR DESK */}
             {activeTab === 'guarantors' && (
-              <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
-                <div className="flex items-center gap-2 mb-2">
-                  <Users className="w-5 h-5 text-emerald-400" />
-                  <h3 className="text-base sm:text-lg font-bold text-white">Guarantor Requests Received</h3>
+              <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6 space-y-6">
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Users className="w-5 h-5 text-emerald-400" />
+                    <h3 className="text-base sm:text-lg font-bold text-white">Guarantor Requests Received</h3>
+                  </div>
+                  <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-xl flex justify-between items-center text-xs">
+                    <span className="text-slate-400">Your Current Available Free Shares for Guarantee:</span>
+                    <span className="text-emerald-400 font-bold text-sm">KES {freeSharesAvailable.toLocaleString()}</span>
+                  </div>
                 </div>
-                <p className="text-xs text-slate-400 mb-6">
-                  Review loan requests from colleagues requesting your guarantee across Kenya Builders, Warren, and Eurocon.
-                </p>
 
                 {guarantorRequests.length === 0 ? (
-                  <div className="text-center py-12 text-slate-500 text-sm">
-                    You have no pending guarantor requests.
-                  </div>
+                  <div className="text-center py-12 text-slate-500 text-sm">You have no pending guarantor requests.</div>
                 ) : (
                   <div className="space-y-3">
                     {guarantorRequests.map((g) => (
@@ -1227,13 +1533,13 @@ export default function App() {
                         {g.status === 'pending' && (
                           <div className="flex gap-2 w-full sm:w-auto">
                             <button
-                              onClick={() => handleRespondGuarantor(g.id, 'accepted')}
+                              onClick={() => handleRespondGuarantor(g.id, 'accepted', g.amount_guaranteed)}
                               className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-4 py-2 rounded-lg flex items-center justify-center gap-1.5 transition cursor-pointer"
                             >
-                              <CheckCircle className="w-4 h-4" /> Accept
+                              <CheckCircle className="w-4 h-4" /> Accept Guarantee
                             </button>
                             <button
-                              onClick={() => handleRespondGuarantor(g.id, 'rejected')}
+                              onClick={() => handleRespondGuarantor(g.id, 'rejected', g.amount_guaranteed)}
                               className="flex-1 sm:flex-none bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold px-4 py-2 rounded-lg flex items-center justify-center gap-1.5 transition cursor-pointer"
                             >
                               <XCircle className="w-4 h-4" /> Decline
@@ -1247,10 +1553,266 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 4: ADMIN & PAYROLL CHECKOFF WITH SAVINGS/LOAN SEPARATION */}
+            {/* TAB 4: BENEFICIARIES & WELFARE CLAIMS */}
+            {activeTab === 'beneficiaries' && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Beneficiary Register */}
+                <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <Users className="w-5 h-5 text-emerald-400" />
+                    <h3 className="text-base sm:text-lg font-bold text-white">Nominated Beneficiaries (Next of Kin)</h3>
+                  </div>
+
+                  <form onSubmit={handleAddBeneficiary} className="space-y-3">
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">Full Name</label>
+                      <input
+                        type="text"
+                        required
+                        value={nokName}
+                        onChange={(e) => setNokName(e.target.value)}
+                        placeholder="e.g. Mary Atieno"
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-xs text-slate-400 mb-1">Relationship</label>
+                        <select
+                          value={nokRel}
+                          onChange={(e) => setNokRel(e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white"
+                        >
+                          <option value="Spouse">Spouse</option>
+                          <option value="Child">Child</option>
+                          <option value="Parent">Parent</option>
+                          <option value="Sibling">Sibling</option>
+                          <option value="Other">Other</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-400 mb-1">Share Allocation (%)</label>
+                        <input
+                          type="number"
+                          required
+                          min="1"
+                          max="100"
+                          value={nokPercent}
+                          onChange={(e) => setNokPercent(e.target.value)}
+                          placeholder="e.g. 50"
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-xs text-slate-400 mb-1">National ID</label>
+                        <input
+                          type="text"
+                          value={nokId}
+                          onChange={(e) => setNokId(e.target.value)}
+                          placeholder="ID Number"
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-400 mb-1">Phone Number</label>
+                        <input
+                          type="tel"
+                          required
+                          value={nokPhone}
+                          onChange={(e) => setNokPhone(e.target.value)}
+                          placeholder="07xxxxxxxx"
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white"
+                        />
+                      </div>
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2 rounded-lg text-xs transition cursor-pointer"
+                    >
+                      Save Beneficiary
+                    </button>
+                  </form>
+
+                  {/* Beneficiary List */}
+                  <div className="mt-4 pt-4 border-t border-slate-800 space-y-2">
+                    {beneficiaries.map((b) => (
+                      <div key={b.id} className="bg-slate-900 p-3 rounded-xl flex justify-between items-center text-xs">
+                        <div>
+                          <h5 className="font-bold text-white">{b.full_name} ({b.relationship})</h5>
+                          <p className="text-[11px] text-slate-400">Phone: {b.phone} • ID: {b.id_number || '-'}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="bg-emerald-950 text-emerald-300 font-bold px-2 py-0.5 rounded border border-emerald-800">
+                            {b.allocation_percentage}%
+                          </span>
+                          <button onClick={() => handleDeleteBeneficiary(b.id)} className="text-rose-400 hover:text-rose-300">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Welfare / Benevolent Claims */}
+                <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <HeartHandshake className="w-5 h-5 text-rose-400" />
+                    <h3 className="text-base sm:text-lg font-bold text-white">Benevolent & Welfare Claims</h3>
+                  </div>
+
+                  <form onSubmit={handleSubmitWelfareClaim} className="space-y-3">
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">Claim Category</label>
+                      <select
+                        value={claimType}
+                        onChange={(e) => setClaimType(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white"
+                      >
+                        <option value="hospitalization">Hospitalization / Medical Assistance</option>
+                        <option value="bereavement">Bereavement Support</option>
+                        <option value="disaster">Emergency Relief / Disaster</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">Amount Claimed (KES)</label>
+                      <input
+                        type="number"
+                        required
+                        value={claimAmount}
+                        onChange={(e) => setClaimAmount(e.target.value)}
+                        placeholder="e.g. 20000"
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">Details & Justification</label>
+                      <textarea
+                        required
+                        rows="3"
+                        value={claimDesc}
+                        onChange={(e) => setClaimDesc(e.target.value)}
+                        placeholder="Provide details for committee review..."
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className="w-full bg-rose-600 hover:bg-rose-500 text-white font-semibold py-2 rounded-lg text-xs transition cursor-pointer"
+                    >
+                      Submit Welfare Claim
+                    </button>
+                  </form>
+
+                  {/* Member Claims List */}
+                  <div className="mt-4 pt-4 border-t border-slate-800 space-y-2">
+                    {welfareClaims.map((c) => (
+                      <div key={c.id} className="bg-slate-900 p-3 rounded-xl flex justify-between items-center text-xs">
+                        <div>
+                          <span className={`text-[9px] uppercase font-bold px-2 py-0.5 rounded-full ${
+                            c.status === 'approved' ? 'bg-emerald-950 text-emerald-300' : 'bg-amber-950 text-amber-300'
+                          }`}>
+                            {c.status}
+                          </span>
+                          <h5 className="font-bold text-white capitalize mt-1">{c.claim_type}</h5>
+                          <p className="text-[11px] text-slate-400">{c.description}</p>
+                        </div>
+                        <span className="font-bold text-rose-400">
+                          KES {Number(c.amount_requested).toLocaleString()}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 5: M-PESA DIRECT PAYMENT */}
+            {activeTab === 'mpesa' && (
+              <div className="max-w-xl mx-auto bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-8 space-y-6">
+                <div className="flex items-center gap-3">
+                  <div className="bg-emerald-600 p-2.5 rounded-xl text-white">
+                    <Smartphone className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-white">Direct M-Pesa Payment & Top-Up</h3>
+                    <p className="text-xs text-slate-400">Instant Savings Deposit or Loan Repayment via Safaricom M-Pesa</p>
+                  </div>
+                </div>
+
+                <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-1 text-xs">
+                  <p className="text-slate-300 font-semibold">Paybill Instructions:</p>
+                  <p className="text-slate-400">Business No: <strong className="text-white font-mono">522522</strong> (KEWA SACCO)</p>
+                  <p className="text-slate-400">Account No: <strong className="text-emerald-400 font-mono">{profile?.member_number}</strong></p>
+                </div>
+
+                <form onSubmit={handleMpesaTransaction} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Destination Account</label>
+                    <select
+                      value={mpesaType}
+                      onChange={(e) => setMpesaType(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-xs text-white"
+                    >
+                      <option value="savings_deposit">Voluntary Savings Top-Up</option>
+                      <option value="loan_repayment">Direct Loan Repayment (Clear Balance)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">M-Pesa Phone Number</label>
+                    <input
+                      type="tel"
+                      required
+                      value={mpesaPhone || profile?.phone || ''}
+                      onChange={(e) => setMpesaPhone(e.target.value)}
+                      placeholder="0712345678"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-xs text-white font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Amount (KES)</label>
+                    <input
+                      type="number"
+                      required
+                      value={mpesaAmount}
+                      onChange={(e) => setMpesaAmount(e.target.value)}
+                      placeholder="e.g. 3000"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-xs text-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">M-Pesa Transaction Code (Optional for STK Push)</label>
+                    <input
+                      type="text"
+                      value={mpesaCode}
+                      onChange={(e) => setMpesaCode(e.target.value)}
+                      placeholder="e.g. QGH789KL12"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-xs text-white font-mono uppercase"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-xl text-sm transition shadow-lg flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <Send className="w-4 h-4" /> Confirm & Credit Account
+                  </button>
+                </form>
+              </div>
+            )}
+
+            {/* TAB 6: ADMIN HUB (CHECKOFF, NOTICE PUBLISHING, GOVERNANCE MULTI-SIG) */}
             {activeTab === 'admin' && (profile?.role === 'admin' || profile?.role === 'treasurer') && (
               <div className="space-y-6">
-                {/* DUAL PAYROLL CHECKOFF INGESTION */}
+                {/* 1. DUAL PAYROLL CHECKOFF INGESTION */}
                 <div className="bg-slate-950 border border-amber-900/40 rounded-2xl p-5 sm:p-6 shadow-xl">
                   <div className="flex items-center gap-2 mb-2">
                     <FileSpreadsheet className="w-5 h-5 text-amber-400" />
@@ -1335,128 +1897,138 @@ export default function App() {
                   )}
                 </div>
 
+                {/* 2. MULTI-SIGNATURE LOAN APPROVALS */}
+                <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <Clock className="w-5 h-5 text-amber-400" />
+                    <h3 className="text-base sm:text-lg font-bold text-white">Credit Committee Multi-Signature Governance</h3>
+                  </div>
+
+                  {allPendingLoans.length === 0 ? (
+                    <div className="text-center py-8 text-slate-500 text-sm">No loan applications awaiting committee approval.</div>
+                  ) : (
+                    <div className="space-y-4">
+                      {allPendingLoans.map((l) => (
+                        <div key={l.id} className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
+                          <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2">
+                            <div>
+                              <h4 className="text-sm font-bold text-white">{l.profiles?.full_name}</h4>
+                              <p className="text-xs text-slate-400">{l.profiles?.companies?.name} • {l.profiles?.member_number}</p>
+                              <p className="text-sm font-bold text-emerald-400 mt-1">
+                                KES {Number(l.principal_amount).toLocaleString()} ({l.repayment_period_months} Mos)
+                              </p>
+                            </div>
+
+                            {/* Dual Signatures */}
+                            <div className="flex flex-wrap gap-2">
+                              {!l.credit_officer_approval ? (
+                                <button
+                                  onClick={() => handleCreditOfficerApprove(l.id)}
+                                  className="bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1 cursor-pointer"
+                                >
+                                  <CheckCircle className="w-3.5 h-3.5" /> 1. Credit Officer Endorse
+                                </button>
+                              ) : (
+                                <span className="bg-amber-950 border border-amber-800 text-amber-300 text-xs px-3 py-2 rounded-lg font-bold">
+                                  ✓ Credit Officer Endorsed
+                                </span>
+                              )}
+
+                              <button
+                                onClick={() => handleChairmanFinalDisburse(l.id)}
+                                disabled={!l.credit_officer_approval}
+                                className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1 cursor-pointer"
+                              >
+                                <CheckCircle className="w-3.5 h-3.5" /> 2. Chairman Final Disburse
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 text-[11px] text-slate-400">
+                            <p className="font-semibold text-slate-300 mb-1">Guarantor Approvals:</p>
+                            <div className="space-y-1">
+                              {l.loan_guarantors?.map((g) => (
+                                <div key={g.id} className="flex justify-between">
+                                  <span>{g.profiles?.full_name}:</span>
+                                  <span className={g.status === 'accepted' ? 'text-emerald-400 font-bold' : 'text-amber-400'}>
+                                    {g.status.toUpperCase()} (KES {Number(g.amount_guaranteed).toLocaleString()})
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* 3. PUBLISH NOTICE & WELFARE CLAIMS APPROVAL */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* Manual Single Entry with Category Toggle */}
+                  {/* Publish Notice */}
                   <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
                     <div className="flex items-center gap-2 mb-4">
-                      <PlusCircle className="w-5 h-5 text-amber-400" />
-                      <h3 className="text-base sm:text-lg font-bold text-white">Manual Individual Entry</h3>
+                      <Bell className="w-5 h-5 text-amber-400" />
+                      <h4 className="text-base font-bold text-white">Post Announcement to Member Board</h4>
                     </div>
 
-                    <form onSubmit={handleRecordDeposit} className="space-y-3.5">
-                      <div className="flex gap-2 p-1 bg-slate-900 border border-slate-800 rounded-lg">
-                        <button
-                          type="button"
-                          onClick={() => setEntryCategory('savings')}
-                          className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${
-                            entryCategory === 'savings' ? 'bg-emerald-600 text-white' : 'text-slate-400'
-                          }`}
-                        >
-                          Savings Contribution
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setEntryCategory('loan_repayment')}
-                          className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${
-                            entryCategory === 'loan_repayment' ? 'bg-amber-600 text-white' : 'text-slate-400'
-                          }`}
-                        >
-                          Loan Repayment
-                        </button>
-                      </div>
-
+                    <form onSubmit={handlePublishNotice} className="space-y-3">
                       <div>
-                        <label className="block text-xs font-semibold text-slate-300 mb-1">Select Member</label>
-                        <select
-                          value={targetMemberId}
-                          onChange={(e) => setTargetMemberId(e.target.value)}
-                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
-                        >
-                          {allMembers.map((m) => (
-                            <option key={m.id} value={m.id}>
-                              {m.full_name} ({m.member_number}) - {m.companies?.name}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-300 mb-1">Amount (KES)</label>
-                        <input
-                          type="number"
-                          required
-                          value={depositAmount}
-                          onChange={(e) => setDepositAmount(e.target.value)}
-                          placeholder="e.g. 3500"
-                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-300 mb-1">Reference</label>
+                        <label className="block text-xs text-slate-400 mb-1">Announcement Title</label>
                         <input
                           type="text"
-                          value={depositRef}
-                          onChange={(e) => setDepositRef(e.target.value)}
-                          placeholder="e.g. PAY-AUG-2026"
-                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
+                          required
+                          value={newNoticeTitle}
+                          onChange={(e) => setNewNoticeTitle(e.target.value)}
+                          placeholder="e.g. Dividend Rates Declared for Financial Year"
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white"
                         />
                       </div>
-
+                      <div>
+                        <label className="block text-xs text-slate-400 mb-1">Notice Body Content</label>
+                        <textarea
+                          required
+                          rows="3"
+                          value={newNoticeContent}
+                          onChange={(e) => setNewNoticeContent(e.target.value)}
+                          placeholder="Write message to all cooperative members..."
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white"
+                        />
+                      </div>
                       <button
                         type="submit"
                         disabled={loading}
-                        className="w-full bg-amber-600 hover:bg-amber-500 text-white font-semibold py-2.5 rounded-lg text-sm transition mt-2 cursor-pointer"
+                        className="w-full bg-amber-600 hover:bg-amber-500 text-white font-semibold py-2 rounded-lg text-xs transition cursor-pointer"
                       >
-                        Post Single Entry
+                        Publish Notice
                       </button>
                     </form>
                   </div>
 
-                  {/* Loan Approvals */}
+                  {/* Welfare Claims Review */}
                   <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
                     <div className="flex items-center gap-2 mb-4">
-                      <Clock className="w-5 h-5 text-amber-400" />
-                      <h3 className="text-base sm:text-lg font-bold text-white">Pending Loan Approvals</h3>
+                      <HeartHandshake className="w-5 h-5 text-rose-400" />
+                      <h4 className="text-base font-bold text-white">Pending Welfare Benevolent Claims</h4>
                     </div>
 
-                    {allPendingLoans.length === 0 ? (
-                      <div className="text-center py-12 text-slate-500 text-sm">
-                        No loan applications awaiting approval.
-                      </div>
+                    {allPendingClaims.length === 0 ? (
+                      <div className="text-center py-8 text-slate-500 text-sm">No pending benevolent claims.</div>
                     ) : (
                       <div className="space-y-3">
-                        {allPendingLoans.map((l) => (
-                          <div key={l.id} className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-2">
-                            <div className="flex justify-between items-start">
-                              <div>
-                                <h4 className="text-sm font-bold text-white">{l.profiles?.full_name}</h4>
-                                <p className="text-xs text-slate-400">{l.profiles?.companies?.name} • {l.profiles?.member_number}</p>
-                                <p className="text-sm font-bold text-emerald-400 mt-1">
-                                  KES {Number(l.principal_amount).toLocaleString()} ({l.repayment_period_months} Mos)
-                                </p>
-                              </div>
-                              <button
-                                onClick={() => handleApproveLoan(l.id)}
-                                className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3.5 py-2 rounded-lg flex items-center gap-1.5 transition cursor-pointer"
-                              >
-                                <CheckCircle className="w-4 h-4" /> Approve
-                              </button>
+                        {allPendingClaims.map((c) => (
+                          <div key={c.id} className="bg-slate-900 border border-slate-800 p-3 rounded-xl flex justify-between items-center text-xs">
+                            <div>
+                              <h5 className="font-bold text-white">{c.profiles?.full_name}</h5>
+                              <p className="text-[11px] text-slate-400 capitalize">{c.claim_type}: {c.description}</p>
+                              <p className="font-bold text-rose-400 mt-0.5">KES {Number(c.amount_requested).toLocaleString()}</p>
                             </div>
-
-                            <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 text-[11px] text-slate-400">
-                              <p className="font-semibold text-slate-300 mb-1">Guarantor Verification:</p>
-                              <div className="space-y-1">
-                                {l.loan_guarantors?.map((g) => (
-                                  <div key={g.id} className="flex justify-between">
-                                    <span>{g.profiles?.full_name}:</span>
-                                    <span className={g.status === 'accepted' ? 'text-emerald-400 font-bold' : 'text-amber-400'}>
-                                      {g.status.toUpperCase()} (KES {Number(g.amount_guaranteed).toLocaleString()})
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
+                            <button
+                              onClick={() => handleApproveWelfareClaim(c.id)}
+                              className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1.5 rounded-lg text-xs cursor-pointer"
+                            >
+                              Approve Claim
+                            </button>
                           </div>
                         ))}
                       </div>
@@ -1465,54 +2037,74 @@ export default function App() {
                 </div>
               </div>
             )}
-          </div>
+          </>
         )}
       </main>
 
-      {/* Mobile Bottom Nav */}
+      {/* Persistent Bottom Navigation Bar */}
       {session && (
-        <div className="md:hidden fixed bottom-0 left-0 right-0 bg-slate-950/95 backdrop-blur border-t border-slate-800 flex justify-around items-center py-2 px-2 z-50">
+        <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-slate-950/95 backdrop-blur border-t border-slate-800 flex justify-around items-center py-2 px-1 z-50">
           <button
             onClick={() => setActiveTab('overview')}
-            className={`flex flex-col items-center gap-1 text-[10px] font-semibold py-1 px-3 rounded-lg transition ${
+            className={`flex flex-col items-center gap-1 text-[9px] font-semibold py-1 px-2 transition ${
               activeTab === 'overview' ? 'text-emerald-400' : 'text-slate-400'
             }`}
           >
-            <PiggyBank className="w-5 h-5" />
+            <PiggyBank className="w-4 h-4" />
             <span>Overview</span>
           </button>
 
           <button
             onClick={() => setActiveTab('loans')}
-            className={`flex flex-col items-center gap-1 text-[10px] font-semibold py-1 px-3 rounded-lg transition ${
+            className={`flex flex-col items-center gap-1 text-[9px] font-semibold py-1 px-2 transition ${
               activeTab === 'loans' ? 'text-emerald-400' : 'text-slate-400'
             }`}
           >
-            <Calculator className="w-5 h-5" />
+            <Calculator className="w-4 h-4" />
             <span>Loans</span>
           </button>
 
           <button
             onClick={() => setActiveTab('guarantors')}
-            className={`flex flex-col items-center gap-1 text-[10px] font-semibold py-1 px-3 rounded-lg relative transition ${
+            className={`flex flex-col items-center gap-1 text-[9px] font-semibold py-1 px-2 relative transition ${
               activeTab === 'guarantors' ? 'text-emerald-400' : 'text-slate-400'
             }`}
           >
-            <Users className="w-5 h-5" />
+            <Users className="w-4 h-4" />
             <span>Guarantors</span>
             {pendingGuaranteesCount > 0 && (
-              <span className="absolute top-0 right-2 w-2 h-2 bg-rose-500 rounded-full animate-ping" />
+              <span className="absolute top-0 right-1.5 w-2 h-2 bg-rose-500 rounded-full animate-ping" />
             )}
+          </button>
+
+          <button
+            onClick={() => setActiveTab('beneficiaries')}
+            className={`flex flex-col items-center gap-1 text-[9px] font-semibold py-1 px-2 transition ${
+              activeTab === 'beneficiaries' ? 'text-emerald-400' : 'text-slate-400'
+            }`}
+          >
+            <HeartHandshake className="w-4 h-4" />
+            <span>Welfare</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('mpesa')}
+            className={`flex flex-col items-center gap-1 text-[9px] font-semibold py-1 px-2 transition ${
+              activeTab === 'mpesa' ? 'text-emerald-400' : 'text-slate-400'
+            }`}
+          >
+            <Smartphone className="w-4 h-4" />
+            <span>M-Pesa</span>
           </button>
 
           {(profile?.role === 'admin' || profile?.role === 'treasurer') && (
             <button
               onClick={() => setActiveTab('admin')}
-              className={`flex flex-col items-center gap-1 text-[10px] font-semibold py-1 px-3 rounded-lg transition ${
+              className={`flex flex-col items-center gap-1 text-[9px] font-semibold py-1 px-2 transition ${
                 activeTab === 'admin' ? 'text-amber-400' : 'text-slate-400'
               }`}
             >
-              <ShieldCheck className="w-5 h-5" />
+              <ShieldCheck className="w-4 h-4" />
               <span>Admin</span>
             </button>
           )}

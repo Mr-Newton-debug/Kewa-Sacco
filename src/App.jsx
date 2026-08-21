@@ -50,12 +50,12 @@ export default function App() {
   const [auditLogs, setAuditLogs] = useState([]);
   const [message, setMessage] = useState({ text: '', type: '' });
 
-  // Loan Application State with Dynamic Guarantor Eligibility
+  // Loan Application State with Blind Privacy Verification
   const [loanProduct, setLoanProduct] = useState('main_loan');
   const [loanPrincipal, setLoanPrincipal] = useState(20000);
   const [loanMonths, setLoanMonths] = useState(12);
   const [interestRate, setInterestRate] = useState(1.0);
-  const [guarantorList, setGuarantorList] = useState([{ guarantorId: '', amount: '', freeShares: null, eligible: true, note: '' }]);
+  const [guarantorList, setGuarantorList] = useState([{ guarantorId: '', amount: '', eligible: true, note: '' }]);
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [termsAgreed, setTermsAgreed] = useState(false);
 
@@ -400,16 +400,18 @@ export default function App() {
   const calculatedTotal = Number(loanPrincipal) + calculatedInterest;
   const monthlyInstallment = calculatedTotal / loanMonths;
 
-  // --- DYNAMIC GUARANTOR ELIGIBILITY CHECK ---
-  const checkGuarantorEligibility = async (index, memberId) => {
+  // --- BLIND PRIVACY VERIFICATION ENGINE ---
+  // Evaluates eligibility internally without displaying the colleague's balance
+  const checkBlindGuarantorEligibility = async (index, memberId, currentPledgeAmount = null) => {
+    const updated = [...guarantorList];
+    const pledgeToEvaluate = currentPledgeAmount !== null ? Number(currentPledgeAmount) : Number(updated[index].amount || 0);
+
     if (!memberId) {
-      const updated = [...guarantorList];
-      updated[index] = { guarantorId: '', amount: '', freeShares: null, eligible: true, note: '' };
+      updated[index] = { guarantorId: '', amount: '', eligible: true, note: '' };
       setGuarantorList(updated);
       return;
     }
 
-    // 1. Fetch live savings & loans to calculate free shares
     const { data: memberSavings } = await supabase.from('savings_ledger').select('amount').eq('member_id', memberId);
     const { data: memberLoans } = await supabase.from('loans').select('balance_remaining').eq('member_id', memberId).in('status', ['approved', 'disbursed']);
     const { data: memberGuarantees } = await supabase.from('loan_guarantors').select('amount_guaranteed, loans(status)').eq('guarantor_id', memberId).eq('status', 'accepted');
@@ -421,16 +423,28 @@ export default function App() {
       .reduce((sum, g) => sum + Number(g.amount_guaranteed || 0), 0);
 
     const calculatedFreeShares = Math.max(0, totSav - totLoan - totGuar);
-    const isEligible = calculatedFreeShares > 0;
-    const noteMsg = isEligible 
-      ? `Eligible: Has KES ${calculatedFreeShares.toLocaleString()} Free Shares available.`
-      : `⚠️ Ineligible: Member has KES 0 unencumbered Free Shares (Savings fully tied to loans/guarantees).`;
 
-    const updated = [...guarantorList];
+    // Private Blind Check (Does not expose exact figures)
+    let isEligible = true;
+    let noteMsg = '';
+
+    if (calculatedFreeShares <= 0) {
+      isEligible = false;
+      noteMsg = '⚠️ Ineligible: Colleague currently has no unencumbered Free Shares available.';
+    } else if (pledgeToEvaluate > 0 && pledgeToEvaluate > calculatedFreeShares) {
+      isEligible = false;
+      noteMsg = '⚠️ Insufficient Free Shares: Colleague cannot cover this requested pledge amount.';
+    } else if (pledgeToEvaluate > 0 && pledgeToEvaluate <= calculatedFreeShares) {
+      isEligible = true;
+      noteMsg = '✓ Eligible: Colleague has sufficient Free Shares for this pledge amount.';
+    } else {
+      isEligible = true;
+      noteMsg = '✓ Eligible to guarantee.';
+    }
+
     updated[index] = {
       ...updated[index],
       guarantorId: memberId,
-      freeShares: calculatedFreeShares,
       eligible: isEligible,
       note: noteMsg
     };
@@ -438,18 +452,23 @@ export default function App() {
   };
 
   const addGuarantorRow = () => {
-    setGuarantorList([...guarantorList, { guarantorId: '', amount: '', freeShares: null, eligible: true, note: '' }]);
+    setGuarantorList([...guarantorList, { guarantorId: '', amount: '', eligible: true, note: '' }]);
   };
 
   const removeGuarantorRow = (index) => {
     const updated = guarantorList.filter((_, i) => i !== index);
-    setGuarantorList(updated.length > 0 ? updated : [{ guarantorId: '', amount: '', freeShares: null, eligible: true, note: '' }]);
+    setGuarantorList(updated.length > 0 ? updated : [{ guarantorId: '', amount: '', eligible: true, note: '' }]);
   };
 
   const updateGuarantorRow = (index, field, value) => {
     const updated = [...guarantorList];
     updated[index][field] = value;
     setGuarantorList(updated);
+
+    // Re-verify blind status whenever the pledge amount changes
+    if (field === 'amount' && updated[index].guarantorId) {
+      checkBlindGuarantorEligibility(index, updated[index].guarantorId, value);
+    }
   };
 
   const handleInitiateLoan = (e) => {
@@ -468,11 +487,10 @@ export default function App() {
         return;
       }
 
-      // Check if any selected guarantor is ineligible or overpledged
       for (const g of validGuarantors) {
-        if (!g.eligible || (g.freeShares !== null && Number(g.amount) > g.freeShares)) {
+        if (!g.eligible) {
           setMessage({
-            text: `Guarantor allocation error: A selected member has insufficient Free Shares for the pledged amount.`,
+            text: `Guarantor verification error: A selected colleague does not have sufficient unencumbered savings for this pledge.`,
             type: 'error',
           });
           return;
@@ -530,7 +548,7 @@ export default function App() {
     logAuditAction('LOAN_APPLICATION_SUBMITTED', `${loanProduct.toUpperCase()} applied: KES ${loanPrincipal.toLocaleString()} (Terms Accepted)`);
 
     setMessage({ text: `Loan submitted! Pipeline: 1. Assistant Chair -> 2. Chairman -> 3. Treasurer.`, type: 'success' });
-    setGuarantorList([{ guarantorId: '', amount: '', freeShares: null, eligible: true, note: '' }]);
+    setGuarantorList([{ guarantorId: '', amount: '', eligible: true, note: '' }]);
     fetchUserData(session.user.id);
     setLoading(false);
   };
@@ -545,7 +563,6 @@ export default function App() {
     if (signatoryRole === 'assistant_chair') {
       updatePayload.assistant_chair_approval = isSign;
       if (!isSign) {
-        // Revoking stage 1 also revokes subsequent stages
         updatePayload.chairman_approval = false;
         updatePayload.treasurer_approval = false;
         updatePayload.status = 'pending';
@@ -1736,7 +1753,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 2: LOANS WITH REAL-TIME GUARANTOR ELIGIBILITY CHECK */}
+            {/* TAB 2: LOANS WITH BLIND PRIVACY VERIFICATION */}
             {activeTab === 'loans' && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-7 shadow-lg">
@@ -1833,13 +1850,13 @@ export default function App() {
                       />
                     </div>
 
-                    {/* DYNAMIC GUARANTORS SYSTEM WITH FREE SHARES AUDITING */}
+                    {/* DYNAMIC GUARANTORS SYSTEM WITH BLIND PRIVACY VERIFICATION */}
                     {loanProduct !== 'monthly_shylock' && (
                       <div className="border-t border-slate-800 pt-4 space-y-3">
                         <div className="flex justify-between items-center">
                           <div>
                             <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wide">Assign Member Guarantors</h4>
-                            <p className="text-[11px] text-slate-400">System checks colleagues' Free Shares in real-time</p>
+                            <p className="text-[11px] text-slate-400">Private blind verification protects colleagues' personal balances</p>
                           </div>
                           <button
                             type="button"
@@ -1858,7 +1875,7 @@ export default function App() {
                                 <select
                                   required
                                   value={g.guarantorId}
-                                  onChange={(e) => checkGuarantorEligibility(index, e.target.value)}
+                                  onChange={(e) => checkBlindGuarantorEligibility(index, e.target.value)}
                                   className="w-full bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-2 text-xs text-white"
                                 >
                                   <option value="">Select colleague...</option>
@@ -1893,14 +1910,14 @@ export default function App() {
                               )}
                             </div>
 
-                            {/* Eligibility Banner / Real-Time Audit */}
+                            {/* Blind Privacy Verification Status Banner (Exact Figures are Hidden) */}
                             {g.guarantorId && (
-                              <div className={`p-2 rounded-xl text-[11px] font-medium flex items-center gap-1.5 ${
-                                g.eligible && (g.freeShares >= Number(g.amount || 0))
+                              <div className={`p-2.5 rounded-xl text-[11px] font-semibold flex items-center gap-1.5 ${
+                                g.eligible
                                   ? 'bg-emerald-950/60 border border-emerald-800/60 text-emerald-300'
                                   : 'bg-rose-950/60 border border-rose-800/60 text-rose-300'
                               }`}>
-                                {g.eligible && (g.freeShares >= Number(g.amount || 0)) ? (
+                                {g.eligible ? (
                                   <>
                                     <CheckCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                                     <span>{g.note}</span>
@@ -1908,7 +1925,7 @@ export default function App() {
                                 ) : (
                                   <>
                                     <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
-                                    <span>{g.note || `Pledged amount (KES ${Number(g.amount).toLocaleString()}) exceeds Free Shares (KES ${g.freeShares?.toLocaleString()}).`}</span>
+                                    <span>{g.note}</span>
                                   </>
                                 )}
                               </div>
@@ -1982,7 +1999,6 @@ export default function App() {
                             </button>
                           </div>
 
-                          {/* Sequential 3-Signatory Progress Indicators */}
                           <div className="bg-slate-900 p-3 rounded-xl border border-slate-800/80 text-[11px] space-y-1.5">
                             <p className="text-slate-400 font-semibold mb-1">Sequential 3-Signatory Progress:</p>
                             <div className="grid grid-cols-3 gap-1.5 text-center font-mono">

@@ -9,7 +9,7 @@ import {
   Calculator, CheckCircle, XCircle, Clock, ShieldCheck, Download, 
   Users, Trash2, Plus, Menu, X, UploadCloud, FileSpreadsheet, 
   ArrowDownRight, ArrowUpRight, HeartHandshake, Bell, Smartphone, 
-  Award, ShieldAlert, FileText, Send
+  Award, ShieldAlert, FileText, Send, History, CheckSquare
 } from 'lucide-react';
 
 export default function App() {
@@ -27,6 +27,7 @@ export default function App() {
   const [idNumber, setIdNumber] = useState('');
   const [phone, setPhone] = useState('');
   const [companyId, setCompanyId] = useState('');
+  const [odpcConsent, setOdpcConsent] = useState(false);
 
   // Core Data State
   const [companies, setCompanies] = useState([]);
@@ -42,6 +43,7 @@ export default function App() {
   const [welfareClaims, setWelfareClaims] = useState([]);
   const [allPendingLoans, setAllPendingLoans] = useState([]);
   const [allPendingClaims, setAllPendingClaims] = useState([]);
+  const [auditLogs, setAuditLogs] = useState([]);
   const [message, setMessage] = useState({ text: '', type: '' });
 
   // Loan Application State
@@ -62,17 +64,17 @@ export default function App() {
   const [claimAmount, setClaimAmount] = useState('');
   const [claimDesc, setClaimDesc] = useState('');
 
-  // M-Pesa Simulation Form State
+  // M-Pesa State
   const [mpesaPhone, setMpesaPhone] = useState('');
   const [mpesaAmount, setMpesaAmount] = useState('');
   const [mpesaType, setMpesaType] = useState('savings_deposit');
   const [mpesaCode, setMpesaCode] = useState('');
 
   // Dividend Simulator State
-  const [dividendRate, setDividendRate] = useState(10.0); // % on Share Capital
-  const [interestOnDepositsRate, setInterestOnDepositsRate] = useState(8.5); // % on Savings
+  const [dividendRate, setDividendRate] = useState(10.0);
+  const [interestOnDepositsRate, setInterestOnDepositsRate] = useState(8.5);
 
-  // Admin Batch / Checkoff State
+  // Admin Hub State
   const [targetMemberId, setTargetMemberId] = useState('');
   const [entryCategory, setEntryCategory] = useState('savings');
   const [depositAmount, setDepositAmount] = useState('');
@@ -99,6 +101,7 @@ export default function App() {
         setLoans([]);
         setRepayments([]);
         setBeneficiaries([]);
+        setAuditLogs([]);
       }
     });
 
@@ -106,6 +109,21 @@ export default function App() {
     fetchAnnouncements();
     return () => subscription.unsubscribe();
   }, []);
+
+  const logAuditAction = async (action, details, userId = null, userName = null) => {
+    try {
+      await supabase.from('audit_logs').insert([
+        {
+          user_id: userId || session?.user?.id || null,
+          user_name: userName || profile?.full_name || 'System User',
+          action,
+          details,
+        },
+      ]);
+    } catch (e) {
+      console.warn('Audit log write skipped:', e);
+    }
+  };
 
   const fetchCompanies = async () => {
     const { data } = await supabase.from('companies').select('*');
@@ -175,7 +193,6 @@ export default function App() {
   };
 
   const fetchGuarantorData = async (userId) => {
-    // Requests received to guarantee others
     const { data: requests } = await supabase
       .from('loan_guarantors')
       .select('*, loans(*, profiles:member_id(full_name, member_number, companies(name)))')
@@ -183,7 +200,6 @@ export default function App() {
       .order('created_at', { ascending: false });
     if (requests) setGuarantorRequests(requests);
 
-    // Active guarantees currently accepted that tie up savings
     const { data: activeGuarantees } = await supabase
       .from('loan_guarantors')
       .select('*, loans(status, balance_remaining)')
@@ -233,6 +249,13 @@ export default function App() {
       .select('*, profiles(full_name, member_number, companies(name))')
       .eq('status', 'pending');
     if (claims) setAllPendingClaims(claims);
+
+    const { data: logs } = await supabase
+      .from('audit_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(20);
+    if (logs) setAuditLogs(logs);
   };
 
   const handleLogin = async (e) => {
@@ -240,13 +263,21 @@ export default function App() {
     setLoading(true);
     setMessage({ text: '', type: '' });
 
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) setMessage({ text: error.message, type: 'error' });
+    else {
+      logAuditAction('LOGIN', `Member logged in via web portal`, data?.user?.id, email);
+    }
     setLoading(false);
   };
 
   const handleRegister = async (e) => {
     e.preventDefault();
+    if (!odpcConsent) {
+      setMessage({ text: 'Please accept the Data Protection Act (ODPC) privacy terms to continue.', type: 'error' });
+      return;
+    }
+
     setLoading(true);
     setMessage({ text: '', type: '' });
 
@@ -272,24 +303,25 @@ export default function App() {
       ]);
 
       if (profileError) setMessage({ text: profileError.message, type: 'error' });
-      else setMessage({ text: 'Account created successfully!', type: 'success' });
+      else {
+        logAuditAction('REGISTER_ACCOUNT', `New member profile created for ${fullName} (${memberNumber})`, authData.user.id, fullName);
+        setMessage({ text: 'Account created successfully!', type: 'success' });
+      }
     }
     setLoading(false);
   };
 
-  // --- SASRA COMPLIANT FINANCIAL CALCULATIONS ---
+  // Financial Metrics
   const totalSavings = savings.reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
   const activeLoanBalance = loans
     .filter((l) => l.status === 'approved' || l.status === 'disbursed')
     .reduce((acc, curr) => acc + Number(curr.balance_remaining || 0), 0);
 
-  // Active liability committed to guarantee other members
   const totalGuaranteesCommittedAmount = myGuaranteesCommitted.reduce(
     (acc, curr) => acc + Number(curr.amount_guaranteed || 0),
     0
   );
 
-  // Free Shares Safeguard Formula
   const freeSharesAvailable = Math.max(0, totalSavings - activeLoanBalance - totalGuaranteesCommittedAmount);
   const loanLimit = Math.max(totalSavings * 3, 10000);
 
@@ -297,7 +329,6 @@ export default function App() {
   const calculatedTotal = Number(loanPrincipal) + calculatedInterest;
   const monthlyInstallment = calculatedTotal / loanMonths;
 
-  // Multi-Guarantor Handlers
   const addGuarantorRow = () => {
     setGuarantorList([...guarantorList, { guarantorId: '', amount: '' }]);
   };
@@ -312,8 +343,6 @@ export default function App() {
     updated[index][field] = value;
     setGuarantorList(updated);
   };
-
-  const totalGuaranteedEntered = guarantorList.reduce((sum, g) => sum + Number(g.amount || 0), 0);
 
   const handleApplyLoan = async (e) => {
     e.preventDefault();
@@ -368,6 +397,7 @@ export default function App() {
     }));
 
     await supabase.from('loan_guarantors').insert(guarantorsToInsert);
+    logAuditAction('LOAN_APPLICATION_SUBMITTED', `Loan requested KES ${loanPrincipal.toLocaleString()} with ${validGuarantors.length} guarantors`);
 
     setMessage({ text: `Loan request submitted with ${validGuarantors.length} assigned guarantors!`, type: 'success' });
     setGuarantorList([{ guarantorId: '', amount: '' }]);
@@ -376,7 +406,6 @@ export default function App() {
   };
 
   const handleRespondGuarantor = async (guaranteeId, status, pledgeAmount) => {
-    // Check if guarantor has enough free shares
     if (status === 'accepted' && Number(pledgeAmount) > freeSharesAvailable) {
       setMessage({
         text: `Cannot accept guarantee: Pledged KES ${Number(pledgeAmount).toLocaleString()} exceeds your available Free Shares (KES ${freeSharesAvailable.toLocaleString()}).`,
@@ -391,13 +420,13 @@ export default function App() {
       .eq('id', guaranteeId);
 
     if (!error) {
+      logAuditAction('GUARANTOR_RESPONSE', `Marked pledge as ${status} (KES ${Number(pledgeAmount).toLocaleString()})`);
       fetchGuarantorData(session.user.id);
       fetchUserData(session.user.id);
       setMessage({ text: `Guarantor response recorded: ${status}.`, type: 'success' });
     }
   };
 
-  // --- BENEFICIARY / NEXT OF KIN HANDLERS ---
   const handleAddBeneficiary = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -424,6 +453,7 @@ export default function App() {
 
     if (error) setMessage({ text: error.message, type: 'error' });
     else {
+      logAuditAction('BENEFICIARY_ADDED', `Registered next of kin ${nokName} (${nokPercent}%)`);
       setMessage({ text: 'Beneficiary registered successfully!', type: 'success' });
       setNokName('');
       setNokId('');
@@ -436,10 +466,10 @@ export default function App() {
 
   const handleDeleteBeneficiary = async (id) => {
     await supabase.from('next_of_kin').delete().eq('id', id);
+    logAuditAction('BENEFICIARY_DELETED', `Deleted next-of-kin record ID ${id}`);
     fetchBeneficiaries(session.user.id);
   };
 
-  // --- WELFARE / BENEVOLENT CLAIM HANDLERS ---
   const handleSubmitWelfareClaim = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -456,6 +486,7 @@ export default function App() {
 
     if (error) setMessage({ text: error.message, type: 'error' });
     else {
+      logAuditAction('WELFARE_CLAIM_FILED', `Welfare claim submitted for KES ${claimAmount} (${claimType})`);
       setMessage({ text: 'Welfare claim submitted for committee review.', type: 'success' });
       setClaimAmount('');
       setClaimDesc('');
@@ -464,15 +495,12 @@ export default function App() {
     setLoading(false);
   };
 
-  // --- M-PESA INSTANT REPAYMENT / DEPOSIT HANDLER ---
   const handleMpesaTransaction = async (e) => {
     e.preventDefault();
     setLoading(true);
 
-    // Generate reference code if not provided
     const receipt = mpesaCode.trim().toUpperCase() || `MP${Math.random().toString(36).substr(2, 8).toUpperCase()}`;
 
-    // Record M-Pesa Transaction
     await supabase.from('mpesa_transactions').insert([
       {
         member_id: session.user.id,
@@ -493,6 +521,7 @@ export default function App() {
           reference_code: `MPESA-${receipt}`,
         },
       ]);
+      logAuditAction('MPESA_SAVINGS_DEPOSIT', `KES ${mpesaAmount} credited via M-Pesa ${receipt}`);
       setMessage({ text: `M-Pesa payment received! KES ${Number(mpesaAmount).toLocaleString()} credited to Savings.`, type: 'success' });
     } else if (mpesaType === 'loan_repayment') {
       const { data: memberLoan } = await supabase
@@ -523,9 +552,8 @@ export default function App() {
           })
           .eq('id', memberLoan.id);
 
+        logAuditAction('MPESA_LOAN_REPAYMENT', `KES ${mpesaAmount} loan repayment via M-Pesa ${receipt}`);
         setMessage({ text: `M-Pesa payment received! KES ${Number(mpesaAmount).toLocaleString()} deducted from active loan.`, type: 'success' });
-      } else {
-        setMessage({ text: 'No active loan found to apply repayment. Credited to savings instead.', type: 'error' });
       }
     }
 
@@ -535,7 +563,6 @@ export default function App() {
     setLoading(false);
   };
 
-  // --- ADMIN CHECKOFF & MULTI-SIG APPROVALS ---
   const handleCSVUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -627,6 +654,7 @@ export default function App() {
       }
     }
 
+    logAuditAction('PAYROLL_CHECKOFF_EXECUTED', `Batch payroll processed for ${batchMonth} (${validRows.length} members)`);
     setMessage({
       text: `Batch checkoff processed: ${savingsInserts.length} savings credits and ${loanRows.length} loan deductions applied!`,
       type: 'success',
@@ -649,6 +677,7 @@ export default function App() {
       },
     ]);
 
+    logAuditAction('ANNOUNCEMENT_POSTED', `Notice published: "${newNoticeTitle}"`);
     setNewNoticeTitle('');
     setNewNoticeContent('');
     fetchAnnouncements();
@@ -657,23 +686,25 @@ export default function App() {
 
   const handleApproveWelfareClaim = async (claimId) => {
     await supabase.from('welfare_claims').update({ status: 'approved' }).eq('id', claimId);
+    logAuditAction('WELFARE_CLAIM_APPROVED', `Claim ID ${claimId} approved by Admin`);
     fetchAdminData();
     fetchUserData(session.user.id);
   };
 
   const handleCreditOfficerApprove = async (loanId) => {
     await supabase.from('loans').update({ credit_officer_approval: true }).eq('id', loanId);
+    logAuditAction('LOAN_CREDIT_OFFICER_ENDORSED', `Credit officer endorsed Loan ID ${loanId}`);
     fetchAdminData();
   };
 
   const handleChairmanFinalDisburse = async (loanId) => {
     await supabase.from('loans').update({ chairman_approval: true, status: 'approved' }).eq('id', loanId);
+    logAuditAction('LOAN_FINAL_DISBURSED', `Chairman approved & disbursed Loan ID ${loanId}`);
     fetchAdminData();
     fetchUserData(session.user.id);
     setMessage({ text: 'Loan approved with multi-signature authorization and disbursed!', type: 'success' });
   };
 
-  // --- PDF GENERATOR (CONSOLIDATED AUDIT REPORT) ---
   const generatePDFStatement = (loan = null) => {
     try {
       const doc = new jsPDF();
@@ -718,7 +749,6 @@ export default function App() {
           headStyles: { fillColor: [6, 78, 59] },
         });
       } else {
-        // 1. Savings
         doc.setFontSize(11);
         doc.setTextColor(6, 78, 59);
         doc.text('1. Monthly Savings & Shares Contributions', 14, 78);
@@ -738,7 +768,6 @@ export default function App() {
           headStyles: { fillColor: [6, 78, 59] },
         });
 
-        // 2. Loan Deductions
         const loanY = doc.lastAutoTable.finalY + 10;
         doc.setFontSize(11);
         doc.setTextColor(180, 83, 9);
@@ -775,7 +804,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 font-sans pb-20 sm:pb-12">
-      {/* Top Header */}
+      {/* Header */}
       <header className="border-b border-slate-800 bg-slate-950/95 backdrop-blur px-4 sm:px-6 py-3.5 flex justify-between items-center sticky top-0 z-50">
         <div className="flex items-center gap-3">
           <div className="bg-emerald-600 p-2 rounded-xl shadow-lg shadow-emerald-900/30">
@@ -789,7 +818,6 @@ export default function App() {
 
         {session && (
           <div className="flex items-center gap-2">
-            {/* Desktop Navigation */}
             <div className="hidden lg:flex items-center gap-1.5 bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs font-semibold">
               <button
                 onClick={() => setActiveTab('overview')}
@@ -855,7 +883,6 @@ export default function App() {
               <LogOut className="w-3.5 h-3.5" /> Exit
             </button>
 
-            {/* Mobile Extended Drawer Button */}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               className="lg:hidden flex items-center justify-center p-2 rounded-xl bg-slate-900 border border-slate-700 text-white"
@@ -923,7 +950,7 @@ export default function App() {
                 activeTab === 'admin' ? 'bg-amber-600 text-white' : 'bg-slate-900/50 text-amber-300'
               }`}
             >
-              <ShieldCheck className="w-4 h-4" /> Admin Hub & Checkoff
+              <ShieldCheck className="w-4 h-4" /> Admin Hub & Audit
             </button>
           )}
           <div className="pt-2 border-t border-slate-800">
@@ -952,7 +979,7 @@ export default function App() {
         )}
 
         {!session ? (
-          /* AUTH VIEW */
+          /* AUTH VIEW WITH DATA PROTECTION CONSENT */
           <div className="max-w-md mx-auto mt-4 sm:mt-8 bg-slate-950 border border-slate-800 rounded-2xl p-6 sm:p-8 shadow-2xl">
             <div className="text-center mb-6">
               <h2 className="text-2xl font-bold text-white">
@@ -1052,6 +1079,23 @@ export default function App() {
                 />
               </div>
 
+              {/* Data Protection Act (ODPC) Disclaimer Checkbox */}
+              {authMode === 'register' && (
+                <div className="flex items-start gap-2 pt-1">
+                  <input
+                    type="checkbox"
+                    id="odpc"
+                    required
+                    checked={odpcConsent}
+                    onChange={(e) => setOdpcConsent(e.target.checked)}
+                    className="mt-1 accent-emerald-500 rounded"
+                  />
+                  <label htmlFor="odpc" className="text-[11px] text-slate-400 leading-tight">
+                    I consent to KEWA SACCO collecting and processing my data in strict compliance with the <strong>Kenya Data Protection Act (2019)</strong>.
+                  </label>
+                </div>
+              )}
+
               <button
                 type="submit"
                 disabled={loading}
@@ -1080,7 +1124,7 @@ export default function App() {
             </div>
           </div>
         ) : (
-          /* AUTHENTICATED SYSTEM */
+          /* AUTHENTICATED TABS */
           <>
             {/* Header Member Information Banner */}
             <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 sm:p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -1103,7 +1147,6 @@ export default function App() {
             {/* TAB 1: OVERVIEW & NOTICE BOARD & DIVIDEND SIMULATOR */}
             {activeTab === 'overview' && (
               <div className="space-y-6">
-                {/* 4 Core Financial KPI Metric Cards */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 flex items-center justify-between">
                     <div>
@@ -1154,7 +1197,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* OFFICIAL NOTICE BOARD */}
                 <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
                   <div className="flex items-center gap-2 mb-3">
                     <Bell className="w-5 h-5 text-emerald-400" />
@@ -1177,7 +1219,6 @@ export default function App() {
                   )}
                 </div>
 
-                {/* ANNUAL DIVIDEND & REBATE PROJECTION SIMULATOR */}
                 <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
                   <div className="flex items-center gap-2 mb-2">
                     <Award className="w-5 h-5 text-amber-400" />
@@ -1226,9 +1267,7 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* DUAL LEDGER DISPLAY */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* SAVINGS */}
                   <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
                     <div className="flex items-center gap-2 mb-4">
                       <ArrowUpRight className="w-5 h-5 text-emerald-400" />
@@ -1263,7 +1302,6 @@ export default function App() {
                     )}
                   </div>
 
-                  {/* LOAN REPAYMENTS */}
                   <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
                     <div className="flex items-center gap-2 mb-4">
                       <ArrowDownRight className="w-5 h-5 text-amber-400" />
@@ -1301,7 +1339,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 2: LOANS & FREE SHARES CALCULATOR */}
+            {/* TAB 2: LOANS */}
             {activeTab === 'loans' && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
@@ -1553,10 +1591,9 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 4: BENEFICIARIES & WELFARE CLAIMS */}
+            {/* TAB 4: BENEFICIARIES & WELFARE */}
             {activeTab === 'beneficiaries' && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Beneficiary Register */}
                 <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
                   <div className="flex items-center gap-2 mb-4">
                     <Users className="w-5 h-5 text-emerald-400" />
@@ -1636,7 +1673,6 @@ export default function App() {
                     </button>
                   </form>
 
-                  {/* Beneficiary List */}
                   <div className="mt-4 pt-4 border-t border-slate-800 space-y-2">
                     {beneficiaries.map((b) => (
                       <div key={b.id} className="bg-slate-900 p-3 rounded-xl flex justify-between items-center text-xs">
@@ -1657,7 +1693,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Welfare / Benevolent Claims */}
                 <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
                   <div className="flex items-center gap-2 mb-4">
                     <HeartHandshake className="w-5 h-5 text-rose-400" />
@@ -1708,7 +1743,6 @@ export default function App() {
                     </button>
                   </form>
 
-                  {/* Member Claims List */}
                   <div className="mt-4 pt-4 border-t border-slate-800 space-y-2">
                     {welfareClaims.map((c) => (
                       <div key={c.id} className="bg-slate-900 p-3 rounded-xl flex justify-between items-center text-xs">
@@ -1809,10 +1843,9 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 6: ADMIN HUB (CHECKOFF, NOTICE PUBLISHING, GOVERNANCE MULTI-SIG) */}
+            {/* TAB 6: ADMIN HUB & IMMUTABLE AUDIT TRAIL */}
             {activeTab === 'admin' && (profile?.role === 'admin' || profile?.role === 'treasurer') && (
               <div className="space-y-6">
-                {/* 1. DUAL PAYROLL CHECKOFF INGESTION */}
                 <div className="bg-slate-950 border border-amber-900/40 rounded-2xl p-5 sm:p-6 shadow-xl">
                   <div className="flex items-center gap-2 mb-2">
                     <FileSpreadsheet className="w-5 h-5 text-amber-400" />
@@ -1897,7 +1930,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 2. MULTI-SIGNATURE LOAN APPROVALS */}
+                {/* MULTI-SIG LOAN APPROVALS */}
                 <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
                   <div className="flex items-center gap-2 mb-4">
                     <Clock className="w-5 h-5 text-amber-400" />
@@ -1919,7 +1952,6 @@ export default function App() {
                               </p>
                             </div>
 
-                            {/* Dual Signatures */}
                             <div className="flex flex-wrap gap-2">
                               {!l.credit_officer_approval ? (
                                 <button
@@ -1963,9 +1995,42 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 3. PUBLISH NOTICE & WELFARE CLAIMS APPROVAL */}
+                {/* IMMUTABLE AUDIT LOGS TRAIL */}
+                <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
+                  <div className="flex items-center gap-2 mb-3">
+                    <History className="w-5 h-5 text-amber-400" />
+                    <h4 className="text-base font-bold text-white">Immutable System Audit Trail (SASRA Standards)</h4>
+                  </div>
+                  <p className="text-xs text-slate-400 mb-4">
+                    Complete forensic log of all ledger entries, approvals, and user logins.
+                  </p>
+
+                  <div className="max-h-60 overflow-y-auto border border-slate-800 rounded-xl">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-slate-900 text-slate-400 sticky top-0">
+                        <tr>
+                          <th className="p-2">Timestamp</th>
+                          <th className="p-2">User / Actor</th>
+                          <th className="p-2">Action</th>
+                          <th className="p-2">Details</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60">
+                        {auditLogs.map((log) => (
+                          <tr key={log.id} className="hover:bg-slate-900/30 font-mono text-[11px]">
+                            <td className="p-2 text-slate-400">{new Date(log.created_at).toLocaleString()}</td>
+                            <td className="p-2 text-slate-200">{log.user_name}</td>
+                            <td className="p-2 text-emerald-400 font-bold">{log.action}</td>
+                            <td className="p-2 text-slate-300">{log.details}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* NOTICES & WELFARE */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* Publish Notice */}
                   <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
                     <div className="flex items-center gap-2 mb-4">
                       <Bell className="w-5 h-5 text-amber-400" />
@@ -1980,7 +2045,7 @@ export default function App() {
                           required
                           value={newNoticeTitle}
                           onChange={(e) => setNewNoticeTitle(e.target.value)}
-                          placeholder="e.g. Dividend Rates Declared for Financial Year"
+                          placeholder="e.g. Dividend Rates Declared"
                           className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white"
                         />
                       </div>
@@ -1991,7 +2056,7 @@ export default function App() {
                           rows="3"
                           value={newNoticeContent}
                           onChange={(e) => setNewNoticeContent(e.target.value)}
-                          placeholder="Write message to all cooperative members..."
+                          placeholder="Write message to all members..."
                           className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white"
                         />
                       </div>
@@ -2005,7 +2070,6 @@ export default function App() {
                     </form>
                   </div>
 
-                  {/* Welfare Claims Review */}
                   <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
                     <div className="flex items-center gap-2 mb-4">
                       <HeartHandshake className="w-5 h-5 text-rose-400" />
@@ -2041,7 +2105,7 @@ export default function App() {
         )}
       </main>
 
-      {/* Persistent Bottom Navigation Bar */}
+      {/* Mobile Bottom Navigation Bar */}
       {session && (
         <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-slate-950/95 backdrop-blur border-t border-slate-800 flex justify-around items-center py-2 px-1 z-50">
           <button

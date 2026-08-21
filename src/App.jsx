@@ -10,7 +10,7 @@ import {
   Users, Trash2, Plus, Menu, X, UploadCloud, FileSpreadsheet, 
   ArrowDownRight, ArrowUpRight, HeartHandshake, Bell, Smartphone, 
   Award, ShieldAlert, FileText, Send, History, CheckSquare, Paperclip, FileCheck, HelpCircle,
-  Eye, EyeOff
+  Eye, EyeOff, FolderDown, FileArchive
 } from 'lucide-react';
 
 export default function App() {
@@ -18,7 +18,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [authMode, setAuthMode] = useState('login'); // login, register, forgot, reset
   const [showPassword, setShowPassword] = useState(false);
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState('overview'); // overview, loans, guarantors, beneficiaries, documents, mpesa, admin
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Auth State
@@ -43,6 +43,7 @@ export default function App() {
   const [myGuaranteesCommitted, setMyGuaranteesCommitted] = useState([]);
   const [beneficiaries, setBeneficiaries] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
+  const [saccoDocs, setSaccoDocs] = useState([]);
   const [welfareClaims, setWelfareClaims] = useState([]);
   const [allPendingLoans, setAllPendingLoans] = useState([]);
   const [allPendingClaims, setAllPendingClaims] = useState([]);
@@ -55,6 +56,12 @@ export default function App() {
   const [loanMonths, setLoanMonths] = useState(12);
   const [interestRate, setInterestRate] = useState(1.0);
   const [guarantorList, setGuarantorList] = useState([{ guarantorId: '', amount: '' }]);
+
+  // Document Upload Form State (Admin)
+  const [docTitle, setDocTitle] = useState('');
+  const [docCategory, setDocCategory] = useState('audit_report');
+  const [docYear, setDocYear] = useState('2025/2026');
+  const [docFile, setDocFile] = useState(null);
 
   // Beneficiary Form State
   const [nokName, setNokName] = useState('');
@@ -115,6 +122,7 @@ export default function App() {
 
     fetchCompanies();
     fetchAnnouncements();
+    fetchSaccoDocuments();
     return () => subscription.unsubscribe();
   }, []);
 
@@ -168,6 +176,14 @@ export default function App() {
       .select('*')
       .order('created_at', { ascending: false });
     if (data) setAnnouncements(data);
+  };
+
+  const fetchSaccoDocuments = async () => {
+    const { data } = await supabase
+      .from('sacco_documents')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (data) setSaccoDocs(data);
   };
 
   const fetchUserData = async (userId) => {
@@ -371,6 +387,62 @@ export default function App() {
       }
     }
     setLoading(false);
+  };
+
+  // --- UPLOAD OFFICIAL SACCO DOCUMENT (LEADERSHIP) ---
+  const handleUploadSaccoDocument = async (e) => {
+    e.preventDefault();
+    if (!docFile) {
+      setMessage({ text: 'Please select a PDF document to upload.', type: 'error' });
+      return;
+    }
+
+    setLoading(true);
+    const fileExt = docFile.name.split('.').pop();
+    const fileName = `doc-${Date.now()}.${fileExt}`;
+    const fileSizeMB = (docFile.size / (1024 * 1024)).toFixed(2) + ' MB';
+
+    const { data: uploadData, error: uploadError } = await supabase.storage
+      .from('sacco-documents')
+      .upload(fileName, docFile);
+
+    if (uploadError) {
+      setMessage({ text: uploadError.message, type: 'error' });
+      setLoading(false);
+      return;
+    }
+
+    const { data: { publicUrl } } = supabase.storage
+      .from('sacco-documents')
+      .getPublicUrl(fileName);
+
+    const { error: dbError } = await supabase.from('sacco_documents').insert([
+      {
+        title: docTitle,
+        category: docCategory,
+        financial_year: docYear,
+        file_url: publicUrl,
+        file_size: fileSizeMB,
+        uploaded_by: session.user.id,
+      },
+    ]);
+
+    if (dbError) {
+      setMessage({ text: dbError.message, type: 'error' });
+    } else {
+      logAuditAction('SACCO_DOCUMENT_UPLOADED', `Uploaded report: ${docTitle} (${docYear})`);
+      setMessage({ text: 'Official report uploaded and published to Member Library!', type: 'success' });
+      setDocTitle('');
+      setDocFile(null);
+      fetchSaccoDocuments();
+    }
+    setLoading(false);
+  };
+
+  const handleDeleteSaccoDocument = async (id, title) => {
+    await supabase.from('sacco_documents').delete().eq('id', id);
+    logAuditAction('SACCO_DOCUMENT_DELETED', `Deleted document: ${title}`);
+    fetchSaccoDocuments();
   };
 
   // Financial Metrics
@@ -956,6 +1028,14 @@ export default function App() {
                 )}
               </button>
               <button
+                onClick={() => setActiveTab('documents')}
+                className={`px-3 py-1.5 rounded-lg transition flex items-center gap-1 ${
+                  activeTab === 'documents' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <FolderDown className="w-3.5 h-3.5" /> Reports & AGM
+              </button>
+              <button
                 onClick={() => setActiveTab('beneficiaries')}
                 className={`px-3 py-1.5 rounded-lg transition ${
                   activeTab === 'beneficiaries' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
@@ -1035,6 +1115,14 @@ export default function App() {
             )}
           </button>
           <button
+            onClick={() => { setActiveTab('documents'); setMobileMenuOpen(false); }}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition ${
+              activeTab === 'documents' ? 'bg-emerald-600 text-white' : 'bg-slate-900/50 text-slate-300'
+            }`}
+          >
+            <FolderDown className="w-4 h-4 text-emerald-400" /> Reports & AGM Booklets
+          </button>
+          <button
             onClick={() => { setActiveTab('beneficiaries'); setMobileMenuOpen(false); }}
             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition ${
               activeTab === 'beneficiaries' ? 'bg-emerald-600 text-white' : 'bg-slate-900/50 text-slate-300'
@@ -1086,7 +1174,7 @@ export default function App() {
         )}
 
         {!session ? (
-          /* AUTH VIEWS WITH SHOW / HIDE PASSWORD */
+          /* AUTH VIEWS */
           <div className="max-w-md mx-auto mt-4 sm:mt-8 bg-slate-950 border border-slate-800 rounded-2xl p-6 sm:p-8 shadow-2xl">
             <div className="text-center mb-6">
               <h2 className="text-2xl font-bold text-white">
@@ -1103,7 +1191,6 @@ export default function App() {
               </p>
             </div>
 
-            {/* FORGOT PASSWORD FORM */}
             {authMode === 'forgot' && (
               <form onSubmit={handleForgotPassword} className="space-y-4">
                 <div>
@@ -1136,7 +1223,6 @@ export default function App() {
               </form>
             )}
 
-            {/* RESET / SET NEW PASSWORD FORM */}
             {authMode === 'reset' && (
               <form onSubmit={handleUpdatePassword} className="space-y-4">
                 <div>
@@ -1169,7 +1255,6 @@ export default function App() {
               </form>
             )}
 
-            {/* LOGIN & REGISTER FORMS */}
             {(authMode === 'login' || authMode === 'register') && (
               <form onSubmit={authMode === 'login' ? handleLogin : handleRegister} className="space-y-4">
                 {authMode === 'register' && (
@@ -1848,7 +1933,76 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 4: BENEFICIARIES & WELFARE */}
+            {/* TAB 4: OFFICIAL REPORTS & AGM DOCUMENTS LIBRARY (FOR ALL MEMBERS) */}
+            {activeTab === 'documents' && (
+              <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-8 space-y-6">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                  <div>
+                    <h3 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
+                      <FolderDown className="w-6 h-6 text-emerald-400" /> Official Reports & AGM Booklets
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-1">
+                      Access certified annual audit reports, AGM booklets, and society policies digitally without paperwork.
+                    </p>
+                  </div>
+                </div>
+
+                {saccoDocs.length === 0 ? (
+                  <div className="text-center py-16 border border-slate-800/80 rounded-2xl bg-slate-900/40">
+                    <FileArchive className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+                    <p className="text-sm font-semibold text-slate-300">No official documents published yet.</p>
+                    <p className="text-xs text-slate-500 mt-1">Leadership will upload the upcoming AGM and audit packages here.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {saccoDocs.map((doc) => (
+                      <div key={doc.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 flex flex-col justify-between space-y-4 hover:border-slate-700 transition">
+                        <div>
+                          <div className="flex justify-between items-start">
+                            <span className={`text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-full ${
+                              doc.category === 'audit_report' ? 'bg-emerald-950 border border-emerald-800 text-emerald-300' :
+                              doc.category === 'agm_booklet' ? 'bg-amber-950 border border-amber-800 text-amber-300' :
+                              'bg-blue-950 border border-blue-800 text-blue-300'
+                            }`}>
+                              {doc.category.replace('_', ' ')}
+                            </span>
+                            <span className="text-xs font-mono text-slate-400">{doc.financial_year}</span>
+                          </div>
+
+                          <h4 className="text-base font-bold text-white mt-2 leading-snug">{doc.title}</h4>
+                          <p className="text-xs text-slate-400 mt-1 flex items-center gap-2">
+                            <span>File Size: {doc.file_size || 'PDF Document'}</span> • 
+                            <span>Published: {new Date(doc.created_at).toLocaleDateString()}</span>
+                          </p>
+                        </div>
+
+                        <div className="flex gap-2 pt-2 border-t border-slate-800/80">
+                          <a
+                            href={doc.file_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 transition shadow"
+                          >
+                            <Download className="w-3.5 h-3.5" /> Read / Download PDF
+                          </a>
+                          {(profile?.role === 'admin' || profile?.role === 'chairman' || profile?.role === 'treasurer') && (
+                            <button
+                              onClick={() => handleDeleteSaccoDocument(doc.id, doc.title)}
+                              className="bg-rose-950/60 hover:bg-rose-900 border border-rose-900/60 text-rose-300 p-2 rounded-xl text-xs transition cursor-pointer"
+                              title="Delete Report"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB 5: BENEFICIARIES & WELFARE */}
             {activeTab === 'beneficiaries' && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
@@ -2052,7 +2206,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 5: M-PESA */}
+            {/* TAB 6: M-PESA */}
             {activeTab === 'mpesa' && (
               <div className="max-w-xl mx-auto bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-8 space-y-6">
                 <div className="flex items-center gap-3">
@@ -2130,9 +2284,82 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 6: 3-SIGNATORY LEADERSHIP HUB */}
+            {/* TAB 7: 3-SIGNATORY LEADERSHIP HUB */}
             {activeTab === 'admin' && (profile?.role === 'admin' || profile?.role === 'treasurer' || profile?.role === 'chairman' || profile?.role === 'assistant_chair') && (
               <div className="space-y-6">
+                {/* 1. UPLOAD SACCO AUDIT & AGM REPORTS */}
+                <div className="bg-slate-950 border border-emerald-900/40 rounded-2xl p-5 sm:p-6 shadow-xl">
+                  <div className="flex items-center gap-2 mb-2">
+                    <FolderDown className="w-5 h-5 text-emerald-400" />
+                    <h3 className="text-base sm:text-lg font-bold text-white">Publish Official Report / Audit Booklet</h3>
+                  </div>
+                  <p className="text-xs text-slate-400 mb-4">
+                    Upload verified PDF documents (Audit Reports, AGM Booklets, By-laws). Members will be able to read and download them instantly on their phones.
+                  </p>
+
+                  <form onSubmit={handleUploadSaccoDocument} className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">Document Title</label>
+                      <input
+                        type="text"
+                        required
+                        value={docTitle}
+                        onChange={(e) => setDocTitle(e.target.value)}
+                        placeholder="e.g. KEWA SACCO Audited Financials 2025"
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">Report Category</label>
+                      <select
+                        value={docCategory}
+                        onChange={(e) => setDocCategory(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white"
+                      >
+                        <option value="audit_report">Audited Financial Statements</option>
+                        <option value="agm_booklet">Annual AGM Booklet & Minutes</option>
+                        <option value="bylaws_policy">SACCO By-Laws & Policies</option>
+                        <option value="financial_statement">Mid-Year Financial Report</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">Financial Year</label>
+                      <input
+                        type="text"
+                        required
+                        value={docYear}
+                        onChange={(e) => setDocYear(e.target.value)}
+                        placeholder="e.g. 2025/2026"
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">Select PDF Report File</label>
+                      <input
+                        type="file"
+                        accept=".pdf"
+                        required
+                        onChange={(e) => setDocFile(e.target.files[0])}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-300 file:mr-3 file:py-1 file:px-2.5 file:rounded-md file:border-0 file:text-xs file:bg-emerald-600 file:text-white cursor-pointer"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-1 flex items-end">
+                      <button
+                        type="submit"
+                        disabled={loading}
+                        className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded-lg text-xs transition shadow cursor-pointer flex items-center justify-center gap-1.5"
+                      >
+                        <UploadCloud className="w-4 h-4" /> Publish Report
+                      </button>
+                    </div>
+                  </form>
+                </div>
+
+                {/* 2. DUAL PAYROLL CHECKOFF */}
                 <div className="bg-slate-950 border border-amber-900/40 rounded-2xl p-5 sm:p-6 shadow-xl">
                   <div className="flex items-center gap-2 mb-2">
                     <FileSpreadsheet className="w-5 h-5 text-amber-400" />
@@ -2217,7 +2444,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 3-SIGNATORY LOAN APPROVAL DESK */}
+                {/* 3. 3-SIGNATORY LOAN APPROVAL DESK */}
                 <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
                   <div className="flex items-center gap-2 mb-4">
                     <Clock className="w-5 h-5 text-amber-400" />
@@ -2244,7 +2471,6 @@ export default function App() {
                               </p>
                             </div>
 
-                            {/* 3 Signatory Buttons */}
                             <div className="flex flex-wrap gap-2">
                               <button
                                 onClick={() => handleLoanSignatoryApprove(l.id, 'chairman')}
@@ -2300,7 +2526,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 3-SIGNATORY WELFARE CLAIMS REVIEW */}
+                {/* 4. 3-SIGNATORY WELFARE CLAIMS REVIEW */}
                 <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
                   <div className="flex items-center gap-2 mb-4">
                     <HeartHandshake className="w-5 h-5 text-rose-400" />
@@ -2320,7 +2546,6 @@ export default function App() {
                               <p className="font-bold text-rose-400 text-sm mt-1">KES {Number(c.amount_requested).toLocaleString()}</p>
                             </div>
 
-                            {/* 3 Signatory Buttons for Welfare */}
                             <div className="flex flex-wrap gap-2">
                               <button
                                 onClick={() => handleWelfareSignatoryApprove(c.id, 'chairman')}
@@ -2369,7 +2594,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* POST NOTICES & AUDIT LOGS */}
+                {/* 5. POST NOTICES & AUDIT LOGS */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
                     <div className="flex items-center gap-2 mb-4">
@@ -2444,7 +2669,7 @@ export default function App() {
         )}
       </main>
 
-      {/* Mobile Bottom Navigation Bar */}
+      {/* Persistent Bottom Mobile Nav */}
       {session && (
         <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-slate-950/95 backdrop-blur border-t border-slate-800 flex justify-around items-center py-2 px-1 z-50">
           <button
@@ -2465,6 +2690,16 @@ export default function App() {
           >
             <Calculator className="w-4 h-4" />
             <span>Loans</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('documents')}
+            className={`flex flex-col items-center gap-1 text-[9px] font-semibold py-1 px-2 transition ${
+              activeTab === 'documents' ? 'text-emerald-400' : 'text-slate-400'
+            }`}
+          >
+            <FolderDown className="w-4 h-4" />
+            <span>Reports</span>
           </button>
 
           <button
@@ -2508,7 +2743,7 @@ export default function App() {
               }`}
             >
               <ShieldCheck className="w-4 h-4" />
-              <span>Signatories</span>
+              <span>Leadership</span>
             </button>
           )}
         </div>

@@ -9,7 +9,7 @@ import {
   Calculator, CheckCircle, XCircle, Clock, ShieldCheck, Download, 
   Users, Trash2, Plus, Menu, X, UploadCloud, FileSpreadsheet, 
   ArrowDownRight, ArrowUpRight, HeartHandshake, Bell, Smartphone, 
-  Award, ShieldAlert, FileText, Send, History, CheckSquare
+  Award, ShieldAlert, FileText, Send, History, CheckSquare, Paperclip, FileCheck
 } from 'lucide-react';
 
 export default function App() {
@@ -46,10 +46,11 @@ export default function App() {
   const [auditLogs, setAuditLogs] = useState([]);
   const [message, setMessage] = useState({ text: '', type: '' });
 
-  // Loan Application State
-  const [loanPrincipal, setLoanPrincipal] = useState(10000);
-  const [loanMonths, setLoanMonths] = useState(6);
-  const [interestRate] = useState(1.0);
+  // Loan Application State with 4 Product Types
+  const [loanProduct, setLoanProduct] = useState('main_loan'); // main_loan, emergency_loan, christmas_loan, monthly_shylock
+  const [loanPrincipal, setLoanPrincipal] = useState(20000);
+  const [loanMonths, setLoanMonths] = useState(12);
+  const [interestRate, setInterestRate] = useState(1.0);
   const [guarantorList, setGuarantorList] = useState([{ guarantorId: '', amount: '' }]);
 
   // Beneficiary Form State
@@ -59,10 +60,11 @@ export default function App() {
   const [nokPhone, setNokPhone] = useState('');
   const [nokPercent, setNokPercent] = useState('');
 
-  // Welfare Claim Form State
+  // Welfare Claim Form State with Document Upload
   const [claimType, setClaimType] = useState('hospitalization');
   const [claimAmount, setClaimAmount] = useState('');
   const [claimDesc, setClaimDesc] = useState('');
+  const [claimDocument, setClaimDocument] = useState(null);
 
   // M-Pesa State
   const [mpesaPhone, setMpesaPhone] = useState('');
@@ -110,6 +112,28 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
+  // Update interest & terms automatically when loan product is changed
+  const handleLoanProductChange = (prod) => {
+    setLoanProduct(prod);
+    if (prod === 'main_loan') {
+      setLoanMonths(12);
+      setInterestRate(1.0);
+      setLoanPrincipal(30000);
+    } else if (prod === 'emergency_loan') {
+      setLoanMonths(6);
+      setInterestRate(1.0);
+      setLoanPrincipal(15000);
+    } else if (prod === 'christmas_loan') {
+      setLoanMonths(4);
+      setInterestRate(1.0);
+      setLoanPrincipal(10000);
+    } else if (prod === 'monthly_shylock') {
+      setLoanMonths(1);
+      setInterestRate(5.0); // 5% flat fee for 1-month advance
+      setLoanPrincipal(5000);
+    }
+  };
+
   const logAuditAction = async (action, details, userId = null, userName = null) => {
     try {
       await supabase.from('audit_logs').insert([
@@ -155,7 +179,7 @@ export default function App() {
       fetchGuarantorData(userId);
       fetchBeneficiaries(userId);
       fetchWelfareClaims(userId);
-      if (profileData.role === 'admin' || profileData.role === 'treasurer') {
+      if (profileData.role === 'admin' || profileData.role === 'treasurer' || profileData.role === 'chairman' || profileData.role === 'assistant_chair') {
         fetchAdminData();
       }
     }
@@ -323,7 +347,11 @@ export default function App() {
   );
 
   const freeSharesAvailable = Math.max(0, totalSavings - activeLoanBalance - totalGuaranteesCommittedAmount);
-  const loanLimit = Math.max(totalSavings * 3, 10000);
+  
+  // Specific max product borrowing limits
+  const maxLimitForSelectedProduct = loanProduct === 'monthly_shylock'
+    ? 20000 
+    : Math.max(totalSavings * 3, 10000);
 
   const calculatedInterest = (loanPrincipal * (interestRate / 100)) * loanMonths;
   const calculatedTotal = Number(loanPrincipal) + calculatedInterest;
@@ -349,22 +377,16 @@ export default function App() {
     setLoading(true);
     setMessage({ text: '', type: '' });
 
-    if (loanPrincipal > loanLimit) {
-      setMessage({ text: `Loan exceeds maximum limit of KES ${loanLimit.toLocaleString()} (3x Savings).`, type: 'error' });
+    if (loanPrincipal > maxLimitForSelectedProduct) {
+      setMessage({ text: `Loan exceeds maximum product limit of KES ${maxLimitForSelectedProduct.toLocaleString()}.`, type: 'error' });
       setLoading(false);
       return;
     }
 
     const validGuarantors = guarantorList.filter((g) => g.guarantorId && Number(g.amount) > 0);
-    if (validGuarantors.length === 0) {
-      setMessage({ text: 'Please add at least 1 guarantor with an assigned amount.', type: 'error' });
-      setLoading(false);
-      return;
-    }
-
-    const selectedIds = validGuarantors.map((g) => g.guarantorId);
-    if (new Set(selectedIds).size !== selectedIds.length) {
-      setMessage({ text: 'You cannot select the same guarantor multiple times.', type: 'error' });
+    // Monthly shylock may skip guarantors if within member's own savings, but other products require guarantors
+    if (loanProduct !== 'monthly_shylock' && validGuarantors.length === 0) {
+      setMessage({ text: 'Please assign at least 1 guarantor for this loan product.', type: 'error' });
       setLoading(false);
       return;
     }
@@ -372,14 +394,16 @@ export default function App() {
     const { data: loanData, error: loanError } = await supabase.from('loans').insert([
       {
         member_id: session.user.id,
+        loan_product: loanProduct,
         principal_amount: loanPrincipal,
         interest_rate: interestRate,
         repayment_period_months: loanMonths,
         total_payable: calculatedTotal,
         balance_remaining: calculatedTotal,
         status: 'pending',
-        credit_officer_approval: false,
         chairman_approval: false,
+        treasurer_approval: false,
+        assistant_chair_approval: false,
       },
     ]).select().single();
 
@@ -389,17 +413,19 @@ export default function App() {
       return;
     }
 
-    const guarantorsToInsert = validGuarantors.map((g) => ({
-      loan_id: loanData.id,
-      guarantor_id: g.guarantorId,
-      amount_guaranteed: Number(g.amount),
-      status: 'pending',
-    }));
+    if (validGuarantors.length > 0) {
+      const guarantorsToInsert = validGuarantors.map((g) => ({
+        loan_id: loanData.id,
+        guarantor_id: g.guarantorId,
+        amount_guaranteed: Number(g.amount),
+        status: 'pending',
+      }));
+      await supabase.from('loan_guarantors').insert(guarantorsToInsert);
+    }
 
-    await supabase.from('loan_guarantors').insert(guarantorsToInsert);
-    logAuditAction('LOAN_APPLICATION_SUBMITTED', `Loan requested KES ${loanPrincipal.toLocaleString()} with ${validGuarantors.length} guarantors`);
+    logAuditAction('LOAN_APPLICATION_SUBMITTED', `${loanProduct.toUpperCase()} applied: KES ${loanPrincipal.toLocaleString()}`);
 
-    setMessage({ text: `Loan request submitted with ${validGuarantors.length} assigned guarantors!`, type: 'success' });
+    setMessage({ text: `Loan request for ${loanProduct.replace('_', ' ').toUpperCase()} submitted for 3-Signatory sign-off!`, type: 'success' });
     setGuarantorList([{ guarantorId: '', amount: '' }]);
     fetchUserData(session.user.id);
     setLoading(false);
@@ -427,10 +453,107 @@ export default function App() {
     }
   };
 
-  const handleAddBeneficiary = async (e) => {
+  // --- WELFARE / BENEVOLENT CLAIM WITH DOCUMENT UPLOAD ---
+  const handleSubmitWelfareClaim = async (e) => {
     e.preventDefault();
     setLoading(true);
 
+    let documentUrl = null;
+
+    if (claimDocument) {
+      const fileExt = claimDocument.name.split('.').pop();
+      const fileName = `${session.user.id}-${Date.now()}.${fileExt}`;
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('welfare-documents')
+        .upload(fileName, claimDocument);
+
+      if (!uploadError && uploadData) {
+        const { data: { publicUrl } } = supabase.storage
+          .from('welfare-documents')
+          .getPublicUrl(fileName);
+        documentUrl = publicUrl;
+      }
+    }
+
+    const { error } = await supabase.from('welfare_claims').insert([
+      {
+        member_id: session.user.id,
+        claim_type: claimType,
+        amount_requested: Number(claimAmount),
+        description: claimDesc,
+        evidence_url: documentUrl,
+        status: 'pending',
+        chairman_approval: false,
+        treasurer_approval: false,
+        assistant_chair_approval: false,
+      },
+    ]);
+
+    if (error) setMessage({ text: error.message, type: 'error' });
+    else {
+      logAuditAction('WELFARE_CLAIM_FILED', `Welfare claim submitted for KES ${claimAmount} (${claimType})`);
+      setMessage({ text: 'Welfare claim and evidence document submitted for 3-Signatory review.', type: 'success' });
+      setClaimAmount('');
+      setClaimDesc('');
+      setClaimDocument(null);
+      fetchWelfareClaims(session.user.id);
+    }
+    setLoading(false);
+  };
+
+  // --- 3-SIGNATORY MULTI-SIGNATURE APPROVAL ACTIONS ---
+  const handleLoanSignatoryApprove = async (loanId, signatoryRole) => {
+    const updatePayload = {};
+    if (signatoryRole === 'chairman') updatePayload.chairman_approval = true;
+    if (signatoryRole === 'treasurer') updatePayload.treasurer_approval = true;
+    if (signatoryRole === 'assistant_chair') updatePayload.assistant_chair_approval = true;
+
+    // Check existing loan state
+    const { data: currentLoan } = await supabase.from('loans').select('*').eq('id', loanId).single();
+    
+    const isChair = signatoryRole === 'chairman' || currentLoan.chairman_approval;
+    const isTreas = signatoryRole === 'treasurer' || currentLoan.treasurer_approval;
+    const isAsst = signatoryRole === 'assistant_chair' || currentLoan.assistant_chair_approval;
+
+    // If all 3 signatories approved, set loan status to approved
+    if (isChair && isTreas && isAsst) {
+      updatePayload.status = 'approved';
+    }
+
+    await supabase.from('loans').update(updatePayload).eq('id', loanId);
+    logAuditAction('LOAN_SIGNATORY_SIGN', `Signed by ${signatoryRole.replace('_', ' ').toUpperCase()} for Loan ID ${loanId}`);
+    fetchAdminData();
+    fetchUserData(session.user.id);
+    setMessage({ text: `Endorsement recorded for ${signatoryRole.replace('_', ' ')}.`, type: 'success' });
+  };
+
+  const handleWelfareSignatoryApprove = async (claimId, signatoryRole) => {
+    const updatePayload = {};
+    if (signatoryRole === 'chairman') updatePayload.chairman_approval = true;
+    if (signatoryRole === 'treasurer') updatePayload.treasurer_approval = true;
+    if (signatoryRole === 'assistant_chair') updatePayload.assistant_chair_approval = true;
+
+    const { data: currentClaim } = await supabase.from('welfare_claims').select('*').eq('id', claimId).single();
+    
+    const isChair = signatoryRole === 'chairman' || currentClaim.chairman_approval;
+    const isTreas = signatoryRole === 'treasurer' || currentClaim.treasurer_approval;
+    const isAsst = signatoryRole === 'assistant_chair' || currentClaim.assistant_chair_approval;
+
+    if (isChair && isTreas && isAsst) {
+      updatePayload.status = 'approved';
+    }
+
+    await supabase.from('welfare_claims').update(updatePayload).eq('id', claimId);
+    logAuditAction('WELFARE_SIGNATORY_SIGN', `Benevolence endorsed by ${signatoryRole.replace('_', ' ').toUpperCase()} for Claim ID ${claimId}`);
+    fetchAdminData();
+    fetchUserData(session.user.id);
+    setMessage({ text: `Benevolence endorsement recorded for ${signatoryRole.replace('_', ' ')}.`, type: 'success' });
+  };
+
+  // --- BENEFICIARY / NEXT OF KIN ---
+  const handleAddBeneficiary = async (e) => {
+    e.preventDefault();
+    setLoading(true);
     const currentTotalAlloc = beneficiaries.reduce((sum, b) => sum + Number(b.allocation_percentage || 0), 0);
     const newTotal = currentTotalAlloc + Number(nokPercent);
 
@@ -466,39 +589,13 @@ export default function App() {
 
   const handleDeleteBeneficiary = async (id) => {
     await supabase.from('next_of_kin').delete().eq('id', id);
-    logAuditAction('BENEFICIARY_DELETED', `Deleted next-of-kin record ID ${id}`);
     fetchBeneficiaries(session.user.id);
   };
 
-  const handleSubmitWelfareClaim = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-
-    const { error } = await supabase.from('welfare_claims').insert([
-      {
-        member_id: session.user.id,
-        claim_type: claimType,
-        amount_requested: Number(claimAmount),
-        description: claimDesc,
-        status: 'pending',
-      },
-    ]);
-
-    if (error) setMessage({ text: error.message, type: 'error' });
-    else {
-      logAuditAction('WELFARE_CLAIM_FILED', `Welfare claim submitted for KES ${claimAmount} (${claimType})`);
-      setMessage({ text: 'Welfare claim submitted for committee review.', type: 'success' });
-      setClaimAmount('');
-      setClaimDesc('');
-      fetchWelfareClaims(session.user.id);
-    }
-    setLoading(false);
-  };
-
+  // --- M-PESA INSTANT REPAYMENT / TOP-UP ---
   const handleMpesaTransaction = async (e) => {
     e.preventDefault();
     setLoading(true);
-
     const receipt = mpesaCode.trim().toUpperCase() || `MP${Math.random().toString(36).substr(2, 8).toUpperCase()}`;
 
     await supabase.from('mpesa_transactions').insert([
@@ -563,6 +660,7 @@ export default function App() {
     setLoading(false);
   };
 
+  // --- AUTOMATED PAYROLL CHECKOFF INGESTION ---
   const handleCSVUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -684,27 +782,6 @@ export default function App() {
     setMessage({ text: 'Announcement published to Member Board!', type: 'success' });
   };
 
-  const handleApproveWelfareClaim = async (claimId) => {
-    await supabase.from('welfare_claims').update({ status: 'approved' }).eq('id', claimId);
-    logAuditAction('WELFARE_CLAIM_APPROVED', `Claim ID ${claimId} approved by Admin`);
-    fetchAdminData();
-    fetchUserData(session.user.id);
-  };
-
-  const handleCreditOfficerApprove = async (loanId) => {
-    await supabase.from('loans').update({ credit_officer_approval: true }).eq('id', loanId);
-    logAuditAction('LOAN_CREDIT_OFFICER_ENDORSED', `Credit officer endorsed Loan ID ${loanId}`);
-    fetchAdminData();
-  };
-
-  const handleChairmanFinalDisburse = async (loanId) => {
-    await supabase.from('loans').update({ chairman_approval: true, status: 'approved' }).eq('id', loanId);
-    logAuditAction('LOAN_FINAL_DISBURSED', `Chairman approved & disbursed Loan ID ${loanId}`);
-    fetchAdminData();
-    fetchUserData(session.user.id);
-    setMessage({ text: 'Loan approved with multi-signature authorization and disbursed!', type: 'success' });
-  };
-
   const generatePDFStatement = (loan = null) => {
     try {
       const doc = new jsPDF();
@@ -731,14 +808,15 @@ export default function App() {
 
       if (loan) {
         doc.setFontSize(11);
-        doc.text('Loan Amortization & Repayment Schedule', 14, 78);
+        doc.text(`Loan Product: ${(loan.loan_product || 'main_loan').replace('_', ' ').toUpperCase()}`, 14, 78);
         const loanRows = [
           ['Principal Amount', `KES ${Number(loan.principal_amount).toLocaleString()}`],
           ['Interest Rate', `${loan.interest_rate}% / month`],
           ['Repayment Duration', `${loan.repayment_period_months} Months`],
           ['Total Payable (P + I)', `KES ${Number(loan.total_payable).toLocaleString()}`],
           ['Outstanding Debt Balance', `KES ${Number(loan.balance_remaining).toLocaleString()}`],
-          ['Status', (loan.status || 'PENDING').toUpperCase()],
+          ['Signatory Approvals', `Chair: ${loan.chairman_approval ? 'YES' : 'NO'} | Treas: ${loan.treasurer_approval ? 'YES' : 'NO'} | Asst Chair: ${loan.assistant_chair_approval ? 'YES' : 'NO'}`],
+          ['Final Status', (loan.status || 'PENDING').toUpperCase()],
         ];
 
         autoTable(doc, {
@@ -804,7 +882,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 font-sans pb-20 sm:pb-12">
-      {/* Header */}
+      {/* Top Header */}
       <header className="border-b border-slate-800 bg-slate-950/95 backdrop-blur px-4 sm:px-6 py-3.5 flex justify-between items-center sticky top-0 z-50">
         <div className="flex items-center gap-3">
           <div className="bg-emerald-600 p-2 rounded-xl shadow-lg shadow-emerald-900/30">
@@ -833,7 +911,7 @@ export default function App() {
                   activeTab === 'loans' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
                 }`}
               >
-                Loans & Limits
+                Loans & Products
               </button>
               <button
                 onClick={() => setActiveTab('guarantors')}
@@ -864,14 +942,14 @@ export default function App() {
               >
                 <Smartphone className="w-3.5 h-3.5" /> M-Pesa Top-Up
               </button>
-              {(profile?.role === 'admin' || profile?.role === 'treasurer') && (
+              {(profile?.role === 'admin' || profile?.role === 'treasurer' || profile?.role === 'chairman' || profile?.role === 'assistant_chair') && (
                 <button
                   onClick={() => setActiveTab('admin')}
                   className={`px-3 py-1.5 rounded-lg transition flex items-center gap-1 ${
                     activeTab === 'admin' ? 'bg-amber-600 text-white' : 'text-amber-400 hover:text-white'
                   }`}
                 >
-                  <ShieldCheck className="w-3.5 h-3.5" /> Admin Hub
+                  <ShieldCheck className="w-3.5 h-3.5" /> Leadership Hub
                 </button>
               )}
             </div>
@@ -910,7 +988,7 @@ export default function App() {
               activeTab === 'loans' ? 'bg-emerald-600 text-white' : 'bg-slate-900/50 text-slate-300'
             }`}
           >
-            <Calculator className="w-4 h-4" /> Loans & Guarantor Limit
+            <Calculator className="w-4 h-4" /> Loan Products & Limits
           </button>
           <button
             onClick={() => { setActiveTab('guarantors'); setMobileMenuOpen(false); }}
@@ -943,14 +1021,14 @@ export default function App() {
           >
             <Smartphone className="w-4 h-4" /> M-Pesa Top-Up & Repay
           </button>
-          {(profile?.role === 'admin' || profile?.role === 'treasurer') && (
+          {(profile?.role === 'admin' || profile?.role === 'treasurer' || profile?.role === 'chairman' || profile?.role === 'assistant_chair') && (
             <button
               onClick={() => { setActiveTab('admin'); setMobileMenuOpen(false); }}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition ${
                 activeTab === 'admin' ? 'bg-amber-600 text-white' : 'bg-slate-900/50 text-amber-300'
               }`}
             >
-              <ShieldCheck className="w-4 h-4" /> Admin Hub & Audit
+              <ShieldCheck className="w-4 h-4" /> 3-Signatory Leadership Hub
             </button>
           )}
           <div className="pt-2 border-t border-slate-800">
@@ -979,7 +1057,7 @@ export default function App() {
         )}
 
         {!session ? (
-          /* AUTH VIEW WITH DATA PROTECTION CONSENT */
+          /* AUTH VIEW */
           <div className="max-w-md mx-auto mt-4 sm:mt-8 bg-slate-950 border border-slate-800 rounded-2xl p-6 sm:p-8 shadow-2xl">
             <div className="text-center mb-6">
               <h2 className="text-2xl font-bold text-white">
@@ -1079,7 +1157,6 @@ export default function App() {
                 />
               </div>
 
-              {/* Data Protection Act (ODPC) Disclaimer Checkbox */}
               {authMode === 'register' && (
                 <div className="flex items-start gap-2 pt-1">
                   <input
@@ -1091,7 +1168,7 @@ export default function App() {
                     className="mt-1 accent-emerald-500 rounded"
                   />
                   <label htmlFor="odpc" className="text-[11px] text-slate-400 leading-tight">
-                    I consent to KEWA SACCO collecting and processing my data in strict compliance with the <strong>Kenya Data Protection Act (2019)</strong>.
+                    I consent to KEWA SACCO collecting and processing my data in compliance with the <strong>Kenya Data Protection Act (2019)</strong>.
                   </label>
                 </div>
               )}
@@ -1129,9 +1206,14 @@ export default function App() {
             {/* Header Member Information Banner */}
             <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 sm:p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
               <div>
-                <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-emerald-950 border border-emerald-800 text-emerald-300">
-                  {profile?.companies?.name || 'KEWA Member'}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-emerald-950 border border-emerald-800 text-emerald-300">
+                    {profile?.companies?.name || 'KEWA Member'}
+                  </span>
+                  <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-amber-950 border border-amber-800 text-amber-300 uppercase">
+                    Role: {profile?.role ? profile.role.replace('_', ' ') : 'Member'}
+                  </span>
+                </div>
                 <h2 className="text-xl sm:text-2xl font-bold text-white mt-2">{profile?.full_name}</h2>
                 <p className="text-xs text-slate-400">Member No: <span className="text-slate-200 font-medium">{profile?.member_number}</span></p>
               </div>
@@ -1144,7 +1226,7 @@ export default function App() {
               </button>
             </div>
 
-            {/* TAB 1: OVERVIEW & NOTICE BOARD & DIVIDEND SIMULATOR */}
+            {/* TAB 1: OVERVIEW & NOTICE BOARD */}
             {activeTab === 'overview' && (
               <div className="space-y-6">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1197,6 +1279,7 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* NOTICE BOARD */}
                 <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
                   <div className="flex items-center gap-2 mb-3">
                     <Bell className="w-5 h-5 text-emerald-400" />
@@ -1219,6 +1302,7 @@ export default function App() {
                   )}
                 </div>
 
+                {/* DIVIDEND SIMULATOR */}
                 <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
                   <div className="flex items-center gap-2 mb-2">
                     <Award className="w-5 h-5 text-amber-400" />
@@ -1267,6 +1351,7 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* SAVINGS & REPAYMENTS DUAL LEDGERS */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
                     <div className="flex items-center gap-2 mb-4">
@@ -1339,7 +1424,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 2: LOANS */}
+            {/* TAB 2: LOANS & SPECIFIC PRODUCT SELECTION */}
             {activeTab === 'loans' && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
@@ -1348,28 +1433,72 @@ export default function App() {
                     <h3 className="text-base sm:text-lg font-bold text-white">Apply for a Loan</h3>
                   </div>
 
-                  <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 mb-4 space-y-1 text-xs">
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Max Loan Limit (3X Savings):</span>
-                      <span className="text-emerald-400 font-bold">KES {loanLimit.toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Your Free Shares Available:</span>
-                      <span className="text-emerald-300 font-bold">KES {freeSharesAvailable.toLocaleString()}</span>
-                    </div>
+                  {/* 4 LOAN PRODUCT TABS */}
+                  <div className="grid grid-cols-2 gap-2 mb-4">
+                    <button
+                      type="button"
+                      onClick={() => handleLoanProductChange('main_loan')}
+                      className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
+                        loanProduct === 'main_loan' 
+                          ? 'bg-emerald-950/70 border-emerald-500 text-white' 
+                          : 'bg-slate-900 border-slate-800 text-slate-400'
+                      }`}
+                    >
+                      <span className="text-xs font-bold block">1. Main Loan</span>
+                      <span className="text-[10px] text-slate-400">Long-term (Up to 24 mos, 1%)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleLoanProductChange('emergency_loan')}
+                      className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
+                        loanProduct === 'emergency_loan' 
+                          ? 'bg-emerald-950/70 border-emerald-500 text-white' 
+                          : 'bg-slate-900 border-slate-800 text-slate-400'
+                      }`}
+                    >
+                      <span className="text-xs font-bold block">2. Emergency Loan</span>
+                      <span className="text-[10px] text-slate-400">School fees & Medical (12 mos)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleLoanProductChange('christmas_loan')}
+                      className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
+                        loanProduct === 'christmas_loan' 
+                          ? 'bg-emerald-950/70 border-emerald-500 text-white' 
+                          : 'bg-slate-900 border-slate-800 text-slate-400'
+                      }`}
+                    >
+                      <span className="text-xs font-bold block">3. Christmas Loan</span>
+                      <span className="text-[10px] text-slate-400">December festivities (Up to 6 mos)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleLoanProductChange('monthly_shylock')}
+                      className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
+                        loanProduct === 'monthly_shylock' 
+                          ? 'bg-amber-950/70 border-amber-500 text-white' 
+                          : 'bg-slate-900 border-slate-800 text-slate-400'
+                      }`}
+                    >
+                      <span className="text-xs font-bold block text-amber-400">4. Monthly Shylock</span>
+                      <span className="text-[10px] text-slate-400">Instant Advance (Repaid next salary)</span>
+                    </button>
                   </div>
 
                   <form onSubmit={handleApplyLoan} className="space-y-4">
                     <div>
                       <div className="flex justify-between items-center mb-1">
-                        <label className="text-xs font-semibold text-slate-300">Loan Principal</label>
+                        <label className="text-xs font-semibold text-slate-300">Principal Amount</label>
                         <span className="text-emerald-400 font-bold text-sm">KES {Number(loanPrincipal).toLocaleString()}</span>
                       </div>
                       <input
                         type="range"
-                        min="5000"
-                        max={loanLimit}
-                        step="5000"
+                        min="2000"
+                        max={maxLimitForSelectedProduct}
+                        step="1000"
                         value={loanPrincipal}
                         onChange={(e) => setLoanPrincipal(Number(e.target.value))}
                         className="w-full accent-emerald-500"
@@ -1379,85 +1508,93 @@ export default function App() {
                     <div>
                       <div className="flex justify-between items-center mb-1">
                         <label className="text-xs font-semibold text-slate-300">Repayment Period</label>
-                        <span className="text-emerald-400 font-bold text-sm">{loanMonths} Months</span>
+                        <span className="text-emerald-400 font-bold text-sm">{loanMonths} Month(s)</span>
                       </div>
                       <input
                         type="range"
                         min="1"
-                        max="24"
+                        max={loanProduct === 'monthly_shylock' ? 1 : loanProduct === 'christmas_loan' ? 6 : loanProduct === 'emergency_loan' ? 12 : 24}
                         step="1"
                         value={loanMonths}
                         onChange={(e) => setLoanMonths(Number(e.target.value))}
                         className="w-full accent-emerald-500"
+                        disabled={loanProduct === 'monthly_shylock'}
                       />
                     </div>
 
-                    <div className="border-t border-slate-800 pt-4 space-y-3">
-                      <div className="flex justify-between items-center">
-                        <div>
-                          <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wide">Assign Member Guarantors</h4>
-                          <p className="text-[11px] text-slate-400">Select colleagues across Kenya Builders, Warren, or Eurocon</p>
+                    {/* DYNAMIC GUARANTORS SYSTEM */}
+                    {loanProduct !== 'monthly_shylock' && (
+                      <div className="border-t border-slate-800 pt-4 space-y-3">
+                        <div className="flex justify-between items-center">
+                          <div>
+                            <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wide">Assign Member Guarantors</h4>
+                            <p className="text-[11px] text-slate-400">Pledges from Kenya Builders, Warren, or Eurocon</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={addGuarantorRow}
+                            className="flex items-center gap-1 bg-emerald-950 border border-emerald-800 text-emerald-300 text-xs px-2.5 py-1 rounded-lg cursor-pointer"
+                          >
+                            <Plus className="w-3.5 h-3.5" /> Add Guarantor
+                          </button>
                         </div>
-                        <button
-                          type="button"
-                          onClick={addGuarantorRow}
-                          className="flex items-center gap-1 bg-emerald-950 border border-emerald-800 text-emerald-300 text-xs px-2.5 py-1 rounded-lg cursor-pointer"
-                        >
-                          <Plus className="w-3.5 h-3.5" /> Add Guarantor
-                        </button>
+
+                        {guarantorList.map((g, index) => (
+                          <div key={index} className="bg-slate-900 border border-slate-800 p-3 rounded-xl flex flex-col sm:flex-row gap-2 items-center">
+                            <div className="w-full sm:w-3/5">
+                              <label className="block text-[10px] text-slate-400 mb-1">Guarantor #{index + 1}</label>
+                              <select
+                                required
+                                value={g.guarantorId}
+                                onChange={(e) => updateGuarantorRow(index, 'guarantorId', e.target.value)}
+                                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-white"
+                              >
+                                <option value="">Select colleague...</option>
+                                {allMembers.map((m) => (
+                                  <option key={m.id} value={m.id}>
+                                    {m.full_name} ({m.member_number}) - {m.companies?.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <div className="w-full sm:w-2/5">
+                              <label className="block text-[10px] text-slate-400 mb-1">Pledged (KES)</label>
+                              <input
+                                type="number"
+                                required
+                                placeholder="e.g. 5000"
+                                value={g.amount}
+                                onChange={(e) => updateGuarantorRow(index, 'amount', e.target.value)}
+                                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-white"
+                              />
+                            </div>
+
+                            {guarantorList.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => removeGuarantorRow(index)}
+                                className="self-end sm:self-center mt-1 sm:mt-5 text-rose-400 hover:text-rose-300 p-1.5 cursor-pointer"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        ))}
                       </div>
-
-                      {guarantorList.map((g, index) => (
-                        <div key={index} className="bg-slate-900 border border-slate-800 p-3 rounded-xl flex flex-col sm:flex-row gap-2 items-center">
-                          <div className="w-full sm:w-3/5">
-                            <label className="block text-[10px] text-slate-400 mb-1">Guarantor #{index + 1}</label>
-                            <select
-                              required
-                              value={g.guarantorId}
-                              onChange={(e) => updateGuarantorRow(index, 'guarantorId', e.target.value)}
-                              className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-white"
-                            >
-                              <option value="">Select colleague...</option>
-                              {allMembers.map((m) => (
-                                <option key={m.id} value={m.id}>
-                                  {m.full_name} ({m.member_number}) - {m.companies?.name}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-
-                          <div className="w-full sm:w-2/5">
-                            <label className="block text-[10px] text-slate-400 mb-1">Pledged Amount (KES)</label>
-                            <input
-                              type="number"
-                              required
-                              placeholder="e.g. 5000"
-                              value={g.amount}
-                              onChange={(e) => updateGuarantorRow(index, 'amount', e.target.value)}
-                              className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-white"
-                            />
-                          </div>
-
-                          {guarantorList.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={() => removeGuarantorRow(index)}
-                              className="self-end sm:self-center mt-1 sm:mt-5 text-rose-400 hover:text-rose-300 p-1.5 cursor-pointer"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
+                    )}
 
                     <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 space-y-1.5 text-xs">
+                      <div className="flex justify-between text-slate-400">
+                        <span>Selected Product:</span>
+                        <span className="text-white font-bold capitalize">{loanProduct.replace('_', ' ')}</span>
+                      </div>
                       <div className="flex justify-between text-slate-400">
                         <span>Interest Rate:</span>
                         <span className="text-white font-medium">{interestRate}% / month</span>
                       </div>
                       <div className="flex justify-between text-slate-400">
-                        <span>Total Repayment:</span>
+                        <span>Total Payable:</span>
                         <span className="text-white font-medium">KES {calculatedTotal.toLocaleString()}</span>
                       </div>
                       <div className="border-t border-slate-800 pt-2 flex justify-between text-sm font-bold text-emerald-400">
@@ -1471,7 +1608,7 @@ export default function App() {
                       disabled={loading}
                       className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2.5 rounded-lg text-sm transition cursor-pointer"
                     >
-                      Submit for Committee & Guarantor Sign-off
+                      Submit for 3-Signatory Authorization
                     </button>
                   </form>
                 </div>
@@ -1486,46 +1623,46 @@ export default function App() {
                         <div key={l.id} className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
                           <div className="flex justify-between items-start">
                             <div>
-                              <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
-                                l.status === 'approved' ? 'bg-emerald-950 border border-emerald-800 text-emerald-300' :
-                                l.status === 'completed' ? 'bg-blue-950 border border-blue-800 text-blue-300' :
-                                l.status === 'pending' ? 'bg-amber-950 border border-amber-800 text-amber-300' : 'bg-slate-800 text-slate-400'
-                              }`}>
-                                Status: {l.status}
-                              </span>
+                              <div className="flex items-center gap-2">
+                                <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
+                                  l.status === 'approved' ? 'bg-emerald-950 border border-emerald-800 text-emerald-300' :
+                                  l.status === 'completed' ? 'bg-blue-950 border border-blue-800 text-blue-300' :
+                                  l.status === 'pending' ? 'bg-amber-950 border border-amber-800 text-amber-300' : 'bg-slate-800 text-slate-400'
+                                }`}>
+                                  Status: {l.status}
+                                </span>
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-950 text-slate-300 capitalize border border-slate-800">
+                                  {(l.loan_product || 'main_loan').replace('_', ' ')}
+                                </span>
+                              </div>
                               <h4 className="text-base font-bold text-white mt-1.5">
                                 KES {Number(l.principal_amount).toLocaleString()}
                               </h4>
-                              <p className="text-xs text-slate-400">{l.repayment_period_months} Months Term</p>
+                              <p className="text-xs text-slate-400">{l.repayment_period_months} Month(s) Term</p>
                             </div>
                             <button
                               onClick={() => generatePDFStatement(l)}
                               className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-emerald-400 px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-700 cursor-pointer"
                             >
-                              <Download className="w-3.5 h-3.5" /> PDF Schedule
+                              <Download className="w-3.5 h-3.5" /> PDF
                             </button>
                           </div>
 
-                          <div className="flex justify-between items-center bg-slate-950 p-2.5 rounded-lg border border-slate-800 text-xs">
-                            <span className="text-slate-400">Remaining Balance to Clear:</span>
-                            <span className="text-amber-400 font-bold text-sm">KES {Number(l.balance_remaining).toLocaleString()}</span>
-                          </div>
-
-                          {l.loan_guarantors && l.loan_guarantors.length > 0 && (
-                            <div className="border-t border-slate-800 pt-2 text-xs">
-                              <p className="text-[11px] font-semibold text-slate-400 mb-1">Guarantor Approvals ({l.loan_guarantors.length}):</p>
-                              <div className="flex flex-wrap gap-1.5">
-                                {l.loan_guarantors.map((g) => (
-                                  <span key={g.id} className="bg-slate-950 px-2 py-1 rounded border border-slate-800 text-slate-300 text-[11px] flex items-center gap-1">
-                                    {g.profiles?.full_name}: 
-                                    <strong className={g.status === 'accepted' ? 'text-emerald-400' : 'text-amber-400'}>
-                                      {g.status} (KES {Number(g.amount_guaranteed).toLocaleString()})
-                                    </strong>
-                                  </span>
-                                ))}
-                              </div>
+                          {/* 3-Signatory Progress Indicators */}
+                          <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 text-[11px] space-y-1">
+                            <p className="text-slate-400 font-semibold mb-1">3-Signatory Approvals Status:</p>
+                            <div className="grid grid-cols-3 gap-1 text-center font-mono">
+                              <span className={`p-1 rounded ${l.chairman_approval ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-slate-900 text-slate-500'}`}>
+                                Chair: {l.chairman_approval ? '✓' : 'Pending'}
+                              </span>
+                              <span className={`p-1 rounded ${l.treasurer_approval ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-slate-900 text-slate-500'}`}>
+                                Treas: {l.treasurer_approval ? '✓' : 'Pending'}
+                              </span>
+                              <span className={`p-1 rounded ${l.assistant_chair_approval ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-slate-900 text-slate-500'}`}>
+                                Asst: {l.assistant_chair_approval ? '✓' : 'Pending'}
+                              </span>
                             </div>
-                          )}
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -1543,7 +1680,7 @@ export default function App() {
                     <h3 className="text-base sm:text-lg font-bold text-white">Guarantor Requests Received</h3>
                   </div>
                   <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-xl flex justify-between items-center text-xs">
-                    <span className="text-slate-400">Your Current Available Free Shares for Guarantee:</span>
+                    <span className="text-slate-400">Your Current Available Free Shares:</span>
                     <span className="text-emerald-400 font-bold text-sm">KES {freeSharesAvailable.toLocaleString()}</span>
                   </div>
                 </div>
@@ -1564,7 +1701,7 @@ export default function App() {
                           <h4 className="text-base font-bold text-white mt-1">{g.loans?.profiles?.full_name}</h4>
                           <p className="text-xs text-slate-400">{g.loans?.profiles?.companies?.name} • Member {g.loans?.profiles?.member_number}</p>
                           <p className="text-xs text-emerald-400 mt-1 font-medium">
-                            Pledged Amount: KES {Number(g.amount_guaranteed).toLocaleString()} (Total Loan: KES {Number(g.loans?.principal_amount).toLocaleString()})
+                            Pledged: KES {Number(g.amount_guaranteed).toLocaleString()} (Product: {(g.loans?.loan_product || 'main_loan').replace('_', ' ').toUpperCase()})
                           </p>
                         </div>
 
@@ -1574,7 +1711,7 @@ export default function App() {
                               onClick={() => handleRespondGuarantor(g.id, 'accepted', g.amount_guaranteed)}
                               className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-4 py-2 rounded-lg flex items-center justify-center gap-1.5 transition cursor-pointer"
                             >
-                              <CheckCircle className="w-4 h-4" /> Accept Guarantee
+                              <CheckCircle className="w-4 h-4" /> Accept
                             </button>
                             <button
                               onClick={() => handleRespondGuarantor(g.id, 'rejected', g.amount_guaranteed)}
@@ -1591,7 +1728,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 4: BENEFICIARIES & WELFARE */}
+            {/* TAB 4: BENEFICIARIES & WELFARE WITH EVIDENCE UPLOAD */}
             {activeTab === 'beneficiaries' && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
@@ -1693,6 +1830,7 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* WELFARE CLAIMS WITH EVIDENCE UPLOAD */}
                 <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
                   <div className="flex items-center gap-2 mb-4">
                     <HeartHandshake className="w-5 h-5 text-rose-400" />
@@ -1727,11 +1865,22 @@ export default function App() {
                       <label className="block text-xs text-slate-400 mb-1">Details & Justification</label>
                       <textarea
                         required
-                        rows="3"
+                        rows="2"
                         value={claimDesc}
                         onChange={(e) => setClaimDesc(e.target.value)}
-                        placeholder="Provide details for committee review..."
+                        placeholder="Provide circumstances for 3-Signatory review..."
                         className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1 flex items-center gap-1">
+                        <Paperclip className="w-3.5 h-3.5 text-amber-400" /> Upload Evidence Document (PDF/Photo)
+                      </label>
+                      <input
+                        type="file"
+                        accept="image/*,.pdf"
+                        onChange={(e) => setClaimDocument(e.target.files[0])}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-300 file:mr-3 file:py-1 file:px-2.5 file:rounded-md file:border-0 file:text-xs file:bg-rose-900/60 file:text-rose-200 cursor-pointer"
                       />
                     </div>
                     <button
@@ -1739,25 +1888,45 @@ export default function App() {
                       disabled={loading}
                       className="w-full bg-rose-600 hover:bg-rose-500 text-white font-semibold py-2 rounded-lg text-xs transition cursor-pointer"
                     >
-                      Submit Welfare Claim
+                      Submit Welfare Claim for 3-Signatory Review
                     </button>
                   </form>
 
+                  {/* Claims List with Evidence Links & 3-Signatory Progress */}
                   <div className="mt-4 pt-4 border-t border-slate-800 space-y-2">
                     {welfareClaims.map((c) => (
-                      <div key={c.id} className="bg-slate-900 p-3 rounded-xl flex justify-between items-center text-xs">
-                        <div>
-                          <span className={`text-[9px] uppercase font-bold px-2 py-0.5 rounded-full ${
-                            c.status === 'approved' ? 'bg-emerald-950 text-emerald-300' : 'bg-amber-950 text-amber-300'
-                          }`}>
-                            {c.status}
+                      <div key={c.id} className="bg-slate-900 p-3 rounded-xl space-y-2 text-xs">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <span className={`text-[9px] uppercase font-bold px-2 py-0.5 rounded-full ${
+                              c.status === 'approved' ? 'bg-emerald-950 text-emerald-300' : 'bg-amber-950 text-amber-300'
+                            }`}>
+                              {c.status}
+                            </span>
+                            <h5 className="font-bold text-white capitalize mt-1">{c.claim_type}</h5>
+                            <p className="text-[11px] text-slate-400">{c.description}</p>
+                          </div>
+                          <span className="font-bold text-rose-400">
+                            KES {Number(c.amount_requested).toLocaleString()}
                           </span>
-                          <h5 className="font-bold text-white capitalize mt-1">{c.claim_type}</h5>
-                          <p className="text-[11px] text-slate-400">{c.description}</p>
                         </div>
-                        <span className="font-bold text-rose-400">
-                          KES {Number(c.amount_requested).toLocaleString()}
-                        </span>
+
+                        {c.evidence_url && (
+                          <a
+                            href={c.evidence_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-[11px] text-amber-400 hover:underline"
+                          >
+                            <FileCheck className="w-3.5 h-3.5" /> View Uploaded Evidence Document
+                          </a>
+                        )}
+
+                        <div className="grid grid-cols-3 gap-1 text-[10px] font-mono text-center pt-1 border-t border-slate-800/60">
+                          <span className={c.chairman_approval ? 'text-emerald-400' : 'text-slate-500'}>Chair: {c.chairman_approval ? '✓' : 'Pending'}</span>
+                          <span className={c.treasurer_approval ? 'text-emerald-400' : 'text-slate-500'}>Treas: {c.treasurer_approval ? '✓' : 'Pending'}</span>
+                          <span className={c.assistant_chair_approval ? 'text-emerald-400' : 'text-slate-500'}>Asst: {c.assistant_chair_approval ? '✓' : 'Pending'}</span>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1843,16 +2012,17 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 6: ADMIN HUB & IMMUTABLE AUDIT TRAIL */}
-            {activeTab === 'admin' && (profile?.role === 'admin' || profile?.role === 'treasurer') && (
+            {/* TAB 6: 3-SIGNATORY LEADERSHIP HUB */}
+            {activeTab === 'admin' && (profile?.role === 'admin' || profile?.role === 'treasurer' || profile?.role === 'chairman' || profile?.role === 'assistant_chair') && (
               <div className="space-y-6">
+                {/* 1. DUAL PAYROLL CHECKOFF */}
                 <div className="bg-slate-950 border border-amber-900/40 rounded-2xl p-5 sm:p-6 shadow-xl">
                   <div className="flex items-center gap-2 mb-2">
                     <FileSpreadsheet className="w-5 h-5 text-amber-400" />
                     <h3 className="text-base sm:text-lg font-bold text-white">Automated Dual Payroll Checkoff (Savings + Loans)</h3>
                   </div>
                   <p className="text-xs text-slate-400 mb-4">
-                    Upload payroll deductions report (CSV format with columns: <code className="text-amber-300 font-mono">member_number, savings_amount, loan_amount</code>).
+                    Upload monthly payroll deductions CSV (<code className="text-amber-300 font-mono">member_number, savings_amount, loan_amount</code>).
                   </p>
 
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
@@ -1930,48 +2100,66 @@ export default function App() {
                   )}
                 </div>
 
-                {/* MULTI-SIG LOAN APPROVALS */}
+                {/* 2. 3-SIGNATORY LOAN APPROVAL DESK */}
                 <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
                   <div className="flex items-center gap-2 mb-4">
                     <Clock className="w-5 h-5 text-amber-400" />
-                    <h3 className="text-base sm:text-lg font-bold text-white">Credit Committee Multi-Signature Governance</h3>
+                    <h3 className="text-base sm:text-lg font-bold text-white">3-Signatory Loan Approvals (Chairperson, Treasurer, Assistant Chair)</h3>
                   </div>
 
                   {allPendingLoans.length === 0 ? (
-                    <div className="text-center py-8 text-slate-500 text-sm">No loan applications awaiting committee approval.</div>
+                    <div className="text-center py-8 text-slate-500 text-sm">No loan applications awaiting signatory endorsement.</div>
                   ) : (
                     <div className="space-y-4">
                       {allPendingLoans.map((l) => (
                         <div key={l.id} className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
                           <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2">
                             <div>
-                              <h4 className="text-sm font-bold text-white">{l.profiles?.full_name}</h4>
+                              <div className="flex items-center gap-2">
+                                <h4 className="text-sm font-bold text-white">{l.profiles?.full_name}</h4>
+                                <span className="bg-emerald-950 text-emerald-300 text-[10px] font-bold px-2 py-0.5 rounded border border-emerald-800 uppercase">
+                                  {(l.loan_product || 'main_loan').replace('_', ' ')}
+                                </span>
+                              </div>
                               <p className="text-xs text-slate-400">{l.profiles?.companies?.name} • {l.profiles?.member_number}</p>
                               <p className="text-sm font-bold text-emerald-400 mt-1">
-                                KES {Number(l.principal_amount).toLocaleString()} ({l.repayment_period_months} Mos)
+                                KES {Number(l.principal_amount).toLocaleString()} ({l.repayment_period_months} Mos Term)
                               </p>
                             </div>
 
+                            {/* 3 Signatory Buttons */}
                             <div className="flex flex-wrap gap-2">
-                              {!l.credit_officer_approval ? (
-                                <button
-                                  onClick={() => handleCreditOfficerApprove(l.id)}
-                                  className="bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1 cursor-pointer"
-                                >
-                                  <CheckCircle className="w-3.5 h-3.5" /> 1. Credit Officer Endorse
-                                </button>
-                              ) : (
-                                <span className="bg-amber-950 border border-amber-800 text-amber-300 text-xs px-3 py-2 rounded-lg font-bold">
-                                  ✓ Credit Officer Endorsed
-                                </span>
-                              )}
+                              <button
+                                onClick={() => handleLoanSignatoryApprove(l.id, 'chairman')}
+                                className={`text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1 transition cursor-pointer ${
+                                  l.chairman_approval 
+                                    ? 'bg-emerald-950 border border-emerald-800 text-emerald-300' 
+                                    : 'bg-amber-600 hover:bg-amber-500 text-white'
+                                }`}
+                              >
+                                <CheckCircle className="w-3.5 h-3.5" /> {l.chairman_approval ? '✓ Chair Signed' : 'Sign: Chairperson'}
+                              </button>
 
                               <button
-                                onClick={() => handleChairmanFinalDisburse(l.id)}
-                                disabled={!l.credit_officer_approval}
-                                className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1 cursor-pointer"
+                                onClick={() => handleLoanSignatoryApprove(l.id, 'treasurer')}
+                                className={`text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1 transition cursor-pointer ${
+                                  l.treasurer_approval 
+                                    ? 'bg-emerald-950 border border-emerald-800 text-emerald-300' 
+                                    : 'bg-amber-600 hover:bg-amber-500 text-white'
+                                }`}
                               >
-                                <CheckCircle className="w-3.5 h-3.5" /> 2. Chairman Final Disburse
+                                <CheckCircle className="w-3.5 h-3.5" /> {l.treasurer_approval ? '✓ Treas Signed' : 'Sign: Treasurer'}
+                              </button>
+
+                              <button
+                                onClick={() => handleLoanSignatoryApprove(l.id, 'assistant_chair')}
+                                className={`text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1 transition cursor-pointer ${
+                                  l.assistant_chair_approval 
+                                    ? 'bg-emerald-950 border border-emerald-800 text-emerald-300' 
+                                    : 'bg-amber-600 hover:bg-amber-500 text-white'
+                                }`}
+                              >
+                                <CheckCircle className="w-3.5 h-3.5" /> {l.assistant_chair_approval ? '✓ Asst Signed' : 'Sign: Asst Chair'}
                               </button>
                             </div>
                           </div>
@@ -1995,41 +2183,76 @@ export default function App() {
                   )}
                 </div>
 
-                {/* IMMUTABLE AUDIT LOGS TRAIL */}
+                {/* 3. 3-SIGNATORY WELFARE CLAIMS REVIEW */}
                 <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
-                  <div className="flex items-center gap-2 mb-3">
-                    <History className="w-5 h-5 text-amber-400" />
-                    <h4 className="text-base font-bold text-white">Immutable System Audit Trail (SASRA Standards)</h4>
+                  <div className="flex items-center gap-2 mb-4">
+                    <HeartHandshake className="w-5 h-5 text-rose-400" />
+                    <h3 className="text-base sm:text-lg font-bold text-white">3-Signatory Welfare & Benevolent Claims</h3>
                   </div>
-                  <p className="text-xs text-slate-400 mb-4">
-                    Complete forensic log of all ledger entries, approvals, and user logins.
-                  </p>
 
-                  <div className="max-h-60 overflow-y-auto border border-slate-800 rounded-xl">
-                    <table className="w-full text-left text-xs">
-                      <thead className="bg-slate-900 text-slate-400 sticky top-0">
-                        <tr>
-                          <th className="p-2">Timestamp</th>
-                          <th className="p-2">User / Actor</th>
-                          <th className="p-2">Action</th>
-                          <th className="p-2">Details</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/60">
-                        {auditLogs.map((log) => (
-                          <tr key={log.id} className="hover:bg-slate-900/30 font-mono text-[11px]">
-                            <td className="p-2 text-slate-400">{new Date(log.created_at).toLocaleString()}</td>
-                            <td className="p-2 text-slate-200">{log.user_name}</td>
-                            <td className="p-2 text-emerald-400 font-bold">{log.action}</td>
-                            <td className="p-2 text-slate-300">{log.details}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                  {allPendingClaims.length === 0 ? (
+                    <div className="text-center py-8 text-slate-500 text-sm">No pending benevolent claims.</div>
+                  ) : (
+                    <div className="space-y-4">
+                      {allPendingClaims.map((c) => (
+                        <div key={c.id} className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-3 text-xs">
+                          <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2">
+                            <div>
+                              <h5 className="font-bold text-white text-sm">{c.profiles?.full_name}</h5>
+                              <p className="text-slate-400 capitalize">{c.claim_type}: {c.description}</p>
+                              <p className="font-bold text-rose-400 text-sm mt-1">KES {Number(c.amount_requested).toLocaleString()}</p>
+                            </div>
+
+                            {/* 3 Signatory Buttons for Welfare */}
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                onClick={() => handleWelfareSignatoryApprove(c.id, 'chairman')}
+                                className={`text-xs font-semibold px-2.5 py-1.5 rounded-lg transition cursor-pointer ${
+                                  c.chairman_approval ? 'bg-emerald-950 border border-emerald-800 text-emerald-300' : 'bg-rose-900 hover:bg-rose-800 text-white'
+                                }`}
+                              >
+                                {c.chairman_approval ? '✓ Chair Signed' : 'Sign: Chairperson'}
+                              </button>
+
+                              <button
+                                onClick={() => handleWelfareSignatoryApprove(c.id, 'treasurer')}
+                                className={`text-xs font-semibold px-2.5 py-1.5 rounded-lg transition cursor-pointer ${
+                                  c.treasurer_approval ? 'bg-emerald-950 border border-emerald-800 text-emerald-300' : 'bg-rose-900 hover:bg-rose-800 text-white'
+                                }`}
+                              >
+                                {c.treasurer_approval ? '✓ Treas Signed' : 'Sign: Treasurer'}
+                              </button>
+
+                              <button
+                                onClick={() => handleWelfareSignatoryApprove(c.id, 'assistant_chair')}
+                                className={`text-xs font-semibold px-2.5 py-1.5 rounded-lg transition cursor-pointer ${
+                                  c.assistant_chair_approval ? 'bg-emerald-950 border border-emerald-800 text-emerald-300' : 'bg-rose-900 hover:bg-rose-800 text-white'
+                                }`}
+                              >
+                                {c.assistant_chair_approval ? '✓ Asst Signed' : 'Sign: Asst Chair'}
+                              </button>
+                            </div>
+                          </div>
+
+                          {c.evidence_url && (
+                            <div className="pt-2 border-t border-slate-800">
+                              <a
+                                href={c.evidence_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 text-xs text-amber-400 hover:underline font-semibold"
+                              >
+                                <Paperclip className="w-3.5 h-3.5" /> Inspect Uploaded Evidence Attachment
+                              </a>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
-                {/* NOTICES & WELFARE */}
+                {/* 4. POST NOTICES & AUDIT LOGS */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
                     <div className="flex items-center gap-2 mb-4">
@@ -2045,7 +2268,7 @@ export default function App() {
                           required
                           value={newNoticeTitle}
                           onChange={(e) => setNewNoticeTitle(e.target.value)}
-                          placeholder="e.g. Dividend Rates Declared"
+                          placeholder="e.g. December Loan Applications Open"
                           className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white"
                         />
                       </div>
@@ -2071,32 +2294,31 @@ export default function App() {
                   </div>
 
                   <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
-                    <div className="flex items-center gap-2 mb-4">
-                      <HeartHandshake className="w-5 h-5 text-rose-400" />
-                      <h4 className="text-base font-bold text-white">Pending Welfare Benevolent Claims</h4>
+                    <div className="flex items-center gap-2 mb-3">
+                      <History className="w-5 h-5 text-amber-400" />
+                      <h4 className="text-base font-bold text-white">Immutable Audit Trail (SASRA Standard)</h4>
                     </div>
 
-                    {allPendingClaims.length === 0 ? (
-                      <div className="text-center py-8 text-slate-500 text-sm">No pending benevolent claims.</div>
-                    ) : (
-                      <div className="space-y-3">
-                        {allPendingClaims.map((c) => (
-                          <div key={c.id} className="bg-slate-900 border border-slate-800 p-3 rounded-xl flex justify-between items-center text-xs">
-                            <div>
-                              <h5 className="font-bold text-white">{c.profiles?.full_name}</h5>
-                              <p className="text-[11px] text-slate-400 capitalize">{c.claim_type}: {c.description}</p>
-                              <p className="font-bold text-rose-400 mt-0.5">KES {Number(c.amount_requested).toLocaleString()}</p>
-                            </div>
-                            <button
-                              onClick={() => handleApproveWelfareClaim(c.id)}
-                              className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1.5 rounded-lg text-xs cursor-pointer"
-                            >
-                              Approve Claim
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                    <div className="max-h-56 overflow-y-auto border border-slate-800 rounded-xl">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-900 text-slate-400 sticky top-0">
+                          <tr>
+                            <th className="p-2">Time</th>
+                            <th className="p-2">Action</th>
+                            <th className="p-2">Details</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
+                          {auditLogs.map((log) => (
+                            <tr key={log.id}>
+                              <td className="p-2 text-slate-400">{new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
+                              <td className="p-2 text-emerald-400 font-bold">{log.action}</td>
+                              <td className="p-2 text-slate-300">{log.details}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2105,7 +2327,7 @@ export default function App() {
         )}
       </main>
 
-      {/* Mobile Bottom Navigation Bar */}
+      {/* Persistent Bottom Mobile Nav */}
       {session && (
         <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-slate-950/95 backdrop-blur border-t border-slate-800 flex justify-around items-center py-2 px-1 z-50">
           <button
@@ -2161,7 +2383,7 @@ export default function App() {
             <span>M-Pesa</span>
           </button>
 
-          {(profile?.role === 'admin' || profile?.role === 'treasurer') && (
+          {(profile?.role === 'admin' || profile?.role === 'treasurer' || profile?.role === 'chairman' || profile?.role === 'assistant_chair') && (
             <button
               onClick={() => setActiveTab('admin')}
               className={`flex flex-col items-center gap-1 text-[9px] font-semibold py-1 px-2 transition ${
@@ -2169,7 +2391,7 @@ export default function App() {
               }`}
             >
               <ShieldCheck className="w-4 h-4" />
-              <span>Admin</span>
+              <span>Signatories</span>
             </button>
           )}
         </div>

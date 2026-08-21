@@ -9,19 +9,20 @@ import {
   Calculator, CheckCircle, XCircle, Clock, ShieldCheck, Download, 
   Users, Trash2, Plus, Menu, X, UploadCloud, FileSpreadsheet, 
   ArrowDownRight, ArrowUpRight, HeartHandshake, Bell, Smartphone, 
-  Award, ShieldAlert, FileText, Send, History, CheckSquare, Paperclip, FileCheck
+  Award, ShieldAlert, FileText, Send, History, CheckSquare, Paperclip, FileCheck, HelpCircle
 } from 'lucide-react';
 
 export default function App() {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [authMode, setAuthMode] = useState('login');
-  const [activeTab, setActiveTab] = useState('overview'); // overview, loans, guarantors, beneficiaries, mpesa, admin
+  const [authMode, setAuthMode] = useState('login'); // login, register, forgot, reset
+  const [activeTab, setActiveTab] = useState('overview');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Auth State
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [memberNumber, setMemberNumber] = useState('');
   const [idNumber, setIdNumber] = useState('');
@@ -46,8 +47,8 @@ export default function App() {
   const [auditLogs, setAuditLogs] = useState([]);
   const [message, setMessage] = useState({ text: '', type: '' });
 
-  // Loan Application State with 4 Product Types
-  const [loanProduct, setLoanProduct] = useState('main_loan'); // main_loan, emergency_loan, christmas_loan, monthly_shylock
+  // Loan Application State
+  const [loanProduct, setLoanProduct] = useState('main_loan');
   const [loanPrincipal, setLoanPrincipal] = useState(20000);
   const [loanMonths, setLoanMonths] = useState(12);
   const [interestRate, setInterestRate] = useState(1.0);
@@ -60,7 +61,7 @@ export default function App() {
   const [nokPhone, setNokPhone] = useState('');
   const [nokPercent, setNokPercent] = useState('');
 
-  // Welfare Claim Form State with Document Upload
+  // Welfare Claim Form State
   const [claimType, setClaimType] = useState('hospitalization');
   const [claimAmount, setClaimAmount] = useState('');
   const [claimDesc, setClaimDesc] = useState('');
@@ -94,7 +95,10 @@ export default function App() {
       if (session) fetchUserData(session.user.id);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setAuthMode('reset');
+      }
       setSession(session);
       if (session) fetchUserData(session.user.id);
       else {
@@ -112,7 +116,6 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // Update interest & terms automatically when loan product is changed
   const handleLoanProductChange = (prod) => {
     setLoanProduct(prod);
     if (prod === 'main_loan') {
@@ -129,7 +132,7 @@ export default function App() {
       setLoanPrincipal(10000);
     } else if (prod === 'monthly_shylock') {
       setLoanMonths(1);
-      setInterestRate(5.0); // 5% flat fee for 1-month advance
+      setInterestRate(5.0);
       setLoanPrincipal(5000);
     }
   };
@@ -295,6 +298,39 @@ export default function App() {
     setLoading(false);
   };
 
+  const handleForgotPassword = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setMessage({ text: '', type: '' });
+
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin,
+    });
+
+    if (error) {
+      setMessage({ text: error.message, type: 'error' });
+    } else {
+      setMessage({ text: 'Password reset instructions sent to your email inbox.', type: 'success' });
+    }
+    setLoading(false);
+  };
+
+  const handleUpdatePassword = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setMessage({ text: '', type: '' });
+
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) {
+      setMessage({ text: error.message, type: 'error' });
+    } else {
+      setMessage({ text: 'Password updated successfully! Please sign in with your new password.', type: 'success' });
+      setAuthMode('login');
+      setNewPassword('');
+    }
+    setLoading(false);
+  };
+
   const handleRegister = async (e) => {
     e.preventDefault();
     if (!odpcConsent) {
@@ -348,7 +384,6 @@ export default function App() {
 
   const freeSharesAvailable = Math.max(0, totalSavings - activeLoanBalance - totalGuaranteesCommittedAmount);
   
-  // Specific max product borrowing limits
   const maxLimitForSelectedProduct = loanProduct === 'monthly_shylock'
     ? 20000 
     : Math.max(totalSavings * 3, 10000);
@@ -384,7 +419,6 @@ export default function App() {
     }
 
     const validGuarantors = guarantorList.filter((g) => g.guarantorId && Number(g.amount) > 0);
-    // Monthly shylock may skip guarantors if within member's own savings, but other products require guarantors
     if (loanProduct !== 'monthly_shylock' && validGuarantors.length === 0) {
       setMessage({ text: 'Please assign at least 1 guarantor for this loan product.', type: 'error' });
       setLoading(false);
@@ -453,7 +487,6 @@ export default function App() {
     }
   };
 
-  // --- WELFARE / BENEVOLENT CLAIM WITH DOCUMENT UPLOAD ---
   const handleSubmitWelfareClaim = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -501,21 +534,18 @@ export default function App() {
     setLoading(false);
   };
 
-  // --- 3-SIGNATORY MULTI-SIGNATURE APPROVAL ACTIONS ---
   const handleLoanSignatoryApprove = async (loanId, signatoryRole) => {
     const updatePayload = {};
     if (signatoryRole === 'chairman') updatePayload.chairman_approval = true;
     if (signatoryRole === 'treasurer') updatePayload.treasurer_approval = true;
     if (signatoryRole === 'assistant_chair') updatePayload.assistant_chair_approval = true;
 
-    // Check existing loan state
     const { data: currentLoan } = await supabase.from('loans').select('*').eq('id', loanId).single();
     
     const isChair = signatoryRole === 'chairman' || currentLoan.chairman_approval;
     const isTreas = signatoryRole === 'treasurer' || currentLoan.treasurer_approval;
     const isAsst = signatoryRole === 'assistant_chair' || currentLoan.assistant_chair_approval;
 
-    // If all 3 signatories approved, set loan status to approved
     if (isChair && isTreas && isAsst) {
       updatePayload.status = 'approved';
     }
@@ -550,7 +580,6 @@ export default function App() {
     setMessage({ text: `Benevolence endorsement recorded for ${signatoryRole.replace('_', ' ')}.`, type: 'success' });
   };
 
-  // --- BENEFICIARY / NEXT OF KIN ---
   const handleAddBeneficiary = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -592,7 +621,6 @@ export default function App() {
     fetchBeneficiaries(session.user.id);
   };
 
-  // --- M-PESA INSTANT REPAYMENT / TOP-UP ---
   const handleMpesaTransaction = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -660,7 +688,6 @@ export default function App() {
     setLoading(false);
   };
 
-  // --- AUTOMATED PAYROLL CHECKOFF INGESTION ---
   const handleCSVUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -882,7 +909,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 font-sans pb-20 sm:pb-12">
-      {/* Top Header */}
+      {/* Header */}
       <header className="border-b border-slate-800 bg-slate-950/95 backdrop-blur px-4 sm:px-6 py-3.5 flex justify-between items-center sticky top-0 z-50">
         <div className="flex items-center gap-3">
           <div className="bg-emerald-600 p-2 rounded-xl shadow-lg shadow-emerald-900/30">
@@ -956,7 +983,7 @@ export default function App() {
 
             <button
               onClick={() => supabase.auth.signOut()}
-              className="hidden lg:flex items-center gap-1.5 bg-slate-800 hover:bg-rose-900/40 text-slate-300 hover:text-rose-300 px-3 py-1.5 rounded-lg text-xs font-semibold transition border border-slate-700"
+              className="hidden lg:flex items-center gap-1.5 bg-slate-800 hover:bg-rose-900/40 text-slate-300 hover:text-rose-300 px-3 py-1.5 rounded-lg text-xs font-semibold transition border border-slate-700 cursor-pointer"
             >
               <LogOut className="w-3.5 h-3.5" /> Exit
             </button>
@@ -1057,130 +1084,207 @@ export default function App() {
         )}
 
         {!session ? (
-          /* AUTH VIEW */
+          /* AUTH VIEWS (LOGIN / REGISTER / FORGOT / RESET) */
           <div className="max-w-md mx-auto mt-4 sm:mt-8 bg-slate-950 border border-slate-800 rounded-2xl p-6 sm:p-8 shadow-2xl">
             <div className="text-center mb-6">
               <h2 className="text-2xl font-bold text-white">
-                {authMode === 'login' ? 'Member Login' : 'Join KEWA SACCO'}
+                {authMode === 'login' && 'Member Login'}
+                {authMode === 'register' && 'Join KEWA SACCO'}
+                {authMode === 'forgot' && 'Reset Password'}
+                {authMode === 'reset' && 'Set New Password'}
               </h2>
               <p className="text-xs sm:text-sm text-slate-400 mt-1">
-                {authMode === 'login' ? 'Access your cooperative portal' : 'Register your staff cooperative profile'}
+                {authMode === 'login' && 'Access your cooperative portal'}
+                {authMode === 'register' && 'Register your staff cooperative profile'}
+                {authMode === 'forgot' && 'Receive an email link to regain access'}
+                {authMode === 'reset' && 'Enter your replacement account password'}
               </p>
             </div>
 
-            <form onSubmit={authMode === 'login' ? handleLogin : handleRegister} className="space-y-4">
-              {authMode === 'register' && (
-                <>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Full Name</label>
-                    <input
-                      type="text"
-                      required
-                      value={fullName}
-                      onChange={(e) => setFullName(e.target.value)}
-                      placeholder="John Doe"
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Employer / Branch</label>
-                    <select
-                      value={companyId}
-                      onChange={(e) => setCompanyId(e.target.value)}
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
-                    >
-                      {companies.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-300 mb-1">Member No.</label>
-                      <input
-                        type="text"
-                        required
-                        value={memberNumber}
-                        onChange={(e) => setMemberNumber(e.target.value)}
-                        placeholder="KW-001"
-                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-300 mb-1">National ID</label>
-                      <input
-                        type="text"
-                        required
-                        value={idNumber}
-                        onChange={(e) => setIdNumber(e.target.value)}
-                        placeholder="12345678"
-                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Phone Number</label>
-                    <input
-                      type="tel"
-                      required
-                      value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                      placeholder="0712345678"
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
-                    />
-                  </div>
-                </>
-              )}
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Email Address</label>
-                <input
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="name@domain.com"
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Password</label>
-                <input
-                  type="password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
-                />
-              </div>
-
-              {authMode === 'register' && (
-                <div className="flex items-start gap-2 pt-1">
+            {/* FORGOT PASSWORD FORM */}
+            {authMode === 'forgot' && (
+              <form onSubmit={handleForgotPassword} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Registered Email Address</label>
                   <input
-                    type="checkbox"
-                    id="odpc"
+                    type="email"
                     required
-                    checked={odpcConsent}
-                    onChange={(e) => setOdpcConsent(e.target.checked)}
-                    className="mt-1 accent-emerald-500 rounded"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="name@domain.com"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
                   />
-                  <label htmlFor="odpc" className="text-[11px] text-slate-400 leading-tight">
-                    I consent to KEWA SACCO collecting and processing my data in compliance with the <strong>Kenya Data Protection Act (2019)</strong>.
-                  </label>
                 </div>
-              )}
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2.5 rounded-lg text-sm transition cursor-pointer"
+                >
+                  {loading ? 'Sending link...' : 'Send Password Reset Link'}
+                </button>
+                <div className="text-center mt-4">
+                  <button
+                    type="button"
+                    onClick={() => setAuthMode('login')}
+                    className="text-xs text-slate-400 hover:text-white"
+                  >
+                    Back to Sign In
+                  </button>
+                </div>
+              </form>
+            )}
 
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2.5 rounded-lg text-sm transition mt-2 cursor-pointer"
-              >
-                {loading ? 'Processing...' : authMode === 'login' ? 'Sign In' : 'Complete Registration'}
-              </button>
-            </form>
+            {/* RECOVERY / SET NEW PASSWORD FORM */}
+            {authMode === 'reset' && (
+              <form onSubmit={handleUpdatePassword} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Enter New Password</label>
+                  <input
+                    type="password"
+                    required
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2.5 rounded-lg text-sm transition cursor-pointer"
+                >
+                  {loading ? 'Saving...' : 'Save New Password & Sign In'}
+                </button>
+              </form>
+            )}
+
+            {/* LOGIN & REGISTER FORMS */}
+            {(authMode === 'login' || authMode === 'register') && (
+              <form onSubmit={authMode === 'login' ? handleLogin : handleRegister} className="space-y-4">
+                {authMode === 'register' && (
+                  <>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">Full Name</label>
+                      <input
+                        type="text"
+                        required
+                        value={fullName}
+                        onChange={(e) => setFullName(e.target.value)}
+                        placeholder="John Doe"
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">Employer / Branch</label>
+                      <select
+                        value={companyId}
+                        onChange={(e) => setCompanyId(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
+                      >
+                        {companies.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">Member No.</label>
+                        <input
+                          type="text"
+                          required
+                          value={memberNumber}
+                          onChange={(e) => setMemberNumber(e.target.value)}
+                          placeholder="KW-001"
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">National ID</label>
+                        <input
+                          type="text"
+                          required
+                          value={idNumber}
+                          onChange={(e) => setIdNumber(e.target.value)}
+                          placeholder="12345678"
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">Phone Number</label>
+                      <input
+                        type="tel"
+                        required
+                        value={phone}
+                        onChange={(e) => setPhone(e.target.value)}
+                        placeholder="0712345678"
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
+                      />
+                    </div>
+                  </>
+                )}
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Email Address</label>
+                  <input
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="name@domain.com"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
+                  />
+                </div>
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="text-xs font-semibold text-slate-300">Password</label>
+                    {authMode === 'login' && (
+                      <button
+                        type="button"
+                        onClick={() => setAuthMode('forgot')}
+                        className="text-[11px] text-emerald-400 hover:underline cursor-pointer"
+                      >
+                        Forgot password?
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    type="password"
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
+                  />
+                </div>
+
+                {authMode === 'register' && (
+                  <div className="flex items-start gap-2 pt-1">
+                    <input
+                      type="checkbox"
+                      id="odpc"
+                      required
+                      checked={odpcConsent}
+                      onChange={(e) => setOdpcConsent(e.target.checked)}
+                      className="mt-1 accent-emerald-500 rounded"
+                    />
+                    <label htmlFor="odpc" className="text-[11px] text-slate-400 leading-tight">
+                      I consent to KEWA SACCO collecting and processing my data in compliance with the <strong>Kenya Data Protection Act (2019)</strong>.
+                    </label>
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2.5 rounded-lg text-sm transition mt-2 cursor-pointer"
+                >
+                  {loading ? 'Processing...' : authMode === 'login' ? 'Sign In' : 'Complete Registration'}
+                </button>
+              </form>
+            )}
 
             <div className="text-center mt-6 text-xs text-slate-400">
               {authMode === 'login' ? (
@@ -1190,20 +1294,19 @@ export default function App() {
                     Register Account
                   </button>
                 </>
-              ) : (
+              ) : authMode === 'register' ? (
                 <>
                   Already registered?{' '}
                   <button onClick={() => setAuthMode('login')} className="text-emerald-400 hover:underline font-semibold cursor-pointer">
                     Sign In
                   </button>
                 </>
-              )}
+              ) : null}
             </div>
           </div>
         ) : (
           /* AUTHENTICATED TABS */
           <>
-            {/* Header Member Information Banner */}
             <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 sm:p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
               <div>
                 <div className="flex items-center gap-2">
@@ -1226,7 +1329,7 @@ export default function App() {
               </button>
             </div>
 
-            {/* TAB 1: OVERVIEW & NOTICE BOARD */}
+            {/* TAB 1: OVERVIEW */}
             {activeTab === 'overview' && (
               <div className="space-y-6">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1424,7 +1527,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 2: LOANS & SPECIFIC PRODUCT SELECTION */}
+            {/* TAB 2: LOANS */}
             {activeTab === 'loans' && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
@@ -1433,7 +1536,6 @@ export default function App() {
                     <h3 className="text-base sm:text-lg font-bold text-white">Apply for a Loan</h3>
                   </div>
 
-                  {/* 4 LOAN PRODUCT TABS */}
                   <div className="grid grid-cols-2 gap-2 mb-4">
                     <button
                       type="button"
@@ -1522,7 +1624,6 @@ export default function App() {
                       />
                     </div>
 
-                    {/* DYNAMIC GUARANTORS SYSTEM */}
                     {loanProduct !== 'monthly_shylock' && (
                       <div className="border-t border-slate-800 pt-4 space-y-3">
                         <div className="flex justify-between items-center">
@@ -1648,7 +1749,6 @@ export default function App() {
                             </button>
                           </div>
 
-                          {/* 3-Signatory Progress Indicators */}
                           <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 text-[11px] space-y-1">
                             <p className="text-slate-400 font-semibold mb-1">3-Signatory Approvals Status:</p>
                             <div className="grid grid-cols-3 gap-1 text-center font-mono">
@@ -1728,7 +1828,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 4: BENEFICIARIES & WELFARE WITH EVIDENCE UPLOAD */}
+            {/* TAB 4: BENEFICIARIES & WELFARE */}
             {activeTab === 'beneficiaries' && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
@@ -1821,7 +1921,7 @@ export default function App() {
                           <span className="bg-emerald-950 text-emerald-300 font-bold px-2 py-0.5 rounded border border-emerald-800">
                             {b.allocation_percentage}%
                           </span>
-                          <button onClick={() => handleDeleteBeneficiary(b.id)} className="text-rose-400 hover:text-rose-300">
+                          <button onClick={() => handleDeleteBeneficiary(b.id)} className="text-rose-400 hover:text-rose-300 cursor-pointer">
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
@@ -1830,7 +1930,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* WELFARE CLAIMS WITH EVIDENCE UPLOAD */}
                 <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
                   <div className="flex items-center gap-2 mb-4">
                     <HeartHandshake className="w-5 h-5 text-rose-400" />
@@ -1892,7 +1991,6 @@ export default function App() {
                     </button>
                   </form>
 
-                  {/* Claims List with Evidence Links & 3-Signatory Progress */}
                   <div className="mt-4 pt-4 border-t border-slate-800 space-y-2">
                     {welfareClaims.map((c) => (
                       <div key={c.id} className="bg-slate-900 p-3 rounded-xl space-y-2 text-xs">
@@ -1934,7 +2032,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 5: M-PESA DIRECT PAYMENT */}
+            {/* TAB 5: M-PESA */}
             {activeTab === 'mpesa' && (
               <div className="max-w-xl mx-auto bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-8 space-y-6">
                 <div className="flex items-center gap-3">
@@ -2015,7 +2113,6 @@ export default function App() {
             {/* TAB 6: 3-SIGNATORY LEADERSHIP HUB */}
             {activeTab === 'admin' && (profile?.role === 'admin' || profile?.role === 'treasurer' || profile?.role === 'chairman' || profile?.role === 'assistant_chair') && (
               <div className="space-y-6">
-                {/* 1. DUAL PAYROLL CHECKOFF */}
                 <div className="bg-slate-950 border border-amber-900/40 rounded-2xl p-5 sm:p-6 shadow-xl">
                   <div className="flex items-center gap-2 mb-2">
                     <FileSpreadsheet className="w-5 h-5 text-amber-400" />
@@ -2100,7 +2197,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 2. 3-SIGNATORY LOAN APPROVAL DESK */}
+                {/* 3-SIGNATORY LOAN APPROVAL DESK */}
                 <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
                   <div className="flex items-center gap-2 mb-4">
                     <Clock className="w-5 h-5 text-amber-400" />
@@ -2127,7 +2224,6 @@ export default function App() {
                               </p>
                             </div>
 
-                            {/* 3 Signatory Buttons */}
                             <div className="flex flex-wrap gap-2">
                               <button
                                 onClick={() => handleLoanSignatoryApprove(l.id, 'chairman')}
@@ -2183,7 +2279,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 3. 3-SIGNATORY WELFARE CLAIMS REVIEW */}
+                {/* 3-SIGNATORY WELFARE CLAIMS REVIEW */}
                 <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
                   <div className="flex items-center gap-2 mb-4">
                     <HeartHandshake className="w-5 h-5 text-rose-400" />
@@ -2203,7 +2299,6 @@ export default function App() {
                               <p className="font-bold text-rose-400 text-sm mt-1">KES {Number(c.amount_requested).toLocaleString()}</p>
                             </div>
 
-                            {/* 3 Signatory Buttons for Welfare */}
                             <div className="flex flex-wrap gap-2">
                               <button
                                 onClick={() => handleWelfareSignatoryApprove(c.id, 'chairman')}
@@ -2252,7 +2347,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 4. POST NOTICES & AUDIT LOGS */}
+                {/* POST NOTICES & AUDIT LOGS */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 sm:p-6">
                     <div className="flex items-center gap-2 mb-4">
@@ -2327,7 +2422,7 @@ export default function App() {
         )}
       </main>
 
-      {/* Persistent Bottom Mobile Nav */}
+      {/* Mobile Bottom Navigation Bar */}
       {session && (
         <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-slate-950/95 backdrop-blur border-t border-slate-800 flex justify-around items-center py-2 px-1 z-50">
           <button

@@ -111,6 +111,37 @@ export default function App() {
   const [newNoticeContent, setNewNoticeContent] = useState('');
   const [newNoticeCategory, setNewNoticeCategory] = useState('general');
 
+  // --- 5-MINUTE AUTOMATIC INACTIVITY LOGOUT TIMER ---
+  useEffect(() => {
+    if (!session) return;
+
+    let timeoutId;
+    const INACTIVITY_LIMIT_MS = 5 * 60 * 1000; // 5 minutes
+
+    const resetInactivityTimer = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(async () => {
+        logAuditAction('AUTO_TIMEOUT_LOGOUT', 'User logged out automatically due to 5 minutes of inactivity');
+        await supabase.auth.signOut();
+        setMessage({
+          text: 'You were signed out automatically due to 5 minutes of inactivity for your account security.',
+          type: 'error'
+        });
+      }, INACTIVITY_LIMIT_MS);
+    };
+
+    // User activity listeners
+    const activityEvents = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'click'];
+    activityEvents.forEach((evt) => window.addEventListener(evt, resetInactivityTimer));
+
+    resetInactivityTimer(); // start initial timer
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      activityEvents.forEach((evt) => window.removeEventListener(evt, resetInactivityTimer));
+    };
+  }, [session]);
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
@@ -140,7 +171,7 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // Auto-refresh data when switching tabs (e.g., Documents or Admin Hub)
+  // Auto-refresh data on tab change
   useEffect(() => {
     if (activeTab === 'documents') {
       fetchSaccoDocuments();
@@ -1263,7 +1294,6 @@ export default function App() {
   const treasurerOfficial = allMembers.find((m) => m.role === 'treasurer') || { full_name: 'Treasurer', phone: '0712345679' };
   const asstChairOfficial = allMembers.find((m) => m.role === 'assistant_chair') || { full_name: 'Assistant Chair', phone: '0712345670' };
 
-  // Formats phone numbers from 07... / 01... into Kenyan international +254 format for WhatsApp
   const formatKenyanWhatsAppNumber = (rawPhone) => {
     if (!rawPhone) return '254700000000';
     let clean = rawPhone.toString().replace(/[^0-9]/g, '');

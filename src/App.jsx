@@ -12,7 +12,7 @@ import {
   Award, ShieldAlert, FileText, Send, History, CheckSquare, Paperclip, FileCheck, HelpCircle,
   Eye, EyeOff, FolderDown, FileArchive, Shield, Lock, RotateCcw, AlertTriangle, Sparkles, Search,
   MessageSquare, MessageCircle, Bot, Mail, CornerDownRight, Check, UserCheck, AlertOctagon,
-  Contact2, Filter, AtSign
+  Contact2, Filter, AtSign, Megaphone
 } from 'lucide-react';
 
 export default function App() {
@@ -23,7 +23,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('overview');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Auth State with Saved Email LocalStorage Cache
+  // Auth State
   const [email, setEmail] = useState(() => localStorage.getItem('kewa_remembered_email') || '');
   const [password, setPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -58,7 +58,7 @@ export default function App() {
   const [memberDirectorySearch, setMemberDirectorySearch] = useState('');
   const [memberDirectoryCompanyFilter, setMemberDirectoryCompanyFilter] = useState('all');
 
-  // Manual Member Adjustment Form State (Leadership Desk)
+  // Manual Member Adjustment Form State
   const [manualTargetMemberId, setManualTargetMemberId] = useState('');
   const [manualAdjustmentType, setManualAdjustmentType] = useState('savings_deposit');
   const [manualAmount, setManualAmount] = useState('');
@@ -120,7 +120,7 @@ export default function App() {
   const [newNoticeContent, setNewNoticeContent] = useState('');
   const [newNoticeCategory, setNewNoticeCategory] = useState('general');
 
-  // Explicit Secure Logout (Leaves email chip suggestion available, but blanks input on logout screen)
+  // Secure Logout
   const handlePerformSignOut = async (timeoutReason = false) => {
     setPassword('');
     setNewPassword('');
@@ -133,7 +133,6 @@ export default function App() {
     setInquiries([]);
     setMobileMenuOpen(false);
     
-    // Remember email for fast typing chip, but blank active input
     if (email) {
       localStorage.setItem('kewa_remembered_email', email);
       setSavedEmailChip(email);
@@ -215,6 +214,8 @@ export default function App() {
       fetchMemberInquiries(session.user.id);
     } else if (activeTab === 'admin' && session) {
       fetchAdminData();
+    } else if (activeTab === 'overview') {
+      fetchAnnouncements();
     }
   }, [activeTab]);
 
@@ -243,16 +244,22 @@ export default function App() {
     }
   };
 
+  // Improved Audit Logger with Real User Name and Member Number
   const logAuditAction = async (action, details, userId = null, userName = null) => {
     try {
+      const activeName = userName || profile?.full_name || email || 'Member';
+      const activeMemberNo = profile?.member_number ? ` (No: ${profile.member_number})` : '';
+      const formattedName = `${activeName}${activeMemberNo}`;
+
       await supabase.from('audit_logs').insert([
         {
           user_id: userId || session?.user?.id || null,
-          user_name: userName || profile?.full_name || 'System User',
+          user_name: formattedName,
           action,
           details,
         },
       ]);
+      if (session && activeTab === 'admin') fetchAdminData();
     } catch (e) {
       console.warn('Audit write skipped:', e);
     }
@@ -440,16 +447,16 @@ export default function App() {
     setLoading(true);
     setMessage({ text: '', type: '' });
 
-    // Save email locally for quick-fill suggestion on future visits
     if (email) {
       localStorage.setItem('kewa_remembered_email', email);
       setSavedEmailChip(email);
     }
 
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) setMessage({ text: error.message, type: 'error' });
-    else {
-      logAuditAction('LOGIN', `Member logged in via web portal`, data?.user?.id, email);
+    if (error) {
+      setMessage({ text: error.message, type: 'error' });
+    } else {
+      await logAuditAction('LOGIN', `Member logged in successfully`, data?.user?.id, data?.user?.email);
     }
     setLoading(false);
   };
@@ -1488,6 +1495,8 @@ export default function App() {
     return matchesSearch && matchesCompany;
   });
 
+  const userRole = profile?.role || 'member';
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-24 sm:pb-12 selection:bg-emerald-500 selection:text-white">
       {/* Top Navigation */}
@@ -1571,7 +1580,7 @@ export default function App() {
               >
                 <MessageSquare className="w-3.5 h-3.5 text-emerald-400" /> Help & Chat
               </button>
-              {['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(profile?.role) && (
+              {['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(userRole) && (
                 <button
                   onClick={() => setActiveTab('admin')}
                   className={`px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 ${
@@ -1683,7 +1692,7 @@ export default function App() {
             <MessageSquare className="w-4 h-4" /> Helpdesk, Bot & Officials Chat
           </button>
 
-          {['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(profile?.role) && (
+          {['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(userRole) && (
             <button
               onClick={() => { setActiveTab('admin'); setMobileMenuOpen(false); }}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold transition ${
@@ -1721,7 +1730,7 @@ export default function App() {
         )}
 
         {!session ? (
-          /* AUTH VIEWS (WITH CLICK-TO-FILL EMAIL CHIP SUGGESTION) */
+          /* AUTH VIEWS */
           <div className="max-w-md mx-auto mt-6 sm:mt-12 bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-10 shadow-2xl backdrop-blur-xl">
             <div className="text-center mb-6">
               <div className="inline-flex bg-gradient-to-tr from-emerald-600 to-teal-400 p-3 rounded-2xl shadow-xl shadow-emerald-900/30 mb-3">
@@ -1904,7 +1913,7 @@ export default function App() {
                 </div>
                 <div>
                   <div className="flex justify-between items-center mb-1">
-                    <label className="text-xs font-semibold text-slate-300">Password</label>
+                    <label className="block text-xs font-semibold text-slate-300">Password</label>
                     {authMode === 'login' && (
                       <button
                         type="button"
@@ -2004,9 +2013,31 @@ export default function App() {
               </button>
             </div>
 
-            {/* TAB 1: OVERVIEW */}
+            {/* TAB 1: OVERVIEW (WITH ANNOUNCEMENT BOARD) */}
             {activeTab === 'overview' && (
               <div className="space-y-6">
+                {/* Announcements Board */}
+                {announcements.length > 0 && (
+                  <div className="bg-gradient-to-r from-emerald-950/70 to-teal-950/70 border border-emerald-800/50 rounded-3xl p-5 sm:p-6 shadow-xl">
+                    <div className="flex items-center gap-2 mb-3">
+                      <Megaphone className="w-5 h-5 text-emerald-400 animate-bounce" />
+                      <h3 className="text-sm font-bold text-white uppercase tracking-wider">Official Society Notices & Announcements</h3>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {announcements.slice(0, 2).map((notice) => (
+                        <div key={notice.id} className="bg-slate-950/80 border border-slate-800 p-4 rounded-2xl space-y-1 shadow">
+                          <div className="flex justify-between items-center text-[10px] text-slate-400">
+                            <span className="text-emerald-400 font-bold uppercase">{notice.category || 'General'}</span>
+                            <span>{new Date(notice.created_at).toLocaleDateString()}</span>
+                          </div>
+                          <h4 className="font-bold text-white text-sm">{notice.title}</h4>
+                          <p className="text-xs text-slate-300 leading-relaxed">{notice.content}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 flex items-center justify-between shadow-lg">
                     <div>
@@ -2537,7 +2568,7 @@ export default function App() {
                           >
                             <Download className="w-3.5 h-3.5" /> Read / Download PDF
                           </a>
-                          {['admin', 'chairman', 'treasurer', 'assistant_chair'].includes(profile?.role) && (
+                          {['admin', 'chairman', 'treasurer', 'assistant_chair'].includes(userRole) && (
                             <button
                               onClick={() => handleDeleteSaccoDocument(doc.id, doc.title)}
                               className="bg-rose-950/60 hover:bg-rose-900 border border-rose-900/60 text-rose-300 p-2.5 rounded-xl text-xs transition cursor-pointer"
@@ -3040,11 +3071,26 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 8: LEADERSHIP HUB */}
-            {activeTab === 'admin' && ['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(profile?.role) && (
+            {/* TAB 8: ROLE-RESTRICTED LEADERSHIP HUB (CHAIRMAN vs TREASURER vs ASST CHAIR) */}
+            {activeTab === 'admin' && ['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(userRole) && (
               <div className="space-y-6">
+                
+                {/* ROLE BANNER */}
+                <div className="bg-gradient-to-r from-amber-950/80 to-slate-900 border border-amber-800/60 rounded-3xl p-5 flex justify-between items-center shadow-lg">
+                  <div>
+                    <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-900 text-amber-200 uppercase tracking-wide">
+                      Active Portfolio View: {userRole.replace('_', ' ').toUpperCase()}
+                    </span>
+                    <h3 className="text-lg font-black text-white mt-1">
+                      {userRole === 'chairman' || userRole === 'admin' ? 'Executive Control & Oversight Dashboard' :
+                       userRole === 'treasurer' ? 'Treasurer & Financial Operations Desk' :
+                       'Assistant Chair & Guarantor Verification Desk'}
+                    </h3>
+                  </div>
+                  <span className="text-xs text-amber-300/80 font-mono hidden sm:inline">KEWA SACCO Governance Framework</span>
+                </div>
 
-                {/* 1. REGISTERED MEMBERS DIRECTORY REGISTER */}
+                {/* 1. MEMBER DIRECTORY (Accessible by All Officials & Admin) */}
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-8 shadow-xl">
                   <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 mb-4">
                     <div>
@@ -3149,84 +3195,86 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 2. MANUAL ADJUSTMENT DESK */}
-                <div className="bg-slate-900/90 border border-emerald-900/50 rounded-3xl p-6 sm:p-8 shadow-xl">
-                  <div className="flex items-center gap-2 mb-2">
-                    <UserCheck className="w-5 h-5 text-emerald-400" />
-                    <h3 className="text-lg font-bold text-white">Manual Member Contribution / Loan Repayment Desk</h3>
+                {/* 2. MANUAL ADJUSTMENT DESK (Treasurer & Chairman / Admin Only) */}
+                {['admin', 'chairman', 'treasurer'].includes(userRole) && (
+                  <div className="bg-slate-900/90 border border-emerald-900/50 rounded-3xl p-6 sm:p-8 shadow-xl">
+                    <div className="flex items-center gap-2 mb-2">
+                      <UserCheck className="w-5 h-5 text-emerald-400" />
+                      <h3 className="text-lg font-bold text-white">Manual Member Contribution / Loan Repayment Desk</h3>
+                    </div>
+                    <p className="text-xs text-slate-400 mb-4 font-medium">
+                      Post manual individual deposits for members paying via cash, direct bank deposit, or non-checkoff streams.
+                    </p>
+
+                    <form onSubmit={handleManualMemberAdjustment} className="space-y-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-300 mb-1">Select Beneficiary Member</label>
+                          <select
+                            value={manualTargetMemberId}
+                            onChange={(e) => setManualTargetMemberId(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                          >
+                            {allMembers.map((m) => (
+                              <option key={m.id} value={m.id}>
+                                {m.full_name} ({m.member_number}) - {m.companies?.name || 'External'}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-300 mb-1">Adjustment Type</label>
+                          <select
+                            value={manualAdjustmentType}
+                            onChange={(e) => setManualAdjustmentType(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-medium"
+                          >
+                            <option value="savings_deposit">1. Credit Member Monthly Savings</option>
+                            <option value="loan_repayment">2. Apply Active Loan Repayment (Debt Reduction)</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-300 mb-1">Amount (KES)</label>
+                          <input
+                            type="number"
+                            required
+                            value={manualAmount}
+                            onChange={(e) => setManualAmount(e.target.value)}
+                            placeholder="e.g. 5000"
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div className="sm:col-span-2">
+                          <label className="block text-xs font-semibold text-slate-300 mb-1">Audit Reference Code (Optional)</label>
+                          <input
+                            type="text"
+                            value={manualRefCode}
+                            onChange={(e) => setManualRefCode(e.target.value)}
+                            placeholder="e.g. BANK-SLIP-7821 or CASH-RECEIPT-09"
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono uppercase"
+                          />
+                        </div>
+
+                        <div className="sm:col-span-1 flex items-end">
+                          <button
+                            type="submit"
+                            disabled={loading}
+                            className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-2.5 rounded-xl text-xs transition shadow cursor-pointer flex items-center justify-center gap-1.5"
+                          >
+                            <PlusCircle className="w-4 h-4" /> Post Member Credit
+                          </button>
+                        </div>
+                      </div>
+                    </form>
                   </div>
-                  <p className="text-xs text-slate-400 mb-4 font-medium">
-                    Post manual individual deposits for members paying via cash, direct bank deposit, or non-checkoff streams.
-                  </p>
+                )}
 
-                  <form onSubmit={handleManualMemberAdjustment} className="space-y-4">
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-300 mb-1">Select Beneficiary Member</label>
-                        <select
-                          value={manualTargetMemberId}
-                          onChange={(e) => setManualTargetMemberId(e.target.value)}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
-                        >
-                          {allMembers.map((m) => (
-                            <option key={m.id} value={m.id}>
-                              {m.full_name} ({m.member_number}) - {m.companies?.name || 'External'}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-300 mb-1">Adjustment Type</label>
-                        <select
-                          value={manualAdjustmentType}
-                          onChange={(e) => setManualAdjustmentType(e.target.value)}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-medium"
-                        >
-                          <option value="savings_deposit">1. Credit Member Monthly Savings</option>
-                          <option value="loan_repayment">2. Apply Active Loan Repayment (Debt Reduction)</option>
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-300 mb-1">Amount (KES)</label>
-                        <input
-                          type="number"
-                          required
-                          value={manualAmount}
-                          onChange={(e) => setManualAmount(e.target.value)}
-                          placeholder="e.g. 5000"
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <div className="sm:col-span-2">
-                        <label className="block text-xs font-semibold text-slate-300 mb-1">Audit Reference Code (Optional)</label>
-                        <input
-                          type="text"
-                          value={manualRefCode}
-                          onChange={(e) => setManualRefCode(e.target.value)}
-                          placeholder="e.g. BANK-SLIP-7821 or CASH-RECEIPT-09"
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono uppercase"
-                        />
-                      </div>
-
-                      <div className="sm:col-span-1 flex items-end">
-                        <button
-                          type="submit"
-                          disabled={loading}
-                          className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-2.5 rounded-xl text-xs transition shadow cursor-pointer flex items-center justify-center gap-1.5"
-                        >
-                          <PlusCircle className="w-4 h-4" /> Post Member Credit
-                        </button>
-                      </div>
-                    </div>
-                  </form>
-                </div>
-
-                {/* 3. LOAN RECOVERY & PERFORMANCE MATRIX */}
+                {/* 3. LOAN RECOVERY MATRIX */}
                 <div className="bg-slate-900/90 border border-rose-900/40 rounded-3xl p-6 sm:p-8 shadow-xl">
                   <div className="flex justify-between items-center mb-2">
                     <div className="flex items-center gap-2">
@@ -3317,162 +3365,166 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 4. UPLOAD REPORTS */}
-                <div className="bg-slate-900/90 border border-emerald-900/40 rounded-3xl p-6 sm:p-8 shadow-xl">
-                  <div className="flex items-center gap-2 mb-2">
-                    <FolderDown className="w-5 h-5 text-emerald-400" />
-                    <h3 className="text-lg font-bold text-white">Publish Official Report / Audit Booklet</h3>
-                  </div>
-                  <p className="text-xs text-slate-400 mb-4 font-medium">
-                    Upload verified PDF documents (Audit Reports, AGM Booklets, By-laws). Members can read and download them instantly.
-                  </p>
-
-                  <form onSubmit={handleUploadSaccoDocument} className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-300 mb-1">Document Title</label>
-                      <input
-                        type="text"
-                        required
-                        value={docTitle}
-                        onChange={(e) => setDocTitle(e.target.value)}
-                        placeholder="e.g. KEWA SACCO Audited Financials 2025"
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
-                      />
+                {/* 4. PUBLISH REPORTS (Chairman & Admin Only) */}
+                {['admin', 'chairman'].includes(userRole) && (
+                  <div className="bg-slate-900/90 border border-emerald-900/40 rounded-3xl p-6 sm:p-8 shadow-xl">
+                    <div className="flex items-center gap-2 mb-2">
+                      <FolderDown className="w-5 h-5 text-emerald-400" />
+                      <h3 className="text-lg font-bold text-white">Publish Official Report / Audit Booklet</h3>
                     </div>
+                    <p className="text-xs text-slate-400 mb-4 font-medium">
+                      Upload verified PDF documents (Audit Reports, AGM Booklets, By-laws). Members can read and download them instantly.
+                    </p>
 
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-300 mb-1">Report Category</label>
-                      <select
-                        value={docCategory}
-                        onChange={(e) => setDocCategory(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
-                      >
-                        <option value="audit_report">Audited Financial Statements</option>
-                        <option value="agm_booklet">Annual AGM Booklet & Minutes</option>
-                        <option value="bylaws_policy">SACCO By-Laws & Policies</option>
-                        <option value="financial_statement">Mid-Year Financial Report</option>
-                      </select>
-                    </div>
+                    <form onSubmit={handleUploadSaccoDocument} className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">Document Title</label>
+                        <input
+                          type="text"
+                          required
+                          value={docTitle}
+                          onChange={(e) => setDocTitle(e.target.value)}
+                          placeholder="e.g. KEWA SACCO Audited Financials 2025"
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                        />
+                      </div>
 
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-300 mb-1">Financial Year</label>
-                      <input
-                        type="text"
-                        required
-                        value={docYear}
-                        onChange={(e) => setDocYear(e.target.value)}
-                        placeholder="e.g. 2025/2026"
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
-                      />
-                    </div>
-
-                    <div className="sm:col-span-2">
-                      <label className="block text-xs font-semibold text-slate-300 mb-1">Select PDF Report File</label>
-                      <input
-                        type="file"
-                        accept=".pdf"
-                        required
-                        onChange={(e) => setDocFile(e.target.files[0])}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-300 file:mr-3 file:py-1 file:px-2.5 file:rounded-md file:border-0 file:text-xs file:bg-emerald-600 file:text-white cursor-pointer"
-                      />
-                    </div>
-
-                    <div className="sm:col-span-1 flex items-end">
-                      <button
-                        type="submit"
-                        disabled={loading}
-                        className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-2.5 rounded-xl text-xs transition shadow cursor-pointer flex items-center justify-center gap-1.5"
-                      >
-                        <UploadCloud className="w-4 h-4" /> Publish Report
-                      </button>
-                    </div>
-                  </form>
-                </div>
-
-                {/* 5. DUAL PAYROLL CHECKOFF */}
-                <div className="bg-slate-900/90 border border-amber-900/40 rounded-3xl p-6 sm:p-8 shadow-xl">
-                  <div className="flex items-center gap-2 mb-2">
-                    <FileSpreadsheet className="w-5 h-5 text-amber-400" />
-                    <h3 className="text-lg font-bold text-white">Automated Dual Payroll Checkoff (Savings + Loans)</h3>
-                  </div>
-                  <p className="text-xs text-slate-400 mb-4 font-medium">
-                    Upload monthly payroll deductions CSV (<code className="text-amber-300 font-mono">member_number, savings_amount, loan_amount</code>).
-                  </p>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-300 mb-1">Payroll Month</label>
-                      <input
-                        type="text"
-                        value={batchMonth}
-                        onChange={(e) => setBatchMonth(e.target.value)}
-                        placeholder="e.g. AUG-2026"
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
-                      />
-                    </div>
-                    <div className="sm:col-span-2">
-                      <label className="block text-xs font-semibold text-slate-300 mb-1">Select Payroll Deductions CSV</label>
-                      <input
-                        type="file"
-                        accept=".csv"
-                        onChange={handleCSVUpload}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-300 file:mr-3 file:py-1 file:px-2.5 file:rounded-md file:border-0 file:text-xs file:bg-amber-600 file:text-white cursor-pointer"
-                      />
-                    </div>
-                  </div>
-
-                  {batchPreview.length > 0 && (
-                    <div className="mt-4 border-t border-slate-800 pt-4">
-                      <div className="flex justify-between items-center mb-3">
-                        <span className="text-xs font-bold text-slate-300">
-                          Matched Rows: {batchPreview.filter((r) => r.valid).length} of {batchPreview.length}
-                        </span>
-                        <button
-                          onClick={handleExecuteBatchCheckoff}
-                          disabled={loading}
-                          className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-lg cursor-pointer"
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">Report Category</label>
+                        <select
+                          value={docCategory}
+                          onChange={(e) => setDocCategory(e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
                         >
-                          <UploadCloud className="w-4 h-4" /> Process & Post All Checkoffs
+                          <option value="audit_report">Audited Financial Statements</option>
+                          <option value="agm_booklet">Annual AGM Booklet & Minutes</option>
+                          <option value="bylaws_policy">SACCO By-Laws & Policies</option>
+                          <option value="financial_statement">Mid-Year Financial Report</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">Financial Year</label>
+                        <input
+                          type="text"
+                          required
+                          value={docYear}
+                          onChange={(e) => setDocYear(e.target.value)}
+                          placeholder="e.g. 2025/2026"
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-2">
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">Select PDF Report File</label>
+                        <input
+                          type="file"
+                          accept=".pdf"
+                          required
+                          onChange={(e) => setDocFile(e.target.files[0])}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-300 file:mr-3 file:py-1 file:px-2.5 file:rounded-md file:border-0 file:text-xs file:bg-emerald-600 file:text-white cursor-pointer"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-1 flex items-end">
+                        <button
+                          type="submit"
+                          disabled={loading}
+                          className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-2.5 rounded-xl text-xs transition shadow cursor-pointer flex items-center justify-center gap-1.5"
+                        >
+                          <UploadCloud className="w-4 h-4" /> Publish Report
                         </button>
                       </div>
+                    </form>
+                  </div>
+                )}
 
-                      <div className="max-h-48 overflow-y-auto border border-slate-800 rounded-2xl bg-slate-950">
-                        <table className="w-full text-left text-xs">
-                          <thead className="bg-slate-900 text-slate-400 sticky top-0 font-semibold">
-                            <tr>
-                              <th className="p-2.5">Member No</th>
-                              <th className="p-2.5">Matched Name</th>
-                              <th className="p-2.5 text-right">Savings Credit</th>
-                              <th className="p-2.5 text-right">Loan Deduct</th>
-                              <th className="p-2.5 text-center">Status</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-800/60 font-medium">
-                            {batchPreview.map((row, idx) => (
-                              <tr key={idx} className={row.valid ? 'hover:bg-slate-900/40' : 'bg-rose-950/20'}>
-                                <td className="p-2.5 font-mono">{row.member_number}</td>
-                                <td className="p-2.5">{row.full_name}</td>
-                                <td className="p-2.5 text-right font-bold text-emerald-400">
-                                  +KES {Number(row.savings_amount || 0).toLocaleString()}
-                                </td>
-                                <td className="p-2.5 text-right font-bold text-amber-400">
-                                  -KES {Number(row.loan_amount || 0).toLocaleString()}
-                                </td>
-                                <td className="p-2.5 text-center">
-                                  {row.valid ? (
-                                    <span className="text-emerald-400 text-[10px] font-bold">READY</span>
-                                  ) : (
-                                    <span className="text-rose-400 text-[10px] font-bold">NO MATCH</span>
-                                  )}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                {/* 5. DUAL PAYROLL CHECKOFF (Treasurer & Chairman / Admin Only) */}
+                {['admin', 'chairman', 'treasurer'].includes(userRole) && (
+                  <div className="bg-slate-900/90 border border-amber-900/40 rounded-3xl p-6 sm:p-8 shadow-xl">
+                    <div className="flex items-center gap-2 mb-2">
+                      <FileSpreadsheet className="w-5 h-5 text-amber-400" />
+                      <h3 className="text-lg font-bold text-white">Automated Dual Payroll Checkoff (Savings + Loans)</h3>
+                    </div>
+                    <p className="text-xs text-slate-400 mb-4 font-medium">
+                      Upload monthly payroll deductions CSV (<code className="text-amber-300 font-mono">member_number, savings_amount, loan_amount</code>).
+                    </p>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">Payroll Month</label>
+                        <input
+                          type="text"
+                          value={batchMonth}
+                          onChange={(e) => setBatchMonth(e.target.value)}
+                          placeholder="e.g. AUG-2026"
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">Select Payroll Deductions CSV</label>
+                        <input
+                          type="file"
+                          accept=".csv"
+                          onChange={handleCSVUpload}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-300 file:mr-3 file:py-1 file:px-2.5 file:rounded-md file:border-0 file:text-xs file:bg-amber-600 file:text-white cursor-pointer"
+                        />
                       </div>
                     </div>
-                  )}
-                </div>
+
+                    {batchPreview.length > 0 && (
+                      <div className="mt-4 border-t border-slate-800 pt-4">
+                        <div className="flex justify-between items-center mb-3">
+                          <span className="text-xs font-bold text-slate-300">
+                            Matched Rows: {batchPreview.filter((r) => r.valid).length} of {batchPreview.length}
+                          </span>
+                          <button
+                            onClick={handleExecuteBatchCheckoff}
+                            disabled={loading}
+                            className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-lg cursor-pointer"
+                          >
+                            <UploadCloud className="w-4 h-4" /> Process & Post All Checkoffs
+                          </button>
+                        </div>
+
+                        <div className="max-h-48 overflow-y-auto border border-slate-800 rounded-2xl bg-slate-950">
+                          <table className="w-full text-left text-xs">
+                            <thead className="bg-slate-900 text-slate-400 sticky top-0 font-semibold">
+                              <tr>
+                                <th className="p-2.5">Member No</th>
+                                <th className="p-2.5">Matched Name</th>
+                                <th className="p-2.5 text-right">Savings Credit</th>
+                                <th className="p-2.5 text-right">Loan Deduct</th>
+                                <th className="p-2.5 text-center">Status</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-800/60 font-medium">
+                              {batchPreview.map((row, idx) => (
+                                <tr key={idx} className={row.valid ? 'hover:bg-slate-900/40' : 'bg-rose-950/20'}>
+                                  <td className="p-2.5 font-mono">{row.member_number}</td>
+                                  <td className="p-2.5">{row.full_name}</td>
+                                  <td className="p-2.5 text-right font-bold text-emerald-400">
+                                    +KES {Number(row.savings_amount || 0).toLocaleString()}
+                                  </td>
+                                  <td className="p-2.5 text-right font-bold text-amber-400">
+                                    -KES {Number(row.loan_amount || 0).toLocaleString()}
+                                  </td>
+                                  <td className="p-2.5 text-center">
+                                    {row.valid ? (
+                                      <span className="text-emerald-400 text-[10px] font-bold">READY</span>
+                                    ) : (
+                                      <span className="text-rose-400 text-[10px] font-bold">NO MATCH</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* 6. SEQUENTIAL 3-SIGNATORY DESK */}
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-8 shadow-xl">
@@ -3481,7 +3533,7 @@ export default function App() {
                     <h3 className="text-lg font-bold text-white">Sequential 3-Signatory Approval Pipeline (Role-Restricted)</h3>
                   </div>
                   <p className="text-xs text-slate-400 mb-4 font-medium">
-                    Strict Role Verification: You are currently signed in as <strong className="text-amber-300 uppercase">{profile?.role?.replace('_', ' ')}</strong>. You can only execute endorsements assigned to your specific portfolio.
+                    Strict Role Verification: You are currently signed in as <strong className="text-amber-300 uppercase">{userRole.replace('_', ' ')}</strong>. You can only execute endorsements assigned to your specific portfolio.
                   </p>
 
                   {allPendingLoans.length === 0 ? (
@@ -3492,9 +3544,9 @@ export default function App() {
                         const canChairSign = l.assistant_chair_approval;
                         const canTreasurerSign = l.assistant_chair_approval && l.chairman_approval;
 
-                        const isAsstChairUser = profile?.role === 'assistant_chair' || profile?.role === 'admin';
-                        const isChairUser = profile?.role === 'chairman' || profile?.role === 'admin';
-                        const isTreasurerUser = profile?.role === 'treasurer' || profile?.role === 'admin';
+                        const isAsstChairUser = userRole === 'assistant_chair' || userRole === 'admin';
+                        const isChairUser = userRole === 'chairman' || userRole === 'admin';
+                        const isTreasurerUser = userRole === 'treasurer' || userRole === 'admin';
 
                         return (
                           <div key={l.id} className="bg-slate-950 border border-slate-800 rounded-3xl p-5 space-y-4 shadow">
@@ -3694,75 +3746,79 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 8. POST NOTICES & AUDIT LOGS */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 shadow-xl">
-                    <div className="flex items-center gap-2 mb-4">
-                      <Bell className="w-5 h-5 text-amber-400" />
-                      <h4 className="text-base font-bold text-white">Post Announcement to Member Board</h4>
+                {/* 8. POST NOTICES & AUDIT LOGS (Chairman & Admin Only) */}
+                {['admin', 'chairman'].includes(userRole) && (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 shadow-xl">
+                      <div className="flex items-center gap-2 mb-4">
+                        <Bell className="w-5 h-5 text-amber-400" />
+                        <h4 className="text-base font-bold text-white">Post Announcement to Member Board</h4>
+                      </div>
+
+                      <form onSubmit={handlePublishNotice} className="space-y-3">
+                        <div>
+                          <label className="block text-xs text-slate-400 mb-1">Announcement Title</label>
+                          <input
+                            type="text"
+                            required
+                            value={newNoticeTitle}
+                            onChange={(e) => setNewNoticeTitle(e.target.value)}
+                            placeholder="e.g. December Loan Applications Open"
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-slate-400 mb-1">Notice Body Content</label>
+                          <textarea
+                            required
+                            rows="3"
+                            value={newNoticeContent}
+                            onChange={(e) => setNewNoticeContent(e.target.value)}
+                            placeholder="Write message to all members..."
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                          />
+                        </div>
+                        <button
+                          type="submit"
+                          disabled={loading}
+                          className="w-full bg-amber-600 hover:bg-amber-500 text-white font-bold py-2.5 rounded-xl text-xs transition cursor-pointer shadow"
+                        >
+                          Publish Notice
+                        </button>
+                      </form>
                     </div>
 
-                    <form onSubmit={handlePublishNotice} className="space-y-3">
-                      <div>
-                        <label className="block text-xs text-slate-400 mb-1">Announcement Title</label>
-                        <input
-                          type="text"
-                          required
-                          value={newNoticeTitle}
-                          onChange={(e) => setNewNoticeTitle(e.target.value)}
-                          placeholder="e.g. December Loan Applications Open"
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
-                        />
+                    <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 shadow-xl">
+                      <div className="flex items-center gap-2 mb-3">
+                        <History className="w-5 h-5 text-amber-400" />
+                        <h4 className="text-base font-bold text-white">Immutable Audit Trail (SASRA Standard)</h4>
                       </div>
-                      <div>
-                        <label className="block text-xs text-slate-400 mb-1">Notice Body Content</label>
-                        <textarea
-                          required
-                          rows="3"
-                          value={newNoticeContent}
-                          onChange={(e) => setNewNoticeContent(e.target.value)}
-                          placeholder="Write message to all members..."
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
-                        />
-                      </div>
-                      <button
-                        type="submit"
-                        disabled={loading}
-                        className="w-full bg-amber-600 hover:bg-amber-500 text-white font-bold py-2.5 rounded-xl text-xs transition cursor-pointer shadow"
-                      >
-                        Publish Notice
-                      </button>
-                    </form>
-                  </div>
 
-                  <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 shadow-xl">
-                    <div className="flex items-center gap-2 mb-3">
-                      <History className="w-5 h-5 text-amber-400" />
-                      <h4 className="text-base font-bold text-white">Immutable Audit Trail (SASRA Standard)</h4>
-                    </div>
-
-                    <div className="max-h-56 overflow-y-auto border border-slate-800 rounded-2xl bg-slate-950">
-                      <table className="w-full text-left text-xs">
-                        <thead className="bg-slate-900 text-slate-400 sticky top-0 font-semibold">
-                          <tr>
-                            <th className="p-2.5">Time</th>
-                            <th className="p-2.5">Action</th>
-                            <th className="p-2.5">Details</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
-                          {auditLogs.map((log) => (
-                            <tr key={log.id}>
-                              <td className="p-2.5 text-slate-400">{new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
-                              <td className="p-2.5 text-emerald-400 font-bold">{log.action}</td>
-                              <td className="p-2.5 text-slate-300">{log.details}</td>
+                      <div className="max-h-56 overflow-y-auto border border-slate-800 rounded-2xl bg-slate-950">
+                        <table className="w-full text-left text-xs">
+                          <thead className="bg-slate-900 text-slate-400 sticky top-0 font-semibold">
+                            <tr>
+                              <th className="p-2.5">Time</th>
+                              <th className="p-2.5">User</th>
+                              <th className="p-2.5">Action</th>
+                              <th className="p-2.5">Details</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                          </thead>
+                          <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
+                            {auditLogs.map((log) => (
+                              <tr key={log.id}>
+                                <td className="p-2.5 text-slate-400">{new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
+                                <td className="p-2.5 text-slate-200 font-sans font-bold">{log.user_name || 'Member'}</td>
+                                <td className="p-2.5 text-emerald-400 font-bold">{log.action}</td>
+                                <td className="p-2.5 text-slate-300">{log.details}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
               </div>
             )}
           </>
@@ -3911,7 +3967,7 @@ export default function App() {
             <span>Help</span>
           </button>
 
-          {['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(profile?.role) && (
+          {['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(userRole) && (
             <button
               onClick={() => setActiveTab('admin')}
               className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 transition ${

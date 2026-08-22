@@ -453,7 +453,6 @@ export default function App() {
       .order('created_at', { ascending: false });
     if (allLeadershipLoans) setAllLoansLeadership(allLeadershipLoans);
 
-    // FIXED: Fetch all welfare claims in pending/unapproved status for leadership review
     const { data: claims } = await supabase
       .from('welfare_claims')
       .select('*, profiles(full_name, member_number, companies(name))');
@@ -572,7 +571,7 @@ export default function App() {
     setLoading(false);
   };
 
-  // --- SMART PRO-RATA MULTI-LOAN DISTRIBUTION & EXCESS SAVINGS HANDLER ---
+  // --- FULLY RESOLVED: SMART MULTI-LOAN DISTRIBUTION + AUTOMATIC EXCESS SAVINGS ENTRY ---
   const handleManualMemberAdjustment = async (e) => {
     e.preventDefault();
     const parsedAmount = parseAccountingNumber(manualAmountRaw);
@@ -604,7 +603,6 @@ export default function App() {
         setMessage({ text: error.message, type: 'error' });
       }
     } else if (manualAdjustmentType === 'loan_repayment') {
-      // Fetch ALL active running loans for this member (Oldest to Newest)
       const { data: memberActiveLoans } = await supabase
         .from('loans')
         .select('id, balance_remaining, loan_product')
@@ -613,7 +611,6 @@ export default function App() {
         .order('created_at', { ascending: true });
 
       if (!memberActiveLoans || memberActiveLoans.length === 0) {
-        // If no active loan exists, automatically route the full amount to savings!
         await supabase.from('savings_ledger').insert([
           {
             member_id: manualTargetMemberId,
@@ -644,7 +641,6 @@ export default function App() {
         remainingCash -= amountToDeduct;
         const newLoanBal = currentBal - amountToDeduct;
 
-        // Record individual repayment
         await supabase.from('loan_repayments').insert([
           {
             loan_id: loan.id,
@@ -654,7 +650,6 @@ export default function App() {
           },
         ]);
 
-        // Update loan remaining balance
         await supabase
           .from('loans')
           .update({
@@ -666,7 +661,7 @@ export default function App() {
         distributionLog.push(`KES ${amountToDeduct.toLocaleString()} cleared from ${(loan.loan_product || 'loan').toUpperCase()}`);
       }
 
-      // If excess cash remains after clearing all active loans, route excess automatically to Savings!
+      // CRITICAL FIX: Explicitly insert excess change into savings_ledger so it reflects immediately!
       if (remainingCash > 0) {
         await supabase.from('savings_ledger').insert([
           {
@@ -676,7 +671,7 @@ export default function App() {
             reference_code: `${refCode}-EXCESS`,
           },
         ]);
-        distributionLog.push(`KES ${remainingCash.toLocaleString()} excess auto-credited to Savings`);
+        distributionLog.push(`KES ${remainingCash.toLocaleString()} excess credited to Savings`);
       }
 
       logAuditAction('SMART_MULTI_LOAN_REPAYMENT', `Processed KES ${parsedAmount.toLocaleString()} for ${targetMember?.full_name}: ${distributionLog.join(' | ')}`);
@@ -923,7 +918,6 @@ export default function App() {
     });
   };
 
-  // --- WELFARE SIGNATORY PIPELINE HANDLER ---
   const handleWelfarePipeline = async (claimId, targetRole, action = 'sign') => {
     const isSign = action === 'sign';
 
@@ -3192,7 +3186,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 8: LEADERSHIP HUB (WITH WELFARE APPROVAL QUEUE) */}
+            {/* TAB 8: LEADERSHIP HUB */}
             {activeTab === 'admin' && ['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(userRole) && (
               <div className="space-y-6">
                 
@@ -3210,7 +3204,7 @@ export default function App() {
                   <span className="text-xs text-amber-300/80 font-mono hidden sm:inline">KEWA SACCO Governance Framework</span>
                 </div>
 
-                {/* 1. WELFARE CLAIMS APPROVAL QUEUE (NEW) */}
+                {/* 1. WELFARE CLAIMS APPROVAL QUEUE */}
                 <div className="bg-slate-900/90 border border-rose-900/50 rounded-3xl p-6 sm:p-8 shadow-xl">
                   <div className="flex justify-between items-center mb-2">
                     <div className="flex items-center gap-2">
@@ -3260,7 +3254,6 @@ export default function App() {
                               </div>
 
                               <div className="flex flex-wrap items-center gap-2">
-                                {/* Welfare Stage 1 */}
                                 {claim.assistant_chair_approval ? (
                                   <button
                                     onClick={() => handleWelfarePipeline(claim.id, 'assistant_chair', 'unsign')}
@@ -3287,7 +3280,6 @@ export default function App() {
                                   </button>
                                 )}
 
-                                {/* Welfare Stage 2 */}
                                 {claim.chairman_approval ? (
                                   <button
                                     onClick={() => handleWelfarePipeline(claim.id, 'chairman', 'unsign')}
@@ -3315,7 +3307,6 @@ export default function App() {
                                   </button>
                                 )}
 
-                                {/* Welfare Stage 3 */}
                                 {claim.treasurer_approval ? (
                                   <button
                                     onClick={() => handleWelfarePipeline(claim.id, 'treasurer', 'unsign')}

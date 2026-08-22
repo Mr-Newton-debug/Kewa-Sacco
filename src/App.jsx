@@ -11,7 +11,8 @@ import {
   ArrowDownRight, ArrowUpRight, HeartHandshake, Bell, Smartphone, 
   Award, ShieldAlert, FileText, Send, History, CheckSquare, Paperclip, FileCheck, HelpCircle,
   Eye, EyeOff, FolderDown, FileArchive, Shield, Lock, RotateCcw, AlertTriangle, Sparkles, Search,
-  MessageSquare, MessageCircle, Bot, Mail, CornerDownRight, Check, UserCheck, AlertOctagon
+  MessageSquare, MessageCircle, Bot, Mail, CornerDownRight, Check, UserCheck, AlertOctagon,
+  Contact2, Filter, AtSign
 } from 'lucide-react';
 
 export default function App() {
@@ -22,8 +23,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('overview');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Auth State
-  const [email, setEmail] = useState('');
+  // Auth State with Saved Email LocalStorage Cache
+  const [email, setEmail] = useState(() => localStorage.getItem('kewa_remembered_email') || '');
   const [password, setPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [fullName, setFullName] = useState('');
@@ -32,6 +33,7 @@ export default function App() {
   const [phone, setPhone] = useState('');
   const [companyId, setCompanyId] = useState('');
   const [odpcConsent, setOdpcConsent] = useState(false);
+  const [savedEmailChip, setSavedEmailChip] = useState(() => localStorage.getItem('kewa_remembered_email') || '');
 
   // Core Data State
   const [companies, setCompanies] = useState([]);
@@ -52,12 +54,15 @@ export default function App() {
   const [auditLogs, setAuditLogs] = useState([]);
   const [message, setMessage] = useState({ text: '', type: '' });
 
+  // Directory Search State
+  const [memberDirectorySearch, setMemberDirectorySearch] = useState('');
+  const [memberDirectoryCompanyFilter, setMemberDirectoryCompanyFilter] = useState('all');
+
   // Manual Member Adjustment Form State (Leadership Desk)
   const [manualTargetMemberId, setManualTargetMemberId] = useState('');
-  const [manualAdjustmentType, setManualAdjustmentType] = useState('savings_deposit'); // savings_deposit or loan_repayment
+  const [manualAdjustmentType, setManualAdjustmentType] = useState('savings_deposit');
   const [manualAmount, setManualAmount] = useState('');
   const [manualRefCode, setManualRefCode] = useState('');
-  const [manualMemberSearch, setManualMemberSearch] = useState('');
 
   // Support & Chatbot State
   const [inquiries, setInquiries] = useState([]);
@@ -115,9 +120,8 @@ export default function App() {
   const [newNoticeContent, setNewNoticeContent] = useState('');
   const [newNoticeCategory, setNewNoticeCategory] = useState('general');
 
-  // Explicit Secure Logout & Input Sanitizer
+  // Explicit Secure Logout (Leaves email chip suggestion available, but blanks input on logout screen)
   const handlePerformSignOut = async (timeoutReason = false) => {
-    setEmail('');
     setPassword('');
     setNewPassword('');
     setProfile(null);
@@ -129,6 +133,13 @@ export default function App() {
     setInquiries([]);
     setMobileMenuOpen(false);
     
+    // Remember email for fast typing chip, but blank active input
+    if (email) {
+      localStorage.setItem('kewa_remembered_email', email);
+      setSavedEmailChip(email);
+    }
+    setEmail(''); 
+
     await supabase.auth.signOut();
 
     if (timeoutReason) {
@@ -179,7 +190,6 @@ export default function App() {
       if (session) {
         fetchUserData(session.user.id);
       } else {
-        setEmail('');
         setPassword('');
         setNewPassword('');
         setProfile(null);
@@ -328,12 +338,25 @@ export default function App() {
   const fetchAllMembers = async (currentUserId) => {
     const { data } = await supabase
       .from('profiles')
-      .select('id, full_name, member_number, id_number, phone, role, created_at, companies(name)')
+      .select('id, full_name, member_number, id_number, phone, email, role, created_at, companies(id, name), savings_ledger(amount), loans(balance_remaining, status)')
       .order('full_name', { ascending: true });
     if (data) {
-      setAllMembers(data);
-      if (!manualTargetMemberId && data.length > 0) {
-        setManualTargetMemberId(data[0].id);
+      const formatted = data.map((m) => {
+        const totalMemberSavings = (m.savings_ledger || []).reduce((acc, s) => acc + Number(s.amount || 0), 0);
+        const totalMemberLoans = (m.loans || [])
+          .filter((l) => ['approved', 'disbursed'].includes(l.status))
+          .reduce((acc, l) => acc + Number(l.balance_remaining || 0), 0);
+        
+        return {
+          ...m,
+          totalSavings: totalMemberSavings,
+          totalActiveDebt: totalMemberLoans,
+        };
+      });
+
+      setAllMembers(formatted);
+      if (!manualTargetMemberId && formatted.length > 0) {
+        setManualTargetMemberId(formatted[0].id);
       }
     }
   };
@@ -378,8 +401,7 @@ export default function App() {
   };
 
   const fetchAdminData = async () => {
-    const { data: members } = await supabase.from('profiles').select('*, companies(name)').order('full_name', { ascending: true });
-    if (members) setAllMembers(members);
+    fetchAllMembers(session?.user?.id);
 
     const { data: pendingLoans } = await supabase
       .from('loans')
@@ -387,7 +409,6 @@ export default function App() {
       .in('status', ['pending', 'guaranteed']);
     if (pendingLoans) setAllPendingLoans(pendingLoans);
 
-    // Fetch All Disbursed & Approved Loans for the Performance Matrix
     const { data: allLeadershipLoans } = await supabase
       .from('loans')
       .select('*, profiles(full_name, member_number, phone, companies(name))')
@@ -418,6 +439,12 @@ export default function App() {
     e.preventDefault();
     setLoading(true);
     setMessage({ text: '', type: '' });
+
+    // Save email locally for quick-fill suggestion on future visits
+    if (email) {
+      localStorage.setItem('kewa_remembered_email', email);
+      setSavedEmailChip(email);
+    }
 
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) setMessage({ text: error.message, type: 'error' });
@@ -474,6 +501,11 @@ export default function App() {
     }
 
     if (authData?.user) {
+      if (email) {
+        localStorage.setItem('kewa_remembered_email', email);
+        setSavedEmailChip(email);
+      }
+
       const { error: profileError } = await supabase.from('profiles').insert([
         {
           id: authData.user.id,
@@ -496,7 +528,7 @@ export default function App() {
     setLoading(false);
   };
 
-  // --- OFFICIAL MANUAL ADJUSTMENT HANDLER ---
+  // Manual Member Adjustment Handler
   const handleManualMemberAdjustment = async (e) => {
     e.preventDefault();
     if (!manualTargetMemberId || !manualAmount || Number(manualAmount) <= 0) {
@@ -1424,7 +1456,7 @@ export default function App() {
     return `https://wa.me/${formattedPhone}?text=${textMsg}`;
   };
 
-  // --- LOAN REPAYMENT PERFORMANCE RANKING CALCULATIONS (WORST TO BEST) ---
+  // Performance Matrix (Worst to Best)
   const performanceRankedLoans = [...allLoansLeadership]
     .filter((l) => ['approved', 'disbursed', 'completed'].includes(l.status))
     .map((l) => {
@@ -1439,12 +1471,22 @@ export default function App() {
         progressPercent,
       };
     })
-    .sort((a, b) => a.progressPercent - b.progressPercent); // Ascending: Worst (0%) to Best (100%)
+    .sort((a, b) => a.progressPercent - b.progressPercent);
 
-  const filteredMembersForManual = allMembers.filter((m) =>
-    (m.full_name?.toLowerCase() || '').includes(manualMemberSearch.toLowerCase()) ||
-    (m.member_number?.toLowerCase() || '').includes(manualMemberSearch.toLowerCase())
-  );
+  // Filtered Complete Member Directory List
+  const filteredMemberDirectory = allMembers.filter((m) => {
+    const matchesSearch =
+      (m.full_name?.toLowerCase() || '').includes(memberDirectorySearch.toLowerCase()) ||
+      (m.member_number?.toLowerCase() || '').includes(memberDirectorySearch.toLowerCase()) ||
+      (m.id_number?.toLowerCase() || '').includes(memberDirectorySearch.toLowerCase()) ||
+      (m.phone?.toLowerCase() || '').includes(memberDirectorySearch.toLowerCase());
+
+    const matchesCompany =
+      memberDirectoryCompanyFilter === 'all' ||
+      (m.companies?.name?.toLowerCase() || '').includes(memberDirectoryCompanyFilter.toLowerCase());
+
+    return matchesSearch && matchesCompany;
+  });
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-24 sm:pb-12 selection:bg-emerald-500 selection:text-white">
@@ -1679,7 +1721,7 @@ export default function App() {
         )}
 
         {!session ? (
-          /* AUTH VIEWS */
+          /* AUTH VIEWS (WITH CLICK-TO-FILL EMAIL CHIP SUGGESTION) */
           <div className="max-w-md mx-auto mt-6 sm:mt-12 bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-10 shadow-2xl backdrop-blur-xl">
             <div className="text-center mb-6">
               <div className="inline-flex bg-gradient-to-tr from-emerald-600 to-teal-400 p-3 rounded-2xl shadow-xl shadow-emerald-900/30 mb-3">
@@ -1837,7 +1879,19 @@ export default function App() {
                 )}
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Email Address</label>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-xs font-semibold text-slate-300">Email Address</label>
+                    {savedEmailChip && !email && (
+                      <button
+                        type="button"
+                        onClick={() => setEmail(savedEmailChip)}
+                        className="text-[11px] text-emerald-400 hover:text-emerald-300 font-semibold flex items-center gap-1 bg-emerald-950/60 border border-emerald-800/80 px-2.5 py-0.5 rounded-full transition cursor-pointer"
+                        title="Click to auto-fill your last used email"
+                      >
+                        <AtSign className="w-3 h-3" /> Use: {savedEmailChip}
+                      </button>
+                    )}
+                  </div>
                   <input
                     type="email"
                     required
@@ -1845,7 +1899,7 @@ export default function App() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="name@domain.com"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white focus:border-emerald-500 transition"
                   />
                 </div>
                 <div>
@@ -2003,7 +2057,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* DUAL CHECKOFF LEDGERS */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 shadow-lg">
                     <div className="flex items-center gap-2 mb-4">
@@ -2173,7 +2226,6 @@ export default function App() {
                       />
                     </div>
 
-                    {/* Searchable Guarantors */}
                     {loanProduct !== 'monthly_shylock' && (
                       <div className="border-t border-slate-800 pt-4 space-y-3">
                         <div className="flex justify-between items-center">
@@ -2312,7 +2364,6 @@ export default function App() {
                   </form>
                 </div>
 
-                {/* Member Applications List */}
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-7 shadow-lg">
                   <h3 className="text-lg font-bold text-white mb-4">My Loan Applications & Approval Tracker</h3>
                   {loans.length === 0 ? (
@@ -2370,7 +2421,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 3: GUARANTOR DESK */}
+            {/* TAB 3: GUARANTORS */}
             {activeTab === 'guarantors' && (
               <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-7 space-y-6 shadow-lg">
                 <div>
@@ -2427,7 +2478,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 4: OFFICIAL REPORTS & AGM DOCUMENTS LIBRARY */}
+            {/* TAB 4: REPORTS & AGM */}
             {activeTab === 'documents' && (
               <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-8 space-y-6 shadow-lg">
                 <div className="flex justify-between items-center">
@@ -2503,7 +2554,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 5: BENEFICIARIES & WELFARE */}
+            {/* TAB 5: WELFARE & NOK */}
             {activeTab === 'beneficiaries' && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-7 shadow-lg">
@@ -2790,7 +2841,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 7: MEMBER HELPDESK & BOT */}
+            {/* TAB 7: HELP & CHAT */}
             {activeTab === 'support' && (
               <div className="space-y-6">
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-8 shadow-xl">
@@ -2803,7 +2854,6 @@ export default function App() {
                   </p>
 
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    {/* Chairperson */}
                     <div className="bg-slate-950 border border-slate-800 p-4 rounded-2xl flex flex-col justify-between space-y-3">
                       <div>
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800 uppercase">
@@ -2822,7 +2872,6 @@ export default function App() {
                       </a>
                     </div>
 
-                    {/* Treasurer */}
                     <div className="bg-slate-950 border border-slate-800 p-4 rounded-2xl flex flex-col justify-between space-y-3">
                       <div>
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800 uppercase">
@@ -2841,7 +2890,6 @@ export default function App() {
                       </a>
                     </div>
 
-                    {/* Assistant Chair */}
                     <div className="bg-slate-950 border border-slate-800 p-4 rounded-2xl flex flex-col justify-between space-y-3">
                       <div>
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800 uppercase">
@@ -2863,7 +2911,6 @@ export default function App() {
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* AI Bot */}
                   <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 flex flex-col h-[480px] shadow-xl">
                     <div className="flex items-center gap-2 pb-3 border-b border-slate-800">
                       <Bot className="w-5 h-5 text-emerald-400" />
@@ -2905,7 +2952,6 @@ export default function App() {
                     </form>
                   </div>
 
-                  {/* Submit Tracked Ticket */}
                   <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 shadow-xl space-y-4">
                     <div className="flex items-center gap-2">
                       <Mail className="w-5 h-5 text-amber-400" />
@@ -2994,10 +3040,116 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 8: LEADERSHIP HUB WITH MANUAL MEMBER ADJUSTMENT & LOAN RECOVERY MATRIX */}
+            {/* TAB 8: LEADERSHIP HUB */}
             {activeTab === 'admin' && ['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(profile?.role) && (
               <div className="space-y-6">
-                {/* 1. MANUAL SINGLE-MEMBER ADJUSTMENT DESK */}
+
+                {/* 1. REGISTERED MEMBERS DIRECTORY REGISTER */}
+                <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-8 shadow-xl">
+                  <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 mb-4">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <Contact2 className="w-5 h-5 text-emerald-400" />
+                        <h3 className="text-lg font-bold text-white">Registered Members Directory ({filteredMemberDirectory.length} Total)</h3>
+                      </div>
+                      <p className="text-xs text-slate-400 mt-1 font-medium">
+                        Complete cooperative register displaying member demographics, branch affiliation, active debt, and accumulated shares.
+                      </p>
+                    </div>
+
+                    <button
+                      onClick={fetchAdminData}
+                      className="self-start sm:self-auto p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold flex items-center gap-1.5 transition border border-slate-700"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" /> Refresh List
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+                    <div className="sm:col-span-2 relative">
+                      <input
+                        type="text"
+                        placeholder="Search member by Name, Member No, National ID, or Phone..."
+                        value={memberDirectorySearch}
+                        onChange={(e) => setMemberDirectorySearch(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-white focus:border-emerald-500"
+                      />
+                      <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                    </div>
+
+                    <div>
+                      <select
+                        value={memberDirectoryCompanyFilter}
+                        onChange={(e) => setMemberDirectoryCompanyFilter(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                      >
+                        <option value="all">All Branches / Companies</option>
+                        <option value="Kenya Builders">Kenya Builders & Concrete</option>
+                        <option value="Warren">Warren Concrete</option>
+                        <option value="Eurocon">Eurocon Tiles</option>
+                        <option value="External">External / Independent</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {filteredMemberDirectory.length === 0 ? (
+                    <div className="text-center py-10 text-slate-500 text-xs bg-slate-950 rounded-2xl border border-slate-800">
+                      No members matched your search criteria.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto border border-slate-800 rounded-2xl bg-slate-950 max-h-96 overflow-y-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-900 text-slate-400 font-semibold sticky top-0 z-10">
+                          <tr>
+                            <th className="p-3">Member Details</th>
+                            <th className="p-3">Branch / Company</th>
+                            <th className="p-3">National ID</th>
+                            <th className="p-3">Phone Number</th>
+                            <th className="p-3 text-right">Total Savings</th>
+                            <th className="p-3 text-right">Active Loan</th>
+                            <th className="p-3 text-center">System Role</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60 font-mono">
+                          {filteredMemberDirectory.map((m) => (
+                            <tr key={m.id} className="hover:bg-slate-900/50 transition">
+                              <td className="p-3 font-sans">
+                                <div className="font-bold text-white">{m.full_name}</div>
+                                <div className="text-[10px] text-emerald-400 font-mono">{m.member_number}</div>
+                              </td>
+                              <td className="p-3 font-sans text-slate-300">
+                                {m.companies?.name || 'External'}
+                              </td>
+                              <td className="p-3 text-slate-300">
+                                {m.id_number || '-'}
+                              </td>
+                              <td className="p-3 text-slate-300">
+                                {m.phone || '-'}
+                              </td>
+                              <td className="p-3 text-right font-bold text-emerald-400">
+                                KES {Number(m.totalSavings || 0).toLocaleString()}
+                              </td>
+                              <td className="p-3 text-right font-bold text-amber-400">
+                                KES {Number(m.totalActiveDebt || 0).toLocaleString()}
+                              </td>
+                              <td className="p-3 text-center font-sans">
+                                <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${
+                                  m.role === 'admin' || m.role === 'chairman' ? 'bg-purple-950 text-purple-300 border border-purple-800' :
+                                  m.role === 'treasurer' || m.role === 'assistant_chair' ? 'bg-amber-950 text-amber-300 border border-amber-800' :
+                                  'bg-slate-900 text-slate-400 border border-slate-800'
+                                }`}>
+                                  {m.role ? m.role.replace('_', ' ') : 'Member'}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* 2. MANUAL ADJUSTMENT DESK */}
                 <div className="bg-slate-900/90 border border-emerald-900/50 rounded-3xl p-6 sm:p-8 shadow-xl">
                   <div className="flex items-center gap-2 mb-2">
                     <UserCheck className="w-5 h-5 text-emerald-400" />
@@ -3074,7 +3226,7 @@ export default function App() {
                   </form>
                 </div>
 
-                {/* 2. LOAN RECOVERY & PERFORMANCE MATRIX (WORST TO BEST PROGRESS RANKING) */}
+                {/* 3. LOAN RECOVERY & PERFORMANCE MATRIX */}
                 <div className="bg-slate-900/90 border border-rose-900/40 rounded-3xl p-6 sm:p-8 shadow-xl">
                   <div className="flex justify-between items-center mb-2">
                     <div className="flex items-center gap-2">
@@ -3165,7 +3317,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 3. UPLOAD SACCO AUDIT & AGM REPORTS */}
+                {/* 4. UPLOAD REPORTS */}
                 <div className="bg-slate-900/90 border border-emerald-900/40 rounded-3xl p-6 sm:p-8 shadow-xl">
                   <div className="flex items-center gap-2 mb-2">
                     <FolderDown className="w-5 h-5 text-emerald-400" />
@@ -3237,7 +3389,7 @@ export default function App() {
                   </form>
                 </div>
 
-                {/* 4. DUAL PAYROLL CHECKOFF */}
+                {/* 5. DUAL PAYROLL CHECKOFF */}
                 <div className="bg-slate-900/90 border border-amber-900/40 rounded-3xl p-6 sm:p-8 shadow-xl">
                   <div className="flex items-center gap-2 mb-2">
                     <FileSpreadsheet className="w-5 h-5 text-amber-400" />
@@ -3322,7 +3474,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 5. SEQUENTIAL 3-SIGNATORY DESK */}
+                {/* 6. SEQUENTIAL 3-SIGNATORY DESK */}
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-8 shadow-xl">
                   <div className="flex items-center gap-2 mb-2">
                     <Clock className="w-5 h-5 text-amber-400" />
@@ -3469,7 +3621,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 6. COMMITTEE SUPPORT TICKETS DESK */}
+                {/* 7. SUPPORT TICKETS */}
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-8 shadow-xl">
                   <div className="flex justify-between items-center mb-2">
                     <div className="flex items-center gap-2">
@@ -3542,7 +3694,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 7. POST NOTICES & AUDIT LOGS */}
+                {/* 8. POST NOTICES & AUDIT LOGS */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 shadow-xl">
                     <div className="flex items-center gap-2 mb-4">
@@ -3617,7 +3769,7 @@ export default function App() {
         )}
       </main>
 
-      {/* LOAN TERMS & CONDITIONS MODAL */}
+      {/* LOAN TERMS MODAL */}
       {showTermsModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
           <div className="bg-slate-950 border border-emerald-900/60 rounded-3xl max-w-lg w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">

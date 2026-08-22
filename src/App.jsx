@@ -1240,6 +1240,106 @@ export default function App() {
         )}
       </header>
 
+      {/* Fixed Full-Screen Mobile Drawer with Explicit High Z-Index */}
+      {session && mobileMenuOpen && (
+        <div className="lg:hidden fixed inset-0 top-[60px] bg-slate-950/98 backdrop-blur-2xl z-[100] px-5 py-6 space-y-3 overflow-y-auto border-t border-slate-800 animate-fadeIn">
+          <div className="p-3.5 bg-slate-900/90 border border-slate-800 rounded-2xl mb-4 flex items-center justify-between">
+            <div>
+              <p className="text-xs font-bold text-white">{profile?.full_name || 'Member'}</p>
+              <p className="text-[10px] text-emerald-400 font-mono">{profile?.member_number || ''}</p>
+            </div>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-950 border border-amber-800 text-amber-300 uppercase">
+              {profile?.role ? profile.role.replace('_', ' ') : 'Member'}
+            </span>
+          </div>
+
+          <button
+            onClick={() => { setActiveTab('overview'); setMobileMenuOpen(false); }}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold transition ${
+              activeTab === 'overview' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-slate-300 border border-slate-800/80'
+            }`}
+          >
+            <PiggyBank className="w-4 h-4" /> Overview Dashboard
+          </button>
+          
+          <button
+            onClick={() => { setActiveTab('loans'); setMobileMenuOpen(false); }}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold transition ${
+              activeTab === 'loans' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-slate-300 border border-slate-800/80'
+            }`}
+          >
+            <Calculator className="w-4 h-4" /> Loan Products & Limits
+          </button>
+
+          <button
+            onClick={() => { setActiveTab('guarantors'); setMobileMenuOpen(false); }}
+            className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl text-sm font-semibold transition ${
+              activeTab === 'guarantors' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-slate-300 border border-slate-800/80'
+            }`}
+          >
+            <span className="flex items-center gap-3">
+              <Users className="w-4 h-4" /> Guarantor Requests
+            </span>
+            {pendingGuaranteesCount > 0 && (
+              <span className="bg-rose-500 text-white text-xs px-2 py-0.5 rounded-full font-bold">
+                {pendingGuaranteesCount} new
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => { setActiveTab('documents'); setMobileMenuOpen(false); }}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold transition ${
+              activeTab === 'documents' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-slate-300 border border-slate-800/80'
+            }`}
+          >
+            <FolderDown className="w-4 h-4 text-emerald-400" /> Reports & AGM Booklets
+          </button>
+
+          <button
+            onClick={() => { setActiveTab('beneficiaries'); setMobileMenuOpen(false); }}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold transition ${
+              activeTab === 'beneficiaries' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-slate-300 border border-slate-800/80'
+            }`}
+          >
+            <HeartHandshake className="w-4 h-4" /> Next of Kin & Welfare
+          </button>
+
+          <button
+            onClick={() => { setActiveTab('mpesa'); setMobileMenuOpen(false); }}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold transition ${
+              activeTab === 'mpesa' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-slate-300 border border-slate-800/80'
+            }`}
+          >
+            <Smartphone className="w-4 h-4" /> M-Pesa Top-Up & Repay
+          </button>
+
+          {['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(profile?.role) && (
+            <button
+              onClick={() => { setActiveTab('admin'); setMobileMenuOpen(false); }}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold transition ${
+                activeTab === 'admin' ? 'bg-gradient-to-r from-amber-600 to-orange-600 text-white shadow-lg' : 'bg-slate-900/80 text-amber-300 border border-slate-800/80'
+              }`}
+            >
+              <ShieldCheck className="w-4 h-4" /> 3-Signatory Leadership Hub
+            </button>
+          )}
+
+          {/* Guaranteed Mobile Drawer Sign-Out Button */}
+          <div className="pt-4 border-t border-slate-800">
+            <button
+              onClick={async () => {
+                setMobileMenuOpen(false);
+                await supabase.auth.signOut();
+              }}
+              className="w-full flex items-center justify-center gap-2 bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-200 py-3.5 rounded-2xl text-sm font-bold shadow-lg cursor-pointer"
+            >
+              <LogOut className="w-4 h-4" /> Sign Out of Portal
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Main Container */}
       <main className="max-w-6xl mx-auto p-4 sm:p-8 space-y-6">
         {message.text && (
@@ -2936,12 +3036,12 @@ export default function App() {
         </div>
       )}
 
-      {/* Mobile Bottom Navigation */}
+      {/* Mobile Bottom Navigation Bar with Direct Exit Button */}
       {session && (
-        <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-slate-950/95 backdrop-blur-xl border-t border-slate-800/80 flex justify-around items-center py-2 px-1 z-50 shadow-2xl">
+        <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-slate-950/98 backdrop-blur-xl border-t border-slate-800/90 flex justify-around items-center py-2.5 px-1 z-50 shadow-2xl">
           <button
             onClick={() => setActiveTab('overview')}
-            className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-2 transition ${
+            className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1.5 transition ${
               activeTab === 'overview' ? 'text-emerald-400' : 'text-slate-400'
             }`}
           >
@@ -2951,7 +3051,7 @@ export default function App() {
 
           <button
             onClick={() => setActiveTab('loans')}
-            className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-2 transition ${
+            className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1.5 transition ${
               activeTab === 'loans' ? 'text-emerald-400' : 'text-slate-400'
             }`}
           >
@@ -2961,7 +3061,7 @@ export default function App() {
 
           <button
             onClick={() => setActiveTab('documents')}
-            className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-2 transition ${
+            className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1.5 transition ${
               activeTab === 'documents' ? 'text-emerald-400' : 'text-slate-400'
             }`}
           >
@@ -2971,30 +3071,20 @@ export default function App() {
 
           <button
             onClick={() => setActiveTab('guarantors')}
-            className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-2 relative transition ${
+            className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1.5 relative transition ${
               activeTab === 'guarantors' ? 'text-emerald-400' : 'text-slate-400'
             }`}
           >
             <Users className="w-4 h-4" />
             <span>Guarantors</span>
             {pendingGuaranteesCount > 0 && (
-              <span className="absolute top-0 right-1.5 w-2 h-2 bg-rose-500 rounded-full animate-ping" />
+              <span className="absolute top-0 right-1 w-2 h-2 bg-rose-500 rounded-full animate-ping" />
             )}
           </button>
 
           <button
-            onClick={() => setActiveTab('beneficiaries')}
-            className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-2 transition ${
-              activeTab === 'beneficiaries' ? 'text-emerald-400' : 'text-slate-400'
-            }`}
-          >
-            <HeartHandshake className="w-4 h-4" />
-            <span>Welfare</span>
-          </button>
-
-          <button
             onClick={() => setActiveTab('mpesa')}
-            className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-2 transition ${
+            className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1.5 transition ${
               activeTab === 'mpesa' ? 'text-emerald-400' : 'text-slate-400'
             }`}
           >
@@ -3005,7 +3095,7 @@ export default function App() {
           {['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(profile?.role) && (
             <button
               onClick={() => setActiveTab('admin')}
-              className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-2 transition ${
+              className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1.5 transition ${
                 activeTab === 'admin' ? 'text-amber-400' : 'text-slate-400'
               }`}
             >
@@ -3013,6 +3103,15 @@ export default function App() {
               <span>Leadership</span>
             </button>
           )}
+
+          {/* Direct Mobile Logout Button */}
+          <button
+            onClick={() => supabase.auth.signOut()}
+            className="flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1.5 text-rose-400 hover:text-rose-300 transition"
+          >
+            <LogOut className="w-4 h-4" />
+            <span>Exit</span>
+          </button>
         </div>
       )}
     </div>

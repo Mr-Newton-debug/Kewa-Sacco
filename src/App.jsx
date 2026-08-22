@@ -23,7 +23,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('overview');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Auth State with Saved Email LocalStorage Cache
+  // Auth State
   const [email, setEmail] = useState(() => localStorage.getItem('kewa_remembered_email') || '');
   const [password, setPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -151,7 +151,7 @@ export default function App() {
 
   // 5-Minute Inactivity Timer
   useEffect(() => {
-    if (!session) return;
+    if (!session || authMode === 'reset') return;
 
     let timeoutId;
     const INACTIVITY_LIMIT_MS = 5 * 60 * 1000;
@@ -173,24 +173,39 @@ export default function App() {
       if (timeoutId) clearTimeout(timeoutId);
       activityEvents.forEach((evt) => window.removeEventListener(evt, resetInactivityTimer));
     };
-  }, [session]);
+  }, [session, authMode]);
 
+  // Robust Auth & Password Recovery Interceptor
   useEffect(() => {
+    // Check URL hash for recovery parameters immediately on mount
+    const hashParams = window.location.hash;
+    if (hashParams && hashParams.includes('type=recovery')) {
+      setAuthMode('reset');
+    }
+
     supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session) fetchUserData(session.user.id);
+      if (hashParams && hashParams.includes('type=recovery')) {
+        setAuthMode('reset');
+      } else {
+        setSession(session);
+        if (session) fetchUserData(session.user.id);
+      }
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'PASSWORD_RECOVERY') {
         setAuthMode('reset');
-      }
-      setSession(session);
-      if (session) {
-        if (event !== 'PASSWORD_RECOVERY') {
-          fetchUserData(session.user.id);
-        }
+        setSession(null); // Force screen to display Set New Password form instead of dashboard
       } else {
+        if (authMode !== 'reset') {
+          setSession(session);
+          if (session) {
+            fetchUserData(session.user.id);
+          }
+        }
+      }
+
+      if (!session && event !== 'PASSWORD_RECOVERY') {
         setPassword('');
         setNewPassword('');
         setProfile(null);
@@ -482,9 +497,12 @@ export default function App() {
     setMessage({ text: '', type: '' });
 
     const { error } = await supabase.auth.updateUser({ password: newPassword });
-    if (error) setMessage({ text: error.message, type: 'error' });
-    else {
-      setMessage({ text: 'Password updated! Please sign in.', type: 'success' });
+    if (error) {
+      setMessage({ text: error.message, type: 'error' });
+    } else {
+      logAuditAction('PASSWORD_UPDATED', `User successfully reset account password`);
+      setMessage({ text: 'Password updated successfully! Please sign in with your new password.', type: 'success' });
+      await supabase.auth.signOut();
       setAuthMode('login');
       setNewPassword('');
     }
@@ -1509,7 +1527,7 @@ export default function App() {
           </div>
         </div>
 
-        {session && (
+        {session && authMode !== 'reset' && (
           <div className="flex items-center gap-2">
             <div className="hidden lg:flex items-center gap-1.5 bg-slate-900/90 p-1.5 rounded-2xl border border-slate-800/80 text-xs font-semibold shadow-inner">
               <button
@@ -1603,7 +1621,7 @@ export default function App() {
       </header>
 
       {/* Fixed Full-Screen Mobile Drawer */}
-      {session && mobileMenuOpen && (
+      {session && authMode !== 'reset' && mobileMenuOpen && (
         <div className="lg:hidden fixed inset-0 top-[60px] bg-slate-950/98 backdrop-blur-2xl z-[100] px-5 py-6 space-y-3 overflow-y-auto border-t border-slate-800 animate-fadeIn">
           <div className="p-3.5 bg-slate-900/90 border border-slate-800 rounded-2xl mb-4 flex items-center justify-between">
             <div>
@@ -1722,8 +1740,8 @@ export default function App() {
           </div>
         )}
 
-        {!session ? (
-          /* AUTH VIEWS */
+        {!session || authMode === 'reset' ? (
+          /* AUTH & PASSWORD RECOVERY VIEWS */
           <div className="max-w-md mx-auto mt-6 sm:mt-12 bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-10 shadow-2xl backdrop-blur-xl">
             <div className="text-center mb-6">
               <div className="inline-flex bg-gradient-to-tr from-emerald-600 to-teal-400 p-3 rounded-2xl shadow-xl shadow-emerald-900/30 mb-3">
@@ -1809,77 +1827,8 @@ export default function App() {
               </form>
             )}
 
-            {(authMode === 'login' || authMode === 'register') && (
-              <form onSubmit={authMode === 'login' ? handleLogin : handleRegister} className="space-y-4" autoComplete="off">
-                {authMode === 'register' && (
-                  <>
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-300 mb-1">Full Name</label>
-                      <input
-                        type="text"
-                        required
-                        autoComplete="off"
-                        value={fullName}
-                        onChange={(e) => setFullName(e.target.value)}
-                        placeholder="John Doe"
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-300 mb-1">Affiliation / Branch</label>
-                      <select
-                        value={companyId}
-                        onChange={(e) => setCompanyId(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white"
-                      >
-                        {companies.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-300 mb-1">Member No.</label>
-                        <input
-                          type="text"
-                          required
-                          autoComplete="off"
-                          value={memberNumber}
-                          onChange={(e) => setMemberNumber(e.target.value)}
-                          placeholder="KW-001"
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white font-mono"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-300 mb-1">National ID</label>
-                        <input
-                          type="text"
-                          required
-                          autoComplete="off"
-                          value={idNumber}
-                          onChange={(e) => setIdNumber(e.target.value)}
-                          placeholder="12345678"
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white font-mono"
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-300 mb-1">Phone Number</label>
-                      <input
-                        type="tel"
-                        required
-                        autoComplete="off"
-                        value={phone}
-                        onChange={(e) => setPhone(e.target.value)}
-                        placeholder="0712345678"
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white font-mono"
-                      />
-                    </div>
-                  </>
-                )}
-
+            {authMode === 'login' && (
+              <form onSubmit={handleLogin} className="space-y-4" autoComplete="off">
                 <div>
                   <div className="flex justify-between items-center mb-1">
                     <label className="block text-xs font-semibold text-slate-300">Email Address</label>
@@ -1907,15 +1856,13 @@ export default function App() {
                 <div>
                   <div className="flex justify-between items-center mb-1">
                     <label className="text-xs font-semibold text-slate-300">Password</label>
-                    {authMode === 'login' && (
-                      <button
-                        type="button"
-                        onClick={() => setAuthMode('forgot')}
-                        className="text-[11px] text-emerald-400 hover:underline cursor-pointer font-medium"
-                      >
-                        Forgot password?
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => setAuthMode('forgot')}
+                      className="text-[11px] text-emerald-400 hover:underline cursor-pointer font-medium"
+                    >
+                      Forgot password?
+                    </button>
                   </div>
                   <div className="relative">
                     <input
@@ -1937,28 +1884,136 @@ export default function App() {
                   </div>
                 </div>
 
-                {authMode === 'register' && (
-                  <div className="flex items-start gap-2 pt-1">
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3 rounded-xl text-sm transition mt-2 shadow-lg cursor-pointer"
+                >
+                  {loading ? 'Processing...' : 'Sign In to Portal'}
+                </button>
+              </form>
+            )}
+
+            {authMode === 'register' && (
+              <form onSubmit={handleRegister} className="space-y-4" autoComplete="off">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Full Name</label>
+                  <input
+                    type="text"
+                    required
+                    autoComplete="off"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    placeholder="John Doe"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Affiliation / Branch</label>
+                  <select
+                    value={companyId}
+                    onChange={(e) => setCompanyId(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white"
+                  >
+                    {companies.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Member No.</label>
                     <input
-                      type="checkbox"
-                      id="odpc"
+                      type="text"
                       required
-                      checked={odpcConsent}
-                      onChange={(e) => setOdpcConsent(e.target.checked)}
-                      className="mt-1 accent-emerald-500 rounded"
+                      autoComplete="off"
+                      value={memberNumber}
+                      onChange={(e) => setMemberNumber(e.target.value)}
+                      placeholder="KW-001"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white font-mono"
                     />
-                    <label htmlFor="odpc" className="text-[11px] text-slate-400 leading-tight">
-                      I consent to KEWA SACCO processing my data under the <strong>Kenya Data Protection Act (2019)</strong>.
-                    </label>
                   </div>
-                )}
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">National ID</label>
+                    <input
+                      type="text"
+                      required
+                      autoComplete="off"
+                      value={idNumber}
+                      onChange={(e) => setIdNumber(e.target.value)}
+                      placeholder="12345678"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white font-mono"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Phone Number</label>
+                  <input
+                    type="tel"
+                    required
+                    autoComplete="off"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder="0712345678"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Email Address</label>
+                  <input
+                    type="email"
+                    required
+                    autoComplete="off"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="name@domain.com"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Password</label>
+                  <div className="relative">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      required
+                      autoComplete="new-password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-3.5 pr-10 py-2.5 text-sm text-white"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-2 pt-1">
+                  <input
+                    type="checkbox"
+                    id="odpc"
+                    required
+                    checked={odpcConsent}
+                    onChange={(e) => setOdpcConsent(e.target.checked)}
+                    className="mt-1 accent-emerald-500 rounded"
+                  />
+                  <label htmlFor="odpc" className="text-[11px] text-slate-400 leading-tight">
+                    I consent to KEWA SACCO processing my data under the <strong>Kenya Data Protection Act (2019)</strong>.
+                  </label>
+                </div>
 
                 <button
                   type="submit"
                   disabled={loading}
                   className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3 rounded-xl text-sm transition mt-2 shadow-lg cursor-pointer"
                 >
-                  {loading ? 'Processing...' : authMode === 'login' ? 'Sign In to Portal' : 'Complete Registration'}
+                  {loading ? 'Processing...' : 'Complete Registration'}
                 </button>
               </form>
             )}
@@ -1978,6 +2033,10 @@ export default function App() {
                     Sign In
                   </button>
                 </>
+              ) : authMode === 'forgot' ? (
+                <button onClick={() => setAuthMode('login')} className="text-emerald-400 hover:underline font-bold cursor-pointer">
+                  Back to Sign In
+                </button>
               ) : null}
             </div>
           </div>
@@ -3063,7 +3122,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 8: ROLE-RESTRICTED LEADERSHIP HUB */}
+            {/* TAB 8: LEADERSHIP HUB */}
             {activeTab === 'admin' && ['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(userRole) && (
               <div className="space-y-6">
                 
@@ -3082,7 +3141,7 @@ export default function App() {
                   <span className="text-xs text-amber-300/80 font-mono hidden sm:inline">KEWA SACCO Governance Framework</span>
                 </div>
 
-                {/* 1. MEMBER DIRECTORY (All Officials) */}
+                {/* 1. MEMBER DIRECTORY */}
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-8 shadow-xl">
                   <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 mb-4">
                     <div>
@@ -3187,7 +3246,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 2. MANUAL ADJUSTMENT (Treasurer & Chairman / Admin Only) */}
+                {/* 2. MANUAL ADJUSTMENT */}
                 {['admin', 'chairman', 'treasurer'].includes(userRole) && (
                   <div className="bg-slate-900/90 border border-emerald-900/50 rounded-3xl p-6 sm:p-8 shadow-xl">
                     <div className="flex items-center gap-2 mb-2">
@@ -3357,7 +3416,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 4. PUBLISH REPORTS (Chairman & Admin Only) */}
+                {/* 4. PUBLISH REPORTS */}
                 {['admin', 'chairman'].includes(userRole) && (
                   <div className="bg-slate-900/90 border border-emerald-900/40 rounded-3xl p-6 sm:p-8 shadow-xl">
                     <div className="flex items-center gap-2 mb-2">
@@ -3431,7 +3490,7 @@ export default function App() {
                   </div>
                 )}
 
-                {/* 5. DUAL PAYROLL CHECKOFF (Treasurer & Chairman / Admin Only) */}
+                {/* 5. DUAL PAYROLL CHECKOFF */}
                 {['admin', 'chairman', 'treasurer'].includes(userRole) && (
                   <div className="bg-slate-900/90 border border-amber-900/40 rounded-3xl p-6 sm:p-8 shadow-xl">
                     <div className="flex items-center gap-2 mb-2">
@@ -3901,7 +3960,7 @@ export default function App() {
       )}
 
       {/* Mobile Bottom Navigation Bar */}
-      {session && (
+      {session && authMode !== 'reset' && (
         <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-slate-950/98 backdrop-blur-xl border-t border-slate-800/90 flex justify-around items-center py-2.5 px-1 z-50 shadow-2xl">
           <button
             onClick={() => setActiveTab('overview')}

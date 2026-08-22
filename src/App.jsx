@@ -23,7 +23,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('overview');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Auth State
+  // Auth State with Saved Email LocalStorage Cache
   const [email, setEmail] = useState(() => localStorage.getItem('kewa_remembered_email') || '');
   const [password, setPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -187,7 +187,9 @@ export default function App() {
       }
       setSession(session);
       if (session) {
-        fetchUserData(session.user.id);
+        if (event !== 'PASSWORD_RECOVERY') {
+          fetchUserData(session.user.id);
+        }
       } else {
         setPassword('');
         setNewPassword('');
@@ -244,7 +246,6 @@ export default function App() {
     }
   };
 
-  // Improved Audit Logger with Real User Name and Member Number
   const logAuditAction = async (action, details, userId = null, userName = null) => {
     try {
       const activeName = userName || profile?.full_name || email || 'Member';
@@ -535,7 +536,6 @@ export default function App() {
     setLoading(false);
   };
 
-  // Manual Member Adjustment Handler
   const handleManualMemberAdjustment = async (e) => {
     e.preventDefault();
     if (!manualTargetMemberId || !manualAmount || Number(manualAmount) <= 0) {
@@ -610,7 +610,6 @@ export default function App() {
     setLoading(false);
   };
 
-  // Financial Metrics
   const totalSavings = savings.reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
   const activeLoanBalance = loans
     .filter((l) => l.status === 'approved' || l.status === 'disbursed')
@@ -631,7 +630,6 @@ export default function App() {
   const calculatedTotal = Number(loanPrincipal) + calculatedInterest;
   const monthlyInstallment = calculatedTotal / loanMonths;
 
-  // Searchable Guarantor Autocomplete
   const selectGuarantorFromSearch = async (index, member) => {
     const updated = [...guarantorList];
     updated[index].guarantorId = member.id;
@@ -995,7 +993,6 @@ export default function App() {
     fetchBeneficiaries(session.user.id);
   };
 
-  // Support Tickets Handler
   const handleCreateInquiry = async (e) => {
     e.preventDefault();
     if (!inquirySubject || !inquiryMessage) return;
@@ -1039,7 +1036,6 @@ export default function App() {
     setMessage({ text: 'Response published to member ticket!', type: 'success' });
   };
 
-  // Bot Engine
   const handleSendChatMessage = (e) => {
     e.preventDefault();
     if (!chatInput.trim()) return;
@@ -1314,7 +1310,6 @@ export default function App() {
     setMessage({ text: 'Announcement published to Member Board!', type: 'success' });
   };
 
-  // PDF Generator
   const generatePDFStatement = (loan = null) => {
     try {
       const doc = new jsPDF();
@@ -1463,7 +1458,6 @@ export default function App() {
     return `https://wa.me/${formattedPhone}?text=${textMsg}`;
   };
 
-  // Performance Matrix (Worst to Best)
   const performanceRankedLoans = [...allLoansLeadership]
     .filter((l) => ['approved', 'disbursed', 'completed'].includes(l.status))
     .map((l) => {
@@ -1480,7 +1474,6 @@ export default function App() {
     })
     .sort((a, b) => a.progressPercent - b.progressPercent);
 
-  // Filtered Complete Member Directory List
   const filteredMemberDirectory = allMembers.filter((m) => {
     const matchesSearch =
       (m.full_name?.toLowerCase() || '').includes(memberDirectorySearch.toLowerCase()) ||
@@ -1913,7 +1906,7 @@ export default function App() {
                 </div>
                 <div>
                   <div className="flex justify-between items-center mb-1">
-                    <label className="block text-xs font-semibold text-slate-300">Password</label>
+                    <label className="text-xs font-semibold text-slate-300">Password</label>
                     {authMode === 'login' && (
                       <button
                         type="button"
@@ -2013,10 +2006,9 @@ export default function App() {
               </button>
             </div>
 
-            {/* TAB 1: OVERVIEW (WITH ANNOUNCEMENT BOARD) */}
+            {/* TAB 1: OVERVIEW */}
             {activeTab === 'overview' && (
               <div className="space-y-6">
-                {/* Announcements Board */}
                 {announcements.length > 0 && (
                   <div className="bg-gradient-to-r from-emerald-950/70 to-teal-950/70 border border-emerald-800/50 rounded-3xl p-5 sm:p-6 shadow-xl">
                     <div className="flex items-center gap-2 mb-3">
@@ -3071,7 +3063,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 8: ROLE-RESTRICTED LEADERSHIP HUB (CHAIRMAN vs TREASURER vs ASST CHAIR) */}
+            {/* TAB 8: ROLE-RESTRICTED LEADERSHIP HUB */}
             {activeTab === 'admin' && ['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(userRole) && (
               <div className="space-y-6">
                 
@@ -3090,7 +3082,7 @@ export default function App() {
                   <span className="text-xs text-amber-300/80 font-mono hidden sm:inline">KEWA SACCO Governance Framework</span>
                 </div>
 
-                {/* 1. MEMBER DIRECTORY (Accessible by All Officials & Admin) */}
+                {/* 1. MEMBER DIRECTORY (All Officials) */}
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-8 shadow-xl">
                   <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 mb-4">
                     <div>
@@ -3195,7 +3187,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 2. MANUAL ADJUSTMENT DESK (Treasurer & Chairman / Admin Only) */}
+                {/* 2. MANUAL ADJUSTMENT (Treasurer & Chairman / Admin Only) */}
                 {['admin', 'chairman', 'treasurer'].includes(userRole) && (
                   <div className="bg-slate-900/90 border border-emerald-900/50 rounded-3xl p-6 sm:p-8 shadow-xl">
                     <div className="flex items-center gap-2 mb-2">
@@ -3565,7 +3557,6 @@ export default function App() {
                               </div>
 
                               <div className="flex flex-wrap items-center gap-2">
-                                {/* Stage 1 */}
                                 {l.assistant_chair_approval ? (
                                   <button
                                     onClick={() => handleSignatoryPipeline(l.id, 'assistant_chair', 'unsign')}
@@ -3593,7 +3584,6 @@ export default function App() {
                                   </button>
                                 )}
 
-                                {/* Stage 2 */}
                                 {l.chairman_approval ? (
                                   <button
                                     onClick={() => handleSignatoryPipeline(l.id, 'chairman', 'unsign')}
@@ -3622,7 +3612,6 @@ export default function App() {
                                   </button>
                                 )}
 
-                                {/* Stage 3 */}
                                 {l.treasurer_approval ? (
                                   <button
                                     onClick={() => handleSignatoryPipeline(l.id, 'treasurer', 'unsign')}
@@ -3975,7 +3964,7 @@ export default function App() {
               }`}
             >
               <ShieldCheck className="w-4 h-4" />
-              <span>Leadership</span>
+              <span>Leadership Hub</span>
             </button>
           )}
 

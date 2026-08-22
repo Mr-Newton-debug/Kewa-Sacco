@@ -10,7 +10,7 @@ import {
   Users, Trash2, Plus, Menu, X, UploadCloud, FileSpreadsheet, 
   ArrowDownRight, ArrowUpRight, HeartHandshake, Bell, Smartphone, 
   Award, ShieldAlert, FileText, Send, History, CheckSquare, Paperclip, FileCheck, HelpCircle,
-  Eye, EyeOff, FolderDown, FileArchive, Shield, Lock, RotateCcw, AlertTriangle, Sparkles
+  Eye, EyeOff, FolderDown, FileArchive, Shield, Lock, RotateCcw, AlertTriangle, Sparkles, Search
 } from 'lucide-react';
 
 export default function App() {
@@ -50,12 +50,14 @@ export default function App() {
   const [auditLogs, setAuditLogs] = useState([]);
   const [message, setMessage] = useState({ text: '', type: '' });
 
-  // Loan Application State with Blind Privacy Verification
+  // Loan Application State with Searchable Autocomplete
   const [loanProduct, setLoanProduct] = useState('main_loan');
   const [loanPrincipal, setLoanPrincipal] = useState(20000);
   const [loanMonths, setLoanMonths] = useState(12);
   const [interestRate, setInterestRate] = useState(1.0);
-  const [guarantorList, setGuarantorList] = useState([{ guarantorId: '', amount: '', eligible: true, note: '' }]);
+  const [guarantorList, setGuarantorList] = useState([
+    { guarantorId: '', searchTerm: '', amount: '', eligible: true, note: '', dropdownOpen: false }
+  ]);
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [termsAgreed, setTermsAgreed] = useState(false);
 
@@ -218,7 +220,7 @@ export default function App() {
 
     const { data: repaymentData } = await supabase
       .from('loan_repayments')
-      .select('*, loans(principal_amount)')
+      .select('*, loans(principal_amount, loan_product)')
       .eq('member_id', userId)
       .order('created_at', { ascending: false });
     if (repaymentData) setRepayments(repaymentData);
@@ -400,14 +402,24 @@ export default function App() {
   const calculatedTotal = Number(loanPrincipal) + calculatedInterest;
   const monthlyInstallment = calculatedTotal / loanMonths;
 
-  // --- BLIND PRIVACY VERIFICATION ENGINE ---
-  // Evaluates eligibility internally without displaying the colleague's balance
+  // Searchable Guarantor Autocomplete + Blind Verification
+  const selectGuarantorFromSearch = async (index, member) => {
+    const updated = [...guarantorList];
+    updated[index].guarantorId = member.id;
+    updated[index].searchTerm = `${member.full_name} (${member.member_number}) - ${member.companies?.name || 'External'}`;
+    updated[index].dropdownOpen = false;
+    setGuarantorList(updated);
+
+    await checkBlindGuarantorEligibility(index, member.id, updated[index].amount);
+  };
+
   const checkBlindGuarantorEligibility = async (index, memberId, currentPledgeAmount = null) => {
     const updated = [...guarantorList];
     const pledgeToEvaluate = currentPledgeAmount !== null ? Number(currentPledgeAmount) : Number(updated[index].amount || 0);
 
     if (!memberId) {
-      updated[index] = { guarantorId: '', amount: '', eligible: true, note: '' };
+      updated[index].eligible = true;
+      updated[index].note = '';
       setGuarantorList(updated);
       return;
     }
@@ -424,7 +436,6 @@ export default function App() {
 
     const calculatedFreeShares = Math.max(0, totSav - totLoan - totGuar);
 
-    // Private Blind Check (Does not expose exact figures)
     let isEligible = true;
     let noteMsg = '';
 
@@ -439,25 +450,21 @@ export default function App() {
       noteMsg = '✓ Eligible: Colleague has sufficient Free Shares for this pledge amount.';
     } else {
       isEligible = true;
-      noteMsg = '✓ Eligible to guarantee.';
+      noteMsg = '✓ Colleague eligible to guarantee.';
     }
 
-    updated[index] = {
-      ...updated[index],
-      guarantorId: memberId,
-      eligible: isEligible,
-      note: noteMsg
-    };
+    updated[index].eligible = isEligible;
+    updated[index].note = noteMsg;
     setGuarantorList(updated);
   };
 
   const addGuarantorRow = () => {
-    setGuarantorList([...guarantorList, { guarantorId: '', amount: '', eligible: true, note: '' }]);
+    setGuarantorList([...guarantorList, { guarantorId: '', searchTerm: '', amount: '', eligible: true, note: '', dropdownOpen: false }]);
   };
 
   const removeGuarantorRow = (index) => {
     const updated = guarantorList.filter((_, i) => i !== index);
-    setGuarantorList(updated.length > 0 ? updated : [{ guarantorId: '', amount: '', eligible: true, note: '' }]);
+    setGuarantorList(updated.length > 0 ? updated : [{ guarantorId: '', searchTerm: '', amount: '', eligible: true, note: '', dropdownOpen: false }]);
   };
 
   const updateGuarantorRow = (index, field, value) => {
@@ -465,7 +472,6 @@ export default function App() {
     updated[index][field] = value;
     setGuarantorList(updated);
 
-    // Re-verify blind status whenever the pledge amount changes
     if (field === 'amount' && updated[index].guarantorId) {
       checkBlindGuarantorEligibility(index, updated[index].guarantorId, value);
     }
@@ -548,28 +554,34 @@ export default function App() {
     logAuditAction('LOAN_APPLICATION_SUBMITTED', `${loanProduct.toUpperCase()} applied: KES ${loanPrincipal.toLocaleString()} (Terms Accepted)`);
 
     setMessage({ text: `Loan submitted! Pipeline: 1. Assistant Chair -> 2. Chairman -> 3. Treasurer.`, type: 'success' });
-    setGuarantorList([{ guarantorId: '', amount: '', eligible: true, note: '' }]);
+    setGuarantorList([{ guarantorId: '', searchTerm: '', amount: '', eligible: true, note: '', dropdownOpen: false }]);
     fetchUserData(session.user.id);
     setLoading(false);
   };
 
-  // --- SEQUENTIAL 3-SIGNATORY PIPELINE WITH UNSIGN / REVOKE OPTION ---
-  const handleSignatoryPipeline = async (loanId, signatoryRole, action = 'sign') => {
+  // Strict Role-Restricted Multi-Signatory Pipeline with Revocation
+  const handleSignatoryPipeline = async (loanId, targetRole, action = 'sign') => {
     const isSign = action === 'sign';
-    const updatePayload = {};
+
+    // Strict Enforcement: Check that logged in profile role matches the button
+    if (profile?.role !== targetRole && profile?.role !== 'admin') {
+      alert(`Access Denied: Only the verified ${targetRole.replace('_', ' ').toUpperCase()} can perform this action.`);
+      return;
+    }
 
     const { data: currentLoan } = await supabase.from('loans').select('*').eq('id', loanId).single();
+    const updatePayload = {};
 
-    if (signatoryRole === 'assistant_chair') {
+    if (targetRole === 'assistant_chair') {
       updatePayload.assistant_chair_approval = isSign;
       if (!isSign) {
         updatePayload.chairman_approval = false;
         updatePayload.treasurer_approval = false;
         updatePayload.status = 'pending';
       }
-    } else if (signatoryRole === 'chairman') {
+    } else if (targetRole === 'chairman') {
       if (isSign && !currentLoan.assistant_chair_approval) {
-        alert('Workflow Locked: Assistant Chair must review and sign first.');
+        alert('Sequential Gate Locked: Assistant Chair must review and sign first.');
         return;
       }
       updatePayload.chairman_approval = isSign;
@@ -577,9 +589,9 @@ export default function App() {
         updatePayload.treasurer_approval = false;
         updatePayload.status = 'pending';
       }
-    } else if (signatoryRole === 'treasurer') {
+    } else if (targetRole === 'treasurer') {
       if (isSign && (!currentLoan.assistant_chair_approval || !currentLoan.chairman_approval)) {
-        alert('Workflow Locked: Assistant Chair and Chairman must sign before Treasurer disbursement.');
+        alert('Sequential Gate Locked: Assistant Chair and Chairman must sign before Treasurer disbursement.');
         return;
       }
       updatePayload.treasurer_approval = isSign;
@@ -589,33 +601,38 @@ export default function App() {
     await supabase.from('loans').update(updatePayload).eq('id', loanId);
     logAuditAction(
       isSign ? 'SIGNATORY_SIGNED' : 'SIGNATORY_REVOKED',
-      `${signatoryRole.replace('_', ' ').toUpperCase()} ${isSign ? 'endorsed' : 'revoked sign-off for'} Loan #${loanId.slice(0, 8)}`
+      `${targetRole.replace('_', ' ').toUpperCase()} ${isSign ? 'endorsed' : 'revoked sign-off for'} Loan #${loanId.slice(0, 8)}`
     );
 
     fetchAdminData();
     fetchUserData(session.user.id);
     setMessage({
-      text: `${signatoryRole.replace('_', ' ').toUpperCase()} ${isSign ? 'signed successfully.' : 'signature revoked and subsequent gates re-locked.'}`,
+      text: `${targetRole.replace('_', ' ').toUpperCase()} ${isSign ? 'signed successfully.' : 'signature revoked and subsequent gates re-locked.'}`,
       type: 'success',
     });
   };
 
-  // Welfare Signatory Pipeline
-  const handleWelfarePipeline = async (claimId, signatoryRole, action = 'sign') => {
+  const handleWelfarePipeline = async (claimId, targetRole, action = 'sign') => {
     const isSign = action === 'sign';
-    const updatePayload = {};
-    const { data: currentClaim } = await supabase.from('welfare_claims').select('*').eq('id', claimId).single();
 
-    if (signatoryRole === 'assistant_chair') {
+    if (profile?.role !== targetRole && profile?.role !== 'admin') {
+      alert(`Access Denied: Only the verified ${targetRole.replace('_', ' ').toUpperCase()} can perform this action.`);
+      return;
+    }
+
+    const { data: currentClaim } = await supabase.from('welfare_claims').select('*').eq('id', claimId).single();
+    const updatePayload = {};
+
+    if (targetRole === 'assistant_chair') {
       updatePayload.assistant_chair_approval = isSign;
       if (!isSign) {
         updatePayload.chairman_approval = false;
         updatePayload.treasurer_approval = false;
         updatePayload.status = 'pending';
       }
-    } else if (signatoryRole === 'chairman') {
+    } else if (targetRole === 'chairman') {
       if (isSign && !currentClaim.assistant_chair_approval) {
-        alert('Workflow Locked: Assistant Chair must inspect claim evidence first.');
+        alert('Sequential Gate Locked: Assistant Chair must inspect claim evidence first.');
         return;
       }
       updatePayload.chairman_approval = isSign;
@@ -623,9 +640,9 @@ export default function App() {
         updatePayload.treasurer_approval = false;
         updatePayload.status = 'pending';
       }
-    } else if (signatoryRole === 'treasurer') {
+    } else if (targetRole === 'treasurer') {
       if (isSign && (!currentClaim.assistant_chair_approval || !currentClaim.chairman_approval)) {
-        alert('Workflow Locked: Assistant Chair and Chairman must sign before final welfare disbursement.');
+        alert('Sequential Gate Locked: Assistant Chair and Chairman must sign before final welfare disbursement.');
         return;
       }
       updatePayload.treasurer_approval = isSign;
@@ -635,7 +652,7 @@ export default function App() {
     await supabase.from('welfare_claims').update(updatePayload).eq('id', claimId);
     logAuditAction(
       isSign ? 'WELFARE_SIGNED' : 'WELFARE_REVOKED',
-      `Benevolence ${isSign ? 'endorsed' : 'revoked'} by ${signatoryRole.replace('_', ' ').toUpperCase()} for Claim #${claimId.slice(0, 8)}`
+      `Benevolence ${isSign ? 'endorsed' : 'revoked'} by ${targetRole.replace('_', ' ').toUpperCase()} for Claim #${claimId.slice(0, 8)}`
     );
 
     fetchAdminData();
@@ -994,6 +1011,7 @@ export default function App() {
     setMessage({ text: 'Announcement published to Member Board!', type: 'success' });
   };
 
+  // Comprehensive Multi-Ledger PDF Statement with Full Loan Progress
   const generatePDFStatement = (loan = null) => {
     try {
       const doc = new jsPDF();
@@ -1003,7 +1021,7 @@ export default function App() {
       doc.setFontSize(18);
       doc.text('KEWA SACCO SOCIETY LIMITED', 14, 18);
       doc.setFontSize(9);
-      doc.text('Kenya Builders & Concrete • Warren Concrete • Eurocon Tiles', 14, 25);
+      doc.text('Kenya Builders & Concrete • Warren Concrete • Eurocon Tiles • External', 14, 25);
       doc.text(`Statement Date: ${new Date().toLocaleDateString('en-GB')}`, 145, 25);
 
       doc.setTextColor(30, 41, 59);
@@ -1013,35 +1031,62 @@ export default function App() {
       doc.setFontSize(9);
       doc.text(`Member Name: ${profile?.full_name || 'N/A'}`, 14, 54);
       doc.text(`Member No: ${profile?.member_number || 'N/A'}`, 14, 60);
-      doc.text(`Branch / Company: ${profile?.companies?.name || 'KEWA'}`, 14, 66);
+      doc.text(`Branch / Company: ${profile?.companies?.name || 'KEWA Sacco'}`, 14, 66);
       doc.text(`National ID: ${profile?.id_number || 'N/A'}`, 120, 54);
       doc.text(`Total Shares/Savings: KES ${totalSavings.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`, 120, 60);
-      doc.text(`Free Unencumbered Shares: KES ${freeSharesAvailable.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`, 120, 66);
+      doc.text(`Guarantees Committed: KES ${totalGuaranteesCommittedAmount.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`, 120, 66);
+      doc.text(`Free Unencumbered Shares: KES ${freeSharesAvailable.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`, 120, 72);
 
       if (loan) {
         doc.setFontSize(11);
-        doc.text(`Loan Product: ${(loan.loan_product || 'main_loan').replace('_', ' ').toUpperCase()}`, 14, 78);
-        const loanRows = [
-          ['Principal Amount', `KES ${Number(loan.principal_amount).toLocaleString()}`],
-          ['Interest Rate', `${loan.interest_rate}% / month`],
-          ['Repayment Duration', `${loan.repayment_period_months} Months`],
+        doc.text(`LOAN PROGRESS: ${(loan.loan_product || 'main_loan').replace('_', ' ').toUpperCase()}`, 14, 82);
+        
+        const totalPaidToDate = Math.max(0, Number(loan.total_payable || 0) - Number(loan.balance_remaining || 0));
+        const progressPercentage = loan.total_payable > 0 ? ((totalPaidToDate / loan.total_payable) * 100).toFixed(1) : '0';
+
+        const loanSummaryRows = [
+          ['Principal Borrowed', `KES ${Number(loan.principal_amount).toLocaleString()}`],
+          ['Interest Rate & Term', `${loan.interest_rate}% / mo (${loan.repayment_period_months} Mos)`],
           ['Total Payable (P + I)', `KES ${Number(loan.total_payable).toLocaleString()}`],
+          ['Total Amount Paid to Date', `KES ${totalPaidToDate.toLocaleString()} (${progressPercentage}% Repaid)`],
           ['Outstanding Debt Balance', `KES ${Number(loan.balance_remaining).toLocaleString()}`],
           ['Sequential Signatories', `1. Asst Chair: ${loan.assistant_chair_approval ? 'SIGNED' : 'PENDING'} | 2. Chair: ${loan.chairman_approval ? 'SIGNED' : 'PENDING'} | 3. Treasurer: ${loan.treasurer_approval ? 'SIGNED' : 'PENDING'}`],
-          ['Final Status', (loan.status || 'PENDING').toUpperCase()],
+          ['Current Status', (loan.status || 'PENDING').toUpperCase()],
         ];
 
         autoTable(doc, {
-          startY: 83,
-          head: [['Metric', 'Value']],
-          body: loanRows,
+          startY: 87,
+          head: [['Metric', 'Financial Details']],
+          body: loanSummaryRows,
           theme: 'striped',
           headStyles: { fillColor: [6, 78, 59] },
         });
+
+        const loanRepaymentsForThis = repayments.filter((r) => r.loan_id === loan.id);
+        const repY = doc.lastAutoTable.finalY + 8;
+        doc.setFontSize(11);
+        doc.setTextColor(180, 83, 9);
+        doc.text('Specific Amortization History for this Facility', 14, repY);
+
+        const repRows = loanRepaymentsForThis.length > 0 ? loanRepaymentsForThis.map((r) => [
+          new Date(r.created_at).toLocaleDateString('en-GB'),
+          'MONTHLY LOAN CHECKOFF',
+          r.reference_code || '-',
+          `-KES ${Number(r.amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`
+        ]) : [['-', 'No deductions applied yet', '-', 'KES 0.00']];
+
+        autoTable(doc, {
+          startY: repY + 4,
+          head: [['Payment Date', 'Deduction Type', 'Batch Reference', 'Amount Paid']],
+          body: repRows,
+          theme: 'striped',
+          headStyles: { fillColor: [180, 83, 9] },
+        });
+
       } else {
         doc.setFontSize(11);
         doc.setTextColor(6, 78, 59);
-        doc.text('1. Monthly Savings & Shares Contributions', 14, 78);
+        doc.text('1. Monthly Savings & Shares Contributions Ledger', 14, 82);
 
         const savingsRows = savings.length > 0 ? savings.map((s) => [
           new Date(s.created_at).toLocaleDateString('en-GB'),
@@ -1051,35 +1096,35 @@ export default function App() {
         ]) : [['-', 'No contributions recorded', '-', 'KES 0.00']];
 
         autoTable(doc, {
-          startY: 83,
-          head: [['Date', 'Type', 'Batch Ref', 'Credit Amount']],
+          startY: 87,
+          head: [['Credit Date', 'Transaction Type', 'Batch Ref', 'Credit Amount']],
           body: savingsRows,
           theme: 'striped',
           headStyles: { fillColor: [6, 78, 59] },
         });
 
-        const loanY = doc.lastAutoTable.finalY + 10;
+        const loanY = doc.lastAutoTable.finalY + 8;
         doc.setFontSize(11);
         doc.setTextColor(180, 83, 9);
-        doc.text('2. Monthly Loan Repayment Deductions', 14, loanY);
+        doc.text('2. Monthly Loan Repayments & Deductions Ledger', 14, loanY);
 
         const repaymentRows = repayments.length > 0 ? repayments.map((r) => [
           new Date(r.created_at).toLocaleDateString('en-GB'),
-          'LOAN REPAYMENT',
+          (r.loans?.loan_product || 'LOAN').replace('_', ' ').toUpperCase(),
           r.reference_code || '-',
           `-KES ${Number(r.amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`
         ]) : [['-', 'No repayments recorded', '-', 'KES 0.00']];
 
         autoTable(doc, {
           startY: loanY + 4,
-          head: [['Date', 'Type', 'Batch Ref', 'Repayment Paid']],
+          head: [['Deduction Date', 'Loan Facility', 'Batch Ref', 'Amount Deducted']],
           body: repaymentRows,
           theme: 'striped',
           headStyles: { fillColor: [180, 83, 9] },
         });
       }
 
-      const finalY = doc.lastAutoTable ? doc.lastAutoTable.finalY + 15 : 150;
+      const finalY = doc.lastAutoTable ? doc.lastAutoTable.finalY + 12 : 150;
       doc.setFontSize(8);
       doc.setTextColor(100, 116, 139);
       doc.text('This is an official computer-generated statement issued by KEWA SACCO core financial system.', 14, finalY);
@@ -1094,7 +1139,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-20 sm:pb-12 selection:bg-emerald-500 selection:text-white">
-      {/* Top Glassmorphic Navigation Bar */}
+      {/* Top Navigation */}
       <header className="border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md px-4 sm:px-8 py-3.5 flex justify-between items-center sticky top-0 z-50 shadow-lg shadow-black/40">
         <div className="flex items-center gap-3">
           <div className="bg-gradient-to-tr from-emerald-600 to-teal-400 p-2.5 rounded-2xl shadow-lg shadow-emerald-900/40">
@@ -1107,7 +1152,7 @@ export default function App() {
                 <Sparkles className="w-3 h-3" /> Core
               </span>
             </div>
-            <p className="text-[10px] sm:text-xs text-slate-400 font-medium">Kenya Builders • Warren • Eurocon</p>
+            <p className="text-[10px] sm:text-xs text-slate-400 font-medium">Kenya Builders • Warren • Eurocon • External</p>
           </div>
         </div>
 
@@ -1196,85 +1241,6 @@ export default function App() {
         )}
       </header>
 
-      {/* Mobile Drawer */}
-      {session && mobileMenuOpen && (
-        <div className="lg:hidden bg-slate-950/95 backdrop-blur-xl border-b border-slate-800 px-4 py-4 space-y-2 sticky top-[65px] z-40 shadow-2xl">
-          <button
-            onClick={() => { setActiveTab('overview'); setMobileMenuOpen(false); }}
-            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition ${
-              activeTab === 'overview' ? 'bg-emerald-600 text-white' : 'bg-slate-900/50 text-slate-300'
-            }`}
-          >
-            <PiggyBank className="w-4 h-4" /> Overview Dashboard
-          </button>
-          <button
-            onClick={() => { setActiveTab('loans'); setMobileMenuOpen(false); }}
-            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition ${
-              activeTab === 'loans' ? 'bg-emerald-600 text-white' : 'bg-slate-900/50 text-slate-300'
-            }`}
-          >
-            <Calculator className="w-4 h-4" /> Loan Products & Limits
-          </button>
-          <button
-            onClick={() => { setActiveTab('guarantors'); setMobileMenuOpen(false); }}
-            className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-semibold transition ${
-              activeTab === 'guarantors' ? 'bg-emerald-600 text-white' : 'bg-slate-900/50 text-slate-300'
-            }`}
-          >
-            <span className="flex items-center gap-3">
-              <Users className="w-4 h-4" /> Guarantor Requests Desk
-            </span>
-            {pendingGuaranteesCount > 0 && (
-              <span className="bg-rose-500 text-white text-xs px-2 py-0.5 rounded-full font-bold">
-                {pendingGuaranteesCount} new
-              </span>
-            )}
-          </button>
-          <button
-            onClick={() => { setActiveTab('documents'); setMobileMenuOpen(false); }}
-            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition ${
-              activeTab === 'documents' ? 'bg-emerald-600 text-white' : 'bg-slate-900/50 text-slate-300'
-            }`}
-          >
-            <FolderDown className="w-4 h-4 text-emerald-400" /> Reports & AGM Booklets
-          </button>
-          <button
-            onClick={() => { setActiveTab('beneficiaries'); setMobileMenuOpen(false); }}
-            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition ${
-              activeTab === 'beneficiaries' ? 'bg-emerald-600 text-white' : 'bg-slate-900/50 text-slate-300'
-            }`}
-          >
-            <HeartHandshake className="w-4 h-4" /> Next of Kin & Welfare
-          </button>
-          <button
-            onClick={() => { setActiveTab('mpesa'); setMobileMenuOpen(false); }}
-            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition ${
-              activeTab === 'mpesa' ? 'bg-emerald-600 text-white' : 'bg-slate-900/50 text-slate-300'
-            }`}
-          >
-            <Smartphone className="w-4 h-4" /> M-Pesa Top-Up & Repay
-          </button>
-          {['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(profile?.role) && (
-            <button
-              onClick={() => { setActiveTab('admin'); setMobileMenuOpen(false); }}
-              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition ${
-                activeTab === 'admin' ? 'bg-amber-600 text-white' : 'bg-slate-900/50 text-amber-300'
-              }`}
-            >
-              <ShieldCheck className="w-4 h-4" /> 3-Signatory Leadership Hub
-            </button>
-          )}
-          <div className="pt-2 border-t border-slate-800">
-            <button
-              onClick={() => supabase.auth.signOut()}
-              className="w-full flex items-center justify-center gap-2 bg-rose-950/40 border border-rose-900/50 text-rose-300 py-2.5 rounded-xl text-sm font-semibold"
-            >
-              <LogOut className="w-4 h-4" /> Sign Out
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Main Container */}
       <main className="max-w-6xl mx-auto p-4 sm:p-8 space-y-6">
         {message.text && (
@@ -1305,7 +1271,7 @@ export default function App() {
               </h2>
               <p className="text-xs sm:text-sm text-slate-400 mt-1 font-medium">
                 {authMode === 'login' && 'Access your digital cooperative portal'}
-                {authMode === 'register' && 'Register your staff cooperative profile'}
+                {authMode === 'register' && 'Register as internal staff or external member'}
                 {authMode === 'forgot' && 'Receive an email link to regain access'}
                 {authMode === 'reset' && 'Enter your replacement account password'}
               </p>
@@ -1391,7 +1357,7 @@ export default function App() {
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-slate-300 mb-1">Employer / Branch</label>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">Affiliation / Branch</label>
                       <select
                         value={companyId}
                         onChange={(e) => setCompanyId(e.target.value)}
@@ -1402,6 +1368,7 @@ export default function App() {
                             {c.name}
                           </option>
                         ))}
+                        <option value="external">External / Independent Member</option>
                       </select>
                     </div>
                     <div className="grid grid-cols-2 gap-3">
@@ -1532,7 +1499,6 @@ export default function App() {
         ) : (
           /* AUTHENTICATED VIEWS */
           <>
-            {/* Header Member Information Card */}
             <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-5 sm:p-7 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 shadow-xl">
               <div>
                 <div className="flex items-center gap-2">
@@ -1551,7 +1517,7 @@ export default function App() {
                 onClick={() => generatePDFStatement()}
                 className="flex items-center justify-center gap-2 bg-emerald-950/60 hover:bg-emerald-600 text-emerald-300 hover:text-white px-4 py-2.5 rounded-2xl text-xs font-bold border border-emerald-800 transition shadow cursor-pointer"
               >
-                <Download className="w-4 h-4" /> Official PDF Statement
+                <Download className="w-4 h-4" /> Download Official Statement
               </button>
             </div>
 
@@ -1605,78 +1571,6 @@ export default function App() {
                     <div className="bg-amber-950/80 border border-amber-800/50 p-3.5 rounded-2xl text-amber-400 shadow">
                       <TrendingUp className="w-6 h-6" />
                     </div>
-                  </div>
-                </div>
-
-                {/* NOTICE BOARD */}
-                <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-7 shadow-lg">
-                  <div className="flex items-center gap-2 mb-3">
-                    <Bell className="w-5 h-5 text-emerald-400" />
-                    <h4 className="text-base font-bold text-white">Official Notice Board & Announcements</h4>
-                  </div>
-                  {announcements.length === 0 ? (
-                    <p className="text-xs text-slate-500">No active announcements posted.</p>
-                  ) : (
-                    <div className="space-y-3">
-                      {announcements.map((a) => (
-                        <div key={a.id} className="bg-slate-950 border border-slate-800/80 p-4 rounded-2xl">
-                          <div className="flex justify-between items-center mb-1.5">
-                            <h5 className="text-sm font-bold text-emerald-300">{a.title}</h5>
-                            <span className="text-[10px] text-slate-500 font-mono">{new Date(a.created_at).toLocaleDateString()}</span>
-                          </div>
-                          <p className="text-xs text-slate-300 leading-relaxed">{a.content}</p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* DIVIDEND SIMULATOR */}
-                <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-7 shadow-lg">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Award className="w-5 h-5 text-amber-400" />
-                    <h4 className="text-base font-bold text-white">Annual Dividend & Interest on Deposits Simulator</h4>
-                  </div>
-                  <p className="text-xs text-slate-400 mb-4 font-medium">
-                    Simulate your projected annual interest on savings and dividend payout.
-                  </p>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-950 p-4 rounded-2xl border border-slate-800 text-xs">
-                    <div>
-                      <label className="block text-slate-400 mb-1 font-medium">
-                        Interest on Savings Rate: <strong className="text-emerald-400 font-bold">{interestOnDepositsRate}%</strong>
-                      </label>
-                      <input
-                        type="range"
-                        min="4"
-                        max="15"
-                        step="0.5"
-                        value={interestOnDepositsRate}
-                        onChange={(e) => setInterestOnDepositsRate(Number(e.target.value))}
-                        className="w-full accent-emerald-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-slate-400 mb-1 font-medium">
-                        Dividend on Share Capital: <strong className="text-emerald-400 font-bold">{dividendRate}%</strong>
-                      </label>
-                      <input
-                        type="range"
-                        min="5"
-                        max="20"
-                        step="0.5"
-                        value={dividendRate}
-                        onChange={(e) => setDividendRate(Number(e.target.value))}
-                        className="w-full accent-emerald-500"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="mt-4 p-4 bg-emerald-950/40 border border-emerald-800/40 rounded-2xl flex justify-between items-center text-xs">
-                    <span className="text-slate-300 font-medium">Projected Year-End Net Return:</span>
-                    <span className="text-lg font-black text-emerald-300">
-                      KES {((totalSavings * (interestOnDepositsRate / 100))).toLocaleString('en-KE', { minimumFractionDigits: 2 })}
-                    </span>
                   </div>
                 </div>
 
@@ -1753,7 +1647,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 2: LOANS WITH BLIND PRIVACY VERIFICATION */}
+            {/* TAB 2: LOANS WITH REAL-TIME SEARCHABLE GUARANTOR AUTOCOMPLETE */}
             {activeTab === 'loans' && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-7 shadow-lg">
@@ -1850,13 +1744,13 @@ export default function App() {
                       />
                     </div>
 
-                    {/* DYNAMIC GUARANTORS SYSTEM WITH BLIND PRIVACY VERIFICATION */}
+                    {/* SEARCHABLE GUARANTORS AUTOCOMPLETE */}
                     {loanProduct !== 'monthly_shylock' && (
                       <div className="border-t border-slate-800 pt-4 space-y-3">
                         <div className="flex justify-between items-center">
                           <div>
                             <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wide">Assign Member Guarantors</h4>
-                            <p className="text-[11px] text-slate-400">Private blind verification protects colleagues' personal balances</p>
+                            <p className="text-[11px] text-slate-400">Type colleague's name or member number to search</p>
                           </div>
                           <button
                             type="button"
@@ -1867,71 +1761,97 @@ export default function App() {
                           </button>
                         </div>
 
-                        {guarantorList.map((g, index) => (
-                          <div key={index} className="bg-slate-950 border border-slate-800 p-3.5 rounded-2xl space-y-2">
-                            <div className="flex flex-col sm:flex-row gap-2 items-center">
-                              <div className="w-full sm:w-3/5">
-                                <label className="block text-[10px] text-slate-400 mb-1 font-medium">Guarantor #{index + 1}</label>
-                                <select
-                                  required
-                                  value={g.guarantorId}
-                                  onChange={(e) => checkBlindGuarantorEligibility(index, e.target.value)}
-                                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-2 text-xs text-white"
-                                >
-                                  <option value="">Select colleague...</option>
-                                  {allMembers.map((m) => (
-                                    <option key={m.id} value={m.id}>
-                                      {m.full_name} ({m.member_number}) - {m.companies?.name}
-                                    </option>
-                                  ))}
-                                </select>
-                              </div>
+                        {guarantorList.map((g, index) => {
+                          const filteredColleagues = allMembers.filter((m) =>
+                            (m.full_name?.toLowerCase() || '').includes((g.searchTerm || '').toLowerCase()) ||
+                            (m.member_number?.toLowerCase() || '').includes((g.searchTerm || '').toLowerCase()) ||
+                            (m.companies?.name?.toLowerCase() || '').includes((g.searchTerm || '').toLowerCase())
+                          );
 
-                              <div className="w-full sm:w-2/5">
-                                <label className="block text-[10px] text-slate-400 mb-1 font-medium">Pledged (KES)</label>
-                                <input
-                                  type="number"
-                                  required
-                                  placeholder="e.g. 5000"
-                                  value={g.amount}
-                                  onChange={(e) => updateGuarantorRow(index, 'amount', e.target.value)}
-                                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-2 text-xs text-white"
-                                />
-                              </div>
+                          return (
+                            <div key={index} className="bg-slate-950 border border-slate-800 p-3.5 rounded-2xl space-y-2 relative">
+                              <div className="flex flex-col sm:flex-row gap-2 items-center">
+                                <div className="w-full sm:w-3/5 relative">
+                                  <label className="block text-[10px] text-slate-400 mb-1 font-medium">Search Guarantor #{index + 1}</label>
+                                  <div className="relative">
+                                    <input
+                                      type="text"
+                                      required
+                                      placeholder="Type name (e.g. Newton, KW-001)..."
+                                      value={g.searchTerm}
+                                      onChange={(e) => {
+                                        updateGuarantorRow(index, 'searchTerm', e.target.value);
+                                        updateGuarantorRow(index, 'dropdownOpen', true);
+                                      }}
+                                      onFocus={() => updateGuarantorRow(index, 'dropdownOpen', true)}
+                                      className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-8 pr-3 py-2 text-xs text-white"
+                                    />
+                                    <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                                  </div>
 
-                              {guarantorList.length > 1 && (
-                                <button
-                                  type="button"
-                                  onClick={() => removeGuarantorRow(index)}
-                                  className="self-end sm:self-center mt-1 sm:mt-5 text-rose-400 hover:text-rose-300 p-1.5 cursor-pointer"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
-                              )}
-                            </div>
+                                  {/* Autocomplete Dropdown */}
+                                  {g.dropdownOpen && filteredColleagues.length > 0 && (
+                                    <div className="absolute top-full left-0 right-0 mt-1 max-h-40 overflow-y-auto bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-30 divide-y divide-slate-800">
+                                      {filteredColleagues.slice(0, 8).map((colleague) => (
+                                        <div
+                                          key={colleague.id}
+                                          onClick={() => selectGuarantorFromSearch(index, colleague)}
+                                          className="p-2.5 hover:bg-slate-800 text-xs cursor-pointer text-slate-200 transition flex justify-between"
+                                        >
+                                          <span><strong>{colleague.full_name}</strong> ({colleague.member_number})</span>
+                                          <span className="text-[10px] text-slate-400">{colleague.companies?.name || 'External'}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
 
-                            {/* Blind Privacy Verification Status Banner (Exact Figures are Hidden) */}
-                            {g.guarantorId && (
-                              <div className={`p-2.5 rounded-xl text-[11px] font-semibold flex items-center gap-1.5 ${
-                                g.eligible
-                                  ? 'bg-emerald-950/60 border border-emerald-800/60 text-emerald-300'
-                                  : 'bg-rose-950/60 border border-rose-800/60 text-rose-300'
-                              }`}>
-                                {g.eligible ? (
-                                  <>
-                                    <CheckCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                                    <span>{g.note}</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
-                                    <span>{g.note}</span>
-                                  </>
+                                <div className="w-full sm:w-2/5">
+                                  <label className="block text-[10px] text-slate-400 mb-1 font-medium">Pledged (KES)</label>
+                                  <input
+                                    type="number"
+                                    required
+                                    placeholder="e.g. 5000"
+                                    value={g.amount}
+                                    onChange={(e) => updateGuarantorRow(index, 'amount', e.target.value)}
+                                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-2 text-xs text-white"
+                                  />
+                                </div>
+
+                                {guarantorList.length > 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => removeGuarantorRow(index)}
+                                    className="self-end sm:self-center mt-1 sm:mt-5 text-rose-400 hover:text-rose-300 p-1.5 cursor-pointer"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
                                 )}
                               </div>
-                            )}
-                          </div>
-                        ))}
+
+                              {/* Blind Privacy Status (Exact Balances Hidden) */}
+                              {g.guarantorId && (
+                                <div className={`p-2.5 rounded-xl text-[11px] font-semibold flex items-center gap-1.5 ${
+                                  g.eligible
+                                    ? 'bg-emerald-950/60 border border-emerald-800/60 text-emerald-300'
+                                    : 'bg-rose-950/60 border border-rose-800/60 text-rose-300'
+                                }`}>
+                                  {g.eligible ? (
+                                    <>
+                                      <CheckCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                                      <span>{g.note}</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                                      <span>{g.note}</span>
+                                    </>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
 
@@ -1964,8 +1884,9 @@ export default function App() {
                   </form>
                 </div>
 
+                {/* MEMBER APPLICATION LIST WITH LIVE SEQUENTIAL SIGNATORY TRACKER */}
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-7 shadow-lg">
-                  <h3 className="text-lg font-bold text-white mb-4">My Loan Applications</h3>
+                  <h3 className="text-lg font-bold text-white mb-4">My Loan Applications & Approval Tracker</h3>
                   {loans.length === 0 ? (
                     <div className="text-center py-12 text-slate-500 text-sm">No active or past loans found.</div>
                   ) : (
@@ -1999,8 +1920,9 @@ export default function App() {
                             </button>
                           </div>
 
+                          {/* Member Real-Time Sequential Tracker */}
                           <div className="bg-slate-900 p-3 rounded-xl border border-slate-800/80 text-[11px] space-y-1.5">
-                            <p className="text-slate-400 font-semibold mb-1">Sequential 3-Signatory Progress:</p>
+                            <p className="text-slate-400 font-semibold mb-1">Signatory Pipeline Progress:</p>
                             <div className="grid grid-cols-3 gap-1.5 text-center font-mono">
                               <span className={`p-1.5 rounded-lg text-[10px] font-bold ${l.assistant_chair_approval ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-slate-950 text-slate-500'}`}>
                                 1. Asst: {l.assistant_chair_approval ? '✓ SIGNED' : 'PENDING'}
@@ -2009,7 +1931,7 @@ export default function App() {
                                 2. Chair: {l.chairman_approval ? '✓ SIGNED' : 'PENDING'}
                               </span>
                               <span className={`p-1.5 rounded-lg text-[10px] font-bold ${l.treasurer_approval ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-slate-950 text-slate-500'}`}>
-                                3. Treas: {l.treasurer_approval ? '✓ SIGNED' : 'PENDING'}
+                                3. Treas: {l.treasurer_approval ? '✓ DISBURSED' : 'PENDING'}
                               </span>
                             </div>
                           </div>
@@ -2049,7 +1971,7 @@ export default function App() {
                             Guarantee: {g.status}
                           </span>
                           <h4 className="text-base font-bold text-white mt-1">{g.loans?.profiles?.full_name}</h4>
-                          <p className="text-xs text-slate-400">{g.loans?.profiles?.companies?.name} • Member {g.loans?.profiles?.member_number}</p>
+                          <p className="text-xs text-slate-400">{g.loans?.profiles?.companies?.name || 'External'} • Member {g.loans?.profiles?.member_number}</p>
                           <p className="text-xs text-emerald-400 mt-1 font-medium">
                             Pledged: KES {Number(g.amount_guaranteed).toLocaleString()} (Product: {(g.loans?.loan_product || 'main_loan').replace('_', ' ').toUpperCase()})
                           </p>
@@ -2427,7 +2349,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 7: 3-SIGNATORY LEADERSHIP HUB (SEQUENTIAL SIGN & UNSIGN DESK) */}
+            {/* TAB 7: 3-SIGNATORY LEADERSHIP HUB (STRICT ROLE RESTRICTIONS) */}
             {activeTab === 'admin' && ['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(profile?.role) && (
               <div className="space-y-6">
                 {/* 1. UPLOAD SACCO AUDIT & AGM REPORTS */}
@@ -2587,14 +2509,14 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 3. SEQUENTIAL 3-SIGNATORY LOAN APPROVAL DESK WITH UNSIGN */}
+                {/* 3. SEQUENTIAL 3-SIGNATORY DESK WITH STRICT ROLE PERMISSIONS */}
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-8 shadow-xl">
                   <div className="flex items-center gap-2 mb-2">
                     <Clock className="w-5 h-5 text-amber-400" />
-                    <h3 className="text-lg font-bold text-white">Sequential 3-Signatory Loan Approval Pipeline</h3>
+                    <h3 className="text-lg font-bold text-white">Sequential 3-Signatory Approval Pipeline (Role-Restricted)</h3>
                   </div>
                   <p className="text-xs text-slate-400 mb-4 font-medium">
-                    Strict Sequential Execution: <strong>1. Assistant Chair</strong> $\rightarrow$ <strong>2. Chairman</strong> $\rightarrow$ <strong>3. Treasurer</strong>. Buttons lock if the prior sign-off is missing and allow un-signing if an issue is identified.
+                    Strict Role Verification: You are currently signed in as <strong className="text-amber-300 uppercase">{profile?.role?.replace('_', ' ')}</strong>. You can only execute endorsements assigned to your specific portfolio.
                   </p>
 
                   {allPendingLoans.length === 0 ? (
@@ -2604,6 +2526,10 @@ export default function App() {
                       {allPendingLoans.map((l) => {
                         const canChairSign = l.assistant_chair_approval;
                         const canTreasurerSign = l.assistant_chair_approval && l.chairman_approval;
+
+                        const isAsstChairUser = profile?.role === 'assistant_chair' || profile?.role === 'admin';
+                        const isChairUser = profile?.role === 'chairman' || profile?.role === 'admin';
+                        const isTreasurerUser = profile?.role === 'treasurer' || profile?.role === 'admin';
 
                         return (
                           <div key={l.id} className="bg-slate-950 border border-slate-800 rounded-3xl p-5 space-y-4 shadow">
@@ -2615,27 +2541,36 @@ export default function App() {
                                     {(l.loan_product || 'main_loan').replace('_', ' ')}
                                   </span>
                                 </div>
-                                <p className="text-xs text-slate-400 font-medium">{l.profiles?.companies?.name} • Member {l.profiles?.member_number}</p>
+                                <p className="text-xs text-slate-400 font-medium">{l.profiles?.companies?.name || 'External'} • Member {l.profiles?.member_number}</p>
                                 <p className="text-sm font-black text-emerald-400 mt-1">
                                   KES {Number(l.principal_amount).toLocaleString()} ({l.repayment_period_months} Mos Term)
                                 </p>
                               </div>
 
-                              {/* SEQUENTIAL 3-SIGNATORY BUTTONS WITH UNSIGN */}
                               <div className="flex flex-wrap items-center gap-2">
                                 {/* Stage 1: Assistant Chair */}
                                 {l.assistant_chair_approval ? (
                                   <button
                                     onClick={() => handleSignatoryPipeline(l.id, 'assistant_chair', 'unsign')}
-                                    className="bg-emerald-950 hover:bg-rose-950/80 border border-emerald-800 hover:border-rose-700 text-emerald-300 hover:text-rose-200 text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5 transition cursor-pointer"
-                                    title="Click to Unsign"
+                                    disabled={!isAsstChairUser}
+                                    className={`text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5 transition ${
+                                      isAsstChairUser
+                                        ? 'bg-emerald-950 hover:bg-rose-950/80 border border-emerald-800 hover:border-rose-700 text-emerald-300 hover:text-rose-200 cursor-pointer'
+                                        : 'bg-emerald-950/40 border border-emerald-800/40 text-emerald-300/60 cursor-not-allowed'
+                                    }`}
+                                    title={isAsstChairUser ? "Click to Unsign" : "Only Assistant Chair can modify"}
                                   >
-                                    <CheckCircle className="w-3.5 h-3.5" /> 1. Asst Chair (Signed) <RotateCcw className="w-3 h-3 ml-1 opacity-60" />
+                                    <CheckCircle className="w-3.5 h-3.5" /> 1. Asst Chair (Signed) {isAsstChairUser && <RotateCcw className="w-3 h-3 ml-1 opacity-60" />}
                                   </button>
                                 ) : (
                                   <button
                                     onClick={() => handleSignatoryPipeline(l.id, 'assistant_chair', 'sign')}
-                                    className="bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold px-3.5 py-2 rounded-xl flex items-center gap-1.5 transition shadow cursor-pointer"
+                                    disabled={!isAsstChairUser}
+                                    className={`text-xs font-bold px-3.5 py-2 rounded-xl flex items-center gap-1.5 transition shadow ${
+                                      isAsstChairUser
+                                        ? 'bg-amber-600 hover:bg-amber-500 text-white cursor-pointer'
+                                        : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
+                                    }`}
                                   >
                                     1. Sign: Asst Chair
                                   </button>
@@ -2645,22 +2580,27 @@ export default function App() {
                                 {l.chairman_approval ? (
                                   <button
                                     onClick={() => handleSignatoryPipeline(l.id, 'chairman', 'unsign')}
-                                    className="bg-emerald-950 hover:bg-rose-950/80 border border-emerald-800 hover:border-rose-700 text-emerald-300 hover:text-rose-200 text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5 transition cursor-pointer"
-                                    title="Click to Unsign"
+                                    disabled={!isChairUser}
+                                    className={`text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5 transition ${
+                                      isChairUser
+                                        ? 'bg-emerald-950 hover:bg-rose-950/80 border border-emerald-800 hover:border-rose-700 text-emerald-300 hover:text-rose-200 cursor-pointer'
+                                        : 'bg-emerald-950/40 border border-emerald-800/40 text-emerald-300/60 cursor-not-allowed'
+                                    }`}
+                                    title={isChairUser ? "Click to Unsign" : "Only Chairman can modify"}
                                   >
-                                    <CheckCircle className="w-3.5 h-3.5" /> 2. Chair (Signed) <RotateCcw className="w-3 h-3 ml-1 opacity-60" />
+                                    <CheckCircle className="w-3.5 h-3.5" /> 2. Chair (Signed) {isChairUser && <RotateCcw className="w-3 h-3 ml-1 opacity-60" />}
                                   </button>
                                 ) : (
                                   <button
-                                    disabled={!canChairSign}
+                                    disabled={!canChairSign || !isChairUser}
                                     onClick={() => handleSignatoryPipeline(l.id, 'chairman', 'sign')}
                                     className={`text-xs font-bold px-3.5 py-2 rounded-xl flex items-center gap-1.5 transition shadow ${
-                                      canChairSign
+                                      canChairSign && isChairUser
                                         ? 'bg-amber-600 hover:bg-amber-500 text-white cursor-pointer'
-                                        : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-60'
+                                        : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
                                     }`}
                                   >
-                                    {!canChairSign && <Lock className="w-3.5 h-3.5 text-slate-600" />}
+                                    {(!canChairSign || !isChairUser) && <Lock className="w-3.5 h-3.5 text-slate-600" />}
                                     2. Sign: Chairman
                                   </button>
                                 )}
@@ -2669,22 +2609,27 @@ export default function App() {
                                 {l.treasurer_approval ? (
                                   <button
                                     onClick={() => handleSignatoryPipeline(l.id, 'treasurer', 'unsign')}
-                                    className="bg-emerald-950 hover:bg-rose-950/80 border border-emerald-800 hover:border-rose-700 text-emerald-300 hover:text-rose-200 text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5 transition cursor-pointer"
-                                    title="Click to Unsign"
+                                    disabled={!isTreasurerUser}
+                                    className={`text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5 transition ${
+                                      isTreasurerUser
+                                        ? 'bg-emerald-950 hover:bg-rose-950/80 border border-emerald-800 hover:border-rose-700 text-emerald-300 hover:text-rose-200 cursor-pointer'
+                                        : 'bg-emerald-950/40 border border-emerald-800/40 text-emerald-300/60 cursor-not-allowed'
+                                    }`}
+                                    title={isTreasurerUser ? "Click to Unsign" : "Only Treasurer can modify"}
                                   >
-                                    <CheckCircle className="w-3.5 h-3.5" /> 3. Treas (Disbursed) <RotateCcw className="w-3 h-3 ml-1 opacity-60" />
+                                    <CheckCircle className="w-3.5 h-3.5" /> 3. Treas (Disbursed) {isTreasurerUser && <RotateCcw className="w-3 h-3 ml-1 opacity-60" />}
                                   </button>
                                 ) : (
                                   <button
-                                    disabled={!canTreasurerSign}
+                                    disabled={!canTreasurerSign || !isTreasurerUser}
                                     onClick={() => handleSignatoryPipeline(l.id, 'treasurer', 'sign')}
                                     className={`text-xs font-bold px-3.5 py-2 rounded-xl flex items-center gap-1.5 transition shadow ${
-                                      canTreasurerSign
+                                      canTreasurerSign && isTreasurerUser
                                         ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white cursor-pointer'
-                                        : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-60'
+                                        : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
                                     }`}
                                   >
-                                    {!canTreasurerSign && <Lock className="w-3.5 h-3.5 text-slate-600" />}
+                                    {(!canTreasurerSign || !isTreasurerUser) && <Lock className="w-3.5 h-3.5 text-slate-600" />}
                                     3. Disburse: Treasurer
                                   </button>
                                 )}
@@ -2711,15 +2656,12 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 4. SEQUENTIAL 3-SIGNATORY WELFARE CLAIMS REVIEW */}
+                {/* 4. SEQUENTIAL 3-SIGNATORY WELFARE REVIEW (ROLE-RESTRICTED) */}
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-8 shadow-xl">
                   <div className="flex items-center gap-2 mb-2">
                     <HeartHandshake className="w-5 h-5 text-rose-400" />
-                    <h3 className="text-lg font-bold text-white">Sequential 3-Signatory Welfare & Benevolent Claims</h3>
+                    <h3 className="text-lg font-bold text-white">Sequential 3-Signatory Welfare Claims</h3>
                   </div>
-                  <p className="text-xs text-slate-400 mb-4 font-medium">
-                    Verify uploaded receipts and attachments sequentially: 1. Assistant Chair $\rightarrow$ 2. Chairman $\rightarrow$ 3. Treasurer.
-                  </p>
 
                   {allPendingClaims.length === 0 ? (
                     <div className="text-center py-8 text-slate-500 text-sm">No pending benevolent claims.</div>
@@ -2728,6 +2670,10 @@ export default function App() {
                       {allPendingClaims.map((c) => {
                         const canChairSign = c.assistant_chair_approval;
                         const canTreasurerSign = c.assistant_chair_approval && c.chairman_approval;
+
+                        const isAsstChairUser = profile?.role === 'assistant_chair' || profile?.role === 'admin';
+                        const isChairUser = profile?.role === 'chairman' || profile?.role === 'admin';
+                        const isTreasurerUser = profile?.role === 'treasurer' || profile?.role === 'admin';
 
                         return (
                           <div key={c.id} className="bg-slate-950 border border-slate-800 p-5 rounded-3xl space-y-3 text-xs shadow">
@@ -2743,14 +2689,20 @@ export default function App() {
                                 {c.assistant_chair_approval ? (
                                   <button
                                     onClick={() => handleWelfarePipeline(c.id, 'assistant_chair', 'unsign')}
-                                    className="bg-emerald-950 hover:bg-rose-950 border border-emerald-800 text-emerald-300 hover:text-rose-200 text-xs font-bold px-3 py-1.5 rounded-xl cursor-pointer flex items-center gap-1"
+                                    disabled={!isAsstChairUser}
+                                    className={`text-xs font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 ${
+                                      isAsstChairUser ? 'bg-emerald-950 hover:bg-rose-950 border border-emerald-800 text-emerald-300 hover:text-rose-200 cursor-pointer' : 'opacity-50 cursor-not-allowed bg-emerald-950 text-emerald-300'
+                                    }`}
                                   >
-                                    ✓ Asst Signed <RotateCcw className="w-3 h-3 opacity-60" />
+                                    ✓ Asst Signed {isAsstChairUser && <RotateCcw className="w-3 h-3 opacity-60 ml-1" />}
                                   </button>
                                 ) : (
                                   <button
                                     onClick={() => handleWelfarePipeline(c.id, 'assistant_chair', 'sign')}
-                                    className="bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold px-3 py-1.5 rounded-xl cursor-pointer"
+                                    disabled={!isAsstChairUser}
+                                    className={`text-xs font-bold px-3.5 py-1.5 rounded-xl ${
+                                      isAsstChairUser ? 'bg-rose-600 hover:bg-rose-500 text-white cursor-pointer' : 'bg-slate-900 text-slate-600 opacity-50 cursor-not-allowed'
+                                    }`}
                                   >
                                     1. Sign: Asst Chair
                                   </button>
@@ -2760,19 +2712,22 @@ export default function App() {
                                 {c.chairman_approval ? (
                                   <button
                                     onClick={() => handleWelfarePipeline(c.id, 'chairman', 'unsign')}
-                                    className="bg-emerald-950 hover:bg-rose-950 border border-emerald-800 text-emerald-300 hover:text-rose-200 text-xs font-bold px-3 py-1.5 rounded-xl cursor-pointer flex items-center gap-1"
+                                    disabled={!isChairUser}
+                                    className={`text-xs font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 ${
+                                      isChairUser ? 'bg-emerald-950 hover:bg-rose-950 border border-emerald-800 text-emerald-300 hover:text-rose-200 cursor-pointer' : 'opacity-50 cursor-not-allowed bg-emerald-950 text-emerald-300'
+                                    }`}
                                   >
-                                    ✓ Chair Signed <RotateCcw className="w-3 h-3 opacity-60" />
+                                    ✓ Chair Signed {isChairUser && <RotateCcw className="w-3 h-3 opacity-60 ml-1" />}
                                   </button>
                                 ) : (
                                   <button
-                                    disabled={!canChairSign}
+                                    disabled={!canChairSign || !isChairUser}
                                     onClick={() => handleWelfarePipeline(c.id, 'chairman', 'sign')}
-                                    className={`text-xs font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 ${
-                                      canChairSign ? 'bg-rose-600 hover:bg-rose-500 text-white cursor-pointer' : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-60'
+                                    className={`text-xs font-bold px-3.5 py-1.5 rounded-xl flex items-center gap-1 ${
+                                      canChairSign && isChairUser ? 'bg-rose-600 hover:bg-rose-500 text-white cursor-pointer' : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
                                     }`}
                                   >
-                                    {!canChairSign && <Lock className="w-3 h-3 text-slate-600" />}
+                                    {(!canChairSign || !isChairUser) && <Lock className="w-3 h-3 text-slate-600" />}
                                     2. Sign: Chairman
                                   </button>
                                 )}
@@ -2781,19 +2736,22 @@ export default function App() {
                                 {c.treasurer_approval ? (
                                   <button
                                     onClick={() => handleWelfarePipeline(c.id, 'treasurer', 'unsign')}
-                                    className="bg-emerald-950 hover:bg-rose-950 border border-emerald-800 text-emerald-300 hover:text-rose-200 text-xs font-bold px-3 py-1.5 rounded-xl cursor-pointer flex items-center gap-1"
+                                    disabled={!isTreasurerUser}
+                                    className={`text-xs font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 ${
+                                      isTreasurerUser ? 'bg-emerald-950 hover:bg-rose-950 border border-emerald-800 text-emerald-300 hover:text-rose-200 cursor-pointer' : 'opacity-50 cursor-not-allowed bg-emerald-950 text-emerald-300'
+                                    }`}
                                   >
-                                    ✓ Treas Disbursed <RotateCcw className="w-3 h-3 opacity-60" />
+                                    ✓ Treas Disbursed {isTreasurerUser && <RotateCcw className="w-3 h-3 opacity-60 ml-1" />}
                                   </button>
                                 ) : (
                                   <button
-                                    disabled={!canTreasurerSign}
+                                    disabled={!canTreasurerSign || !isTreasurerUser}
                                     onClick={() => handleWelfarePipeline(c.id, 'treasurer', 'sign')}
-                                    className={`text-xs font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 ${
-                                      canTreasurerSign ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white cursor-pointer' : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-60'
+                                    className={`text-xs font-bold px-3.5 py-1.5 rounded-xl flex items-center gap-1 ${
+                                      canTreasurerSign && isTreasurerUser ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white cursor-pointer' : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
                                     }`}
                                   >
-                                    {!canTreasurerSign && <Lock className="w-3 h-3 text-slate-600" />}
+                                    {(!canTreasurerSign || !isTreasurerUser) && <Lock className="w-3 h-3 text-slate-600" />}
                                     3. Disburse: Treasurer
                                   </button>
                                 )}
@@ -2925,7 +2883,7 @@ export default function App() {
 
               <h4 className="font-bold text-white text-xs uppercase tracking-wide">1. Payroll Deduction Authorization</h4>
               <p>
-                By submitting this loan request, I authorize my employer (Kenya Builders & Concrete Co. Ltd, Warren Concrete Ltd, or Eurocon Tiles Ltd) to deduct <strong>KES {monthlyInstallment.toFixed(2)}</strong> monthly until settled in full.
+                By submitting this loan request, I authorize my employer or company checkoff unit to deduct <strong>KES {monthlyInstallment.toFixed(2)}</strong> monthly until settled in full[cite: 1].
               </p>
 
               <h4 className="font-bold text-white text-xs uppercase tracking-wide">2. Interest Rate & Repayment Schedules</h4>
@@ -2980,7 +2938,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Persistent Bottom Mobile Nav */}
+      {/* Mobile Bottom Navigation */}
       {session && (
         <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-slate-950/95 backdrop-blur-xl border-t border-slate-800/80 flex justify-around items-center py-2 px-1 z-50 shadow-2xl">
           <button

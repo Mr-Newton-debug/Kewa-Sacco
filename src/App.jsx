@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -10,7 +10,8 @@ import {
   Users, Trash2, Plus, Menu, X, UploadCloud, FileSpreadsheet, 
   ArrowDownRight, ArrowUpRight, HeartHandshake, Bell, Smartphone, 
   Award, ShieldAlert, FileText, Send, History, CheckSquare, Paperclip, FileCheck, HelpCircle,
-  Eye, EyeOff, FolderDown, FileArchive, Shield, Lock, RotateCcw, AlertTriangle, Sparkles, Search
+  Eye, EyeOff, FolderDown, FileArchive, Shield, Lock, RotateCcw, AlertTriangle, Sparkles, Search,
+  MessageSquare, MessageCircle, Bot, Mail, CornerDownRight, Check
 } from 'lucide-react';
 
 export default function App() {
@@ -18,7 +19,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [authMode, setAuthMode] = useState('login');
   const [showPassword, setShowPassword] = useState(false);
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState('overview'); // overview, loans, guarantors, documents, beneficiaries, mpesa, support, admin
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Auth State
@@ -49,6 +50,19 @@ export default function App() {
   const [allPendingClaims, setAllPendingClaims] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
   const [message, setMessage] = useState({ text: '', type: '' });
+
+  // Support & Chatbot State
+  const [inquiries, setInquiries] = useState([]);
+  const [allAdminInquiries, setAllAdminInquiries] = useState([]);
+  const [inquirySubject, setInquirySubject] = useState('');
+  const [inquiryCategory, setInquiryCategory] = useState('loan_inquiry');
+  const [inquiryMessage, setInquiryMessage] = useState('');
+  const [adminReplyText, setAdminReplyText] = useState({});
+  const [chatMessages, setChatMessages] = useState([
+    { sender: 'bot', text: 'Jambo! I am the KEWA SACCO Virtual Assistant. How can I assist you with your cooperative account today?' }
+  ]);
+  const [chatInput, setChatInput] = useState('');
+  const chatEndRef = useRef(null);
 
   // Loan Application State with Searchable Autocomplete
   const [loanProduct, setLoanProduct] = useState('main_loan');
@@ -116,6 +130,7 @@ export default function App() {
         setRepayments([]);
         setBeneficiaries([]);
         setAuditLogs([]);
+        setInquiries([]);
       }
     });
 
@@ -124,6 +139,10 @@ export default function App() {
     fetchSaccoDocuments();
     return () => subscription.unsubscribe();
   }, []);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatMessages]);
 
   const handleLoanProductChange = (prod) => {
     setLoanProduct(prod);
@@ -199,6 +218,7 @@ export default function App() {
       fetchGuarantorData(userId);
       fetchBeneficiaries(userId);
       fetchWelfareClaims(userId);
+      fetchMemberInquiries(userId);
       if (['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(profileData.role)) {
         fetchAdminData();
       }
@@ -228,10 +248,19 @@ export default function App() {
     setLoading(false);
   };
 
+  const fetchMemberInquiries = async (userId) => {
+    const { data } = await supabase
+      .from('member_inquiries')
+      .select('*')
+      .eq('member_id', userId)
+      .order('created_at', { ascending: false });
+    if (data) setInquiries(data);
+  };
+
   const fetchAllMembers = async (currentUserId) => {
     const { data } = await supabase
       .from('profiles')
-      .select('id, full_name, member_number, id_number, created_at, companies(name)')
+      .select('id, full_name, member_number, id_number, phone, role, created_at, companies(name)')
       .neq('id', currentUserId);
     if (data) setAllMembers(data);
   };
@@ -290,6 +319,12 @@ export default function App() {
       .select('*, profiles(full_name, member_number, companies(name))')
       .eq('status', 'pending');
     if (claims) setAllPendingClaims(claims);
+
+    const { data: allTickets } = await supabase
+      .from('member_inquiries')
+      .select('*, profiles(full_name, member_number, phone, companies(name))')
+      .order('created_at', { ascending: false });
+    if (allTickets) setAllAdminInquiries(allTickets);
 
     const { data: logs } = await supabase
       .from('audit_logs')
@@ -767,6 +802,82 @@ export default function App() {
     fetchBeneficiaries(session.user.id);
   };
 
+  // --- SUPPORT TICKETS & INQUIRIES HANDLER ---
+  const handleCreateInquiry = async (e) => {
+    e.preventDefault();
+    if (!inquirySubject || !inquiryMessage) return;
+
+    setLoading(true);
+    const { error } = await supabase.from('member_inquiries').insert([
+      {
+        member_id: session.user.id,
+        subject: inquirySubject,
+        category: inquiryCategory,
+        message: inquiryMessage,
+        status: 'pending',
+      },
+    ]);
+
+    if (error) {
+      setMessage({ text: error.message, type: 'error' });
+    } else {
+      logAuditAction('SUPPORT_INQUIRY_CREATED', `Ticket submitted: "${inquirySubject}"`);
+      setMessage({ text: 'Inquiry submitted! SACCO Leadership has been notified.', type: 'success' });
+      setInquirySubject('');
+      setInquiryMessage('');
+      fetchMemberInquiries(session.user.id);
+    }
+    setLoading(false);
+  };
+
+  const handleAdminReplyInquiry = async (inquiryId) => {
+    const reply = adminReplyText[inquiryId];
+    if (!reply) return;
+
+    await supabase.from('member_inquiries').update({
+      admin_response: reply,
+      status: 'resolved',
+      responded_by: session.user.id,
+      updated_at: new Date().toISOString(),
+    }).eq('id', inquiryId);
+
+    logAuditAction('SUPPORT_INQUIRY_RESOLVED', `Replied to Ticket #${inquiryId.slice(0, 8)}`);
+    fetchAdminData();
+    setMessage({ text: 'Response published to member ticket!', type: 'success' });
+  };
+
+  // --- INTERACTIVE SACCO SMART BOT ENGINE ---
+  const handleSendChatMessage = (e) => {
+    e.preventDefault();
+    if (!chatInput.trim()) return;
+
+    const userText = chatInput.trim();
+    const lower = userText.toLowerCase();
+    const newChat = [...chatMessages, { sender: 'user', text: userText }];
+
+    let botReply = "I am trained on KEWA SACCO By-Laws & Credit Policies. You can ask about 'loans', 'free shares', 'guarantors', 'interest rates', 'dividends', or submit a ticket to the committee below!";
+
+    if (lower.includes('loan') || lower.includes('apply') || lower.includes('borrow')) {
+      botReply = `You can apply for 4 tailored products: 1. Main Loan (Up to 24 mos, 1% rate, 3X savings), 2. Emergency Loan (12 mos, 1%), 3. Christmas Loan (6 mos, 1%), and 4. Monthly Shylock (1 mo, 5% fee). Your maximum limit right now is KES ${maxLimitForSelectedProduct.toLocaleString()}.`;
+    } else if (lower.includes('free share') || lower.includes('shares') || lower.includes('pledge') || lower.includes('guarant')) {
+      botReply = `Your available Free Shares are currently KES ${freeSharesAvailable.toLocaleString()}. This represents your Total Savings (KES ${totalSavings.toLocaleString()}) minus Active Debt (KES ${activeLoanBalance.toLocaleString()}) and running guarantee pledges (KES ${totalGuaranteesCommittedAmount.toLocaleString()}).`;
+    } else if (lower.includes('sign') || lower.includes('approval') || lower.includes('signator')) {
+      botReply = "All loans and welfare claims follow a strict 3-Signatory sequential pipeline: 1. Assistant Chair -> 2. Chairman -> 3. Treasurer. Funds disburse only after all 3 approve!";
+    } else if (lower.includes('welfare') || lower.includes('death') || lower.includes('medical') || lower.includes('bereave')) {
+      botReply = "KEWA Benevolent Fund covers: Member Bereavement (KES 50,000), Spouse/Child (KES 30,000), Parent (KES 20,000), and Inpatient Hospitalization >3 days (Up to KES 25,000). Upload burial permits or discharge summaries in the Welfare tab!";
+    } else if (lower.includes('mpesa') || lower.includes('paybill') || lower.includes('deposit')) {
+      botReply = `Use Paybill Business No: 522522, Account No: ${profile?.member_number || 'Your Member No'}. You can top-up voluntary savings or make direct loan amortizations instantly in the M-Pesa tab!`;
+    } else if (lower.includes('dividend') || lower.includes('rate') || lower.includes('interest')) {
+      botReply = "Dividends on share capital and interest on savings deposits are declared annually by the Board at the AGM. You can use our live Dividend Simulator on the Overview tab to project your year-end payout!";
+    } else if (lower.includes('contact') || lower.includes('official') || lower.includes('chairman') || lower.includes('treasurer')) {
+      botReply = "You can chat directly with the Chairperson, Treasurer, or Assistant Chair via the WhatsApp buttons in the 'Help & Inquiries' tab, or submit an internal support ticket!";
+    }
+
+    newChat.push({ sender: 'bot', text: botReply });
+    setChatMessages(newChat);
+    setChatInput('');
+  };
+
   const handleMpesaTransaction = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -1136,8 +1247,21 @@ export default function App() {
 
   const pendingGuaranteesCount = guarantorRequests.filter((g) => g.status === 'pending').length;
 
+  // Retrieve official contact information for deep-links
+  const chairmanOfficial = allMembers.find((m) => m.role === 'chairman') || { full_name: 'Chairman', phone: '254700000000' };
+  const treasurerOfficial = allMembers.find((m) => m.role === 'treasurer') || { full_name: 'Treasurer', phone: '254700000001' };
+  const asstChairOfficial = allMembers.find((m) => m.role === 'assistant_chair') || { full_name: 'Assistant Chair', phone: '254700000002' };
+
+  const getWhatsAppLink = (phoneNum, roleName) => {
+    const cleanPhone = (phoneNum || '254700000000').replace(/[^0-9]/g, '');
+    const textMsg = encodeURIComponent(
+      `Hello ${roleName}, I am ${profile?.full_name || 'a member'} (Member No: ${profile?.member_number || 'N/A'}). I have an inquiry regarding my KEWA SACCO account.`
+    );
+    return `https://wa.me/${cleanPhone}?text=${textMsg}`;
+  };
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-20 sm:pb-12 selection:bg-emerald-500 selection:text-white">
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-24 sm:pb-12 selection:bg-emerald-500 selection:text-white">
       {/* Top Navigation */}
       <header className="border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md px-4 sm:px-8 py-3.5 flex justify-between items-center sticky top-0 z-50 shadow-lg shadow-black/40">
         <div className="flex items-center gap-3">
@@ -1211,6 +1335,14 @@ export default function App() {
               >
                 <Smartphone className="w-3.5 h-3.5" /> M-Pesa
               </button>
+              <button
+                onClick={() => setActiveTab('support')}
+                className={`px-3 py-1.5 rounded-xl transition flex items-center gap-1 ${
+                  activeTab === 'support' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <MessageSquare className="w-3.5 h-3.5 text-emerald-400" /> Help & Chat
+              </button>
               {['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(profile?.role) && (
                 <button
                   onClick={() => setActiveTab('admin')}
@@ -1240,7 +1372,7 @@ export default function App() {
         )}
       </header>
 
-      {/* Fixed Full-Screen Mobile Drawer with Explicit High Z-Index */}
+      {/* Fixed Full-Screen Mobile Drawer with High Z-Index */}
       {session && mobileMenuOpen && (
         <div className="lg:hidden fixed inset-0 top-[60px] bg-slate-950/98 backdrop-blur-2xl z-[100] px-5 py-6 space-y-3 overflow-y-auto border-t border-slate-800 animate-fadeIn">
           <div className="p-3.5 bg-slate-900/90 border border-slate-800 rounded-2xl mb-4 flex items-center justify-between">
@@ -1312,6 +1444,15 @@ export default function App() {
             }`}
           >
             <Smartphone className="w-4 h-4" /> M-Pesa Top-Up & Repay
+          </button>
+
+          <button
+            onClick={() => { setActiveTab('support'); setMobileMenuOpen(false); }}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold transition ${
+              activeTab === 'support' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-emerald-300 border border-slate-800/80'
+            }`}
+          >
+            <MessageSquare className="w-4 h-4" /> Helpdesk, Bot & Officials Chat
           </button>
 
           {['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(profile?.role) && (
@@ -2447,7 +2588,213 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 7: 3-SIGNATORY LEADERSHIP HUB (STRICT ROLE RESTRICTIONS) */}
+            {/* TAB 7: MEMBER HELPDESK, AI CHATBOT & OFFICIALS DIRECT CONNECT */}
+            {activeTab === 'support' && (
+              <div className="space-y-6">
+                {/* 1. DIRECT 1-CLICK OFFICIALS WHATSAPP CONNECT */}
+                <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-8 shadow-xl">
+                  <div className="flex items-center gap-2 mb-2">
+                    <MessageCircle className="w-6 h-6 text-emerald-400" />
+                    <h3 className="text-xl font-bold text-white">Direct Communication with SACCO Officials</h3>
+                  </div>
+                  <p className="text-xs text-slate-400 mb-5 font-medium">
+                    Tap to open a pre-filled direct WhatsApp message or phone call with your elected executive committee.
+                  </p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    {/* Chairperson Card */}
+                    <div className="bg-slate-950 border border-slate-800 p-4 rounded-2xl flex flex-col justify-between space-y-3">
+                      <div>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800 uppercase">
+                          Executive Chairperson
+                        </span>
+                        <h4 className="text-base font-bold text-white mt-1.5">{chairmanOfficial.full_name}</h4>
+                        <p className="text-xs text-slate-400">Governance & General Appeals</p>
+                      </div>
+                      <a
+                        href={getWhatsAppLink(chairmanOfficial.phone, 'Chairman')}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 transition shadow"
+                      >
+                        <MessageCircle className="w-4 h-4" /> Chat on WhatsApp
+                      </a>
+                    </div>
+
+                    {/* Treasurer Card */}
+                    <div className="bg-slate-950 border border-slate-800 p-4 rounded-2xl flex flex-col justify-between space-y-3">
+                      <div>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800 uppercase">
+                          Treasurer & Finance
+                        </span>
+                        <h4 className="text-base font-bold text-white mt-1.5">{treasurerOfficial.full_name}</h4>
+                        <p className="text-xs text-slate-400">Disbursements & Checkoff Inquiries</p>
+                      </div>
+                      <a
+                        href={getWhatsAppLink(treasurerOfficial.phone, 'Treasurer')}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 transition shadow"
+                      >
+                        <MessageCircle className="w-4 h-4" /> Chat on WhatsApp
+                      </a>
+                    </div>
+
+                    {/* Assistant Chair Card */}
+                    <div className="bg-slate-950 border border-slate-800 p-4 rounded-2xl flex flex-col justify-between space-y-3">
+                      <div>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800 uppercase">
+                          Assistant Chairperson
+                        </span>
+                        <h4 className="text-base font-bold text-white mt-1.5">{asstChairOfficial.full_name}</h4>
+                        <p className="text-xs text-slate-400">Guarantor Verification & Welfare</p>
+                      </div>
+                      <a
+                        href={getWhatsAppLink(asstChairOfficial.phone, 'Assistant Chair')}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 transition shadow"
+                      >
+                        <MessageCircle className="w-4 h-4" /> Chat on WhatsApp
+                      </a>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. SACCO SMART BOT & INTERNAL INQUIRY FORM */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* Smart Chatbot Assistant */}
+                  <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 flex flex-col h-[480px] shadow-xl">
+                    <div className="flex items-center gap-2 pb-3 border-b border-slate-800">
+                      <Bot className="w-5 h-5 text-emerald-400" />
+                      <div>
+                        <h4 className="text-sm font-bold text-white">KEWA SACCO AI Assistant</h4>
+                        <p className="text-[10px] text-slate-400">Instant Automated Policy & Ledger Support</p>
+                      </div>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto py-3 space-y-3 pr-1">
+                      {chatMessages.map((msg, idx) => (
+                        <div key={idx} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                          <div className={`max-w-[82%] p-3 rounded-2xl text-xs leading-relaxed ${
+                            msg.sender === 'user'
+                              ? 'bg-emerald-600 text-white rounded-tr-none'
+                              : 'bg-slate-950 border border-slate-800 text-slate-300 rounded-tl-none'
+                          }`}>
+                            {msg.text}
+                          </div>
+                        </div>
+                      ))}
+                      <div ref={chatEndRef} />
+                    </div>
+
+                    <form onSubmit={handleSendChatMessage} className="pt-2 border-t border-slate-800 flex gap-2">
+                      <input
+                        type="text"
+                        value={chatInput}
+                        onChange={(e) => setChatInput(e.target.value)}
+                        placeholder="Ask about loans, free shares, M-Pesa..."
+                        className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                      />
+                      <button
+                        type="submit"
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-2 rounded-xl text-xs font-bold transition shadow cursor-pointer"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                      </button>
+                    </form>
+                  </div>
+
+                  {/* Submit Tracked Inquiry / Internal Ticket */}
+                  <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 shadow-xl space-y-4">
+                    <div className="flex items-center gap-2">
+                      <Mail className="w-5 h-5 text-amber-400" />
+                      <div>
+                        <h4 className="text-sm font-bold text-white">Submit Internal Message / Ticket</h4>
+                        <p className="text-[10px] text-slate-400">Formally logged in the system for committee action</p>
+                      </div>
+                    </div>
+
+                    <form onSubmit={handleCreateInquiry} className="space-y-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">Inquiry Category</label>
+                        <select
+                          value={inquiryCategory}
+                          onChange={(e) => setInquiryCategory(e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                        >
+                          <option value="loan_inquiry">Loan Application / Guarantor Inquiry</option>
+                          <option value="savings_dispute">Payroll Checkoff / Savings Ledger Clarification</option>
+                          <option value="welfare_support">Welfare / Benevolent Claim Follow-up</option>
+                          <option value="general">General Society Inquiry / Feedback</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">Subject</label>
+                        <input
+                          type="text"
+                          required
+                          value={inquirySubject}
+                          onChange={(e) => setInquirySubject(e.target.value)}
+                          placeholder="Brief summary of your message..."
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">Detailed Message</label>
+                        <textarea
+                          required
+                          rows="3"
+                          value={inquiryMessage}
+                          onChange={(e) => setInquiryMessage(e.target.value)}
+                          placeholder="Provide details for leadership review..."
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                        />
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={loading}
+                        className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-2.5 rounded-xl text-xs transition shadow cursor-pointer flex items-center justify-center gap-1.5"
+                      >
+                        <Send className="w-3.5 h-3.5" /> Submit Message to Committee
+                      </button>
+                    </form>
+
+                    {/* Member's Submitted Inquiries */}
+                    <div className="pt-3 border-t border-slate-800 space-y-2 max-h-44 overflow-y-auto">
+                      <p className="text-[11px] font-bold text-slate-300">My Past Submitted Inquiries:</p>
+                      {inquiries.length === 0 ? (
+                        <p className="text-[11px] text-slate-500">No tickets submitted yet.</p>
+                      ) : (
+                        inquiries.map((inq) => (
+                          <div key={inq.id} className="bg-slate-950 p-3 rounded-2xl border border-slate-800 text-xs space-y-1">
+                            <div className="flex justify-between items-center">
+                              <span className="font-bold text-white">{inq.subject}</span>
+                              <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                                inq.status === 'resolved' ? 'bg-emerald-950 text-emerald-300' : 'bg-amber-950 text-amber-300'
+                              }`}>
+                                {inq.status.toUpperCase()}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-400">{inq.message}</p>
+                            {inq.admin_response && (
+                              <div className="mt-1 p-2 bg-emerald-950/40 border border-emerald-800/40 rounded-xl text-[11px] text-emerald-300">
+                                <strong>Committee Reply:</strong> {inq.admin_response}
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 8: 3-SIGNATORY LEADERSHIP HUB (STRICT ROLE RESTRICTIONS & TICKET DESK) */}
             {activeTab === 'admin' && ['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(profile?.role) && (
               <div className="space-y-6">
                 {/* 1. UPLOAD SACCO AUDIT & AGM REPORTS */}
@@ -2607,7 +2954,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 3. SEQUENTIAL 3-SIGNATORY DESK WITH STRICT ROLE PERMISSIONS */}
+                {/* 3. SEQUENTIAL 3-SIGNATORY DESK */}
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-8 shadow-xl">
                   <div className="flex items-center gap-2 mb-2">
                     <Clock className="w-5 h-5 text-amber-400" />
@@ -2754,123 +3101,66 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 4. SEQUENTIAL 3-SIGNATORY WELFARE REVIEW (ROLE-RESTRICTED) */}
+                {/* 4. COMMITTEE SUPPORT & INQUIRY TICKETS DESK */}
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-8 shadow-xl">
                   <div className="flex items-center gap-2 mb-2">
-                    <HeartHandshake className="w-5 h-5 text-rose-400" />
-                    <h3 className="text-lg font-bold text-white">Sequential 3-Signatory Welfare Claims</h3>
+                    <MessageSquare className="w-5 h-5 text-emerald-400" />
+                    <h3 className="text-lg font-bold text-white">Member Support Tickets & Formal Inquiries</h3>
                   </div>
+                  <p className="text-xs text-slate-400 mb-4 font-medium">
+                    Review and resolve messages submitted by members directly from their portal accounts.
+                  </p>
 
-                  {allPendingClaims.length === 0 ? (
-                    <div className="text-center py-8 text-slate-500 text-sm">No pending benevolent claims.</div>
+                  {allAdminInquiries.length === 0 ? (
+                    <div className="text-center py-8 text-slate-500 text-sm">No member inquiries awaiting response.</div>
                   ) : (
                     <div className="space-y-4">
-                      {allPendingClaims.map((c) => {
-                        const canChairSign = c.assistant_chair_approval;
-                        const canTreasurerSign = c.assistant_chair_approval && c.chairman_approval;
-
-                        const isAsstChairUser = profile?.role === 'assistant_chair' || profile?.role === 'admin';
-                        const isChairUser = profile?.role === 'chairman' || profile?.role === 'admin';
-                        const isTreasurerUser = profile?.role === 'treasurer' || profile?.role === 'admin';
-
-                        return (
-                          <div key={c.id} className="bg-slate-950 border border-slate-800 p-5 rounded-3xl space-y-3 text-xs shadow">
-                            <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2">
-                              <div>
-                                <h5 className="font-bold text-white text-sm">{c.profiles?.full_name}</h5>
-                                <p className="text-slate-400 capitalize">{c.claim_type}: {c.description}</p>
-                                <p className="font-bold text-rose-400 text-sm mt-1">KES {Number(c.amount_requested).toLocaleString()}</p>
+                      {allAdminInquiries.map((ticket) => (
+                        <div key={ticket.id} className="bg-slate-950 border border-slate-800 p-5 rounded-3xl space-y-3 text-xs shadow">
+                          <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <h5 className="font-bold text-white text-sm">{ticket.profiles?.full_name}</h5>
+                                <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                                  ticket.status === 'resolved' ? 'bg-emerald-950 text-emerald-300' : 'bg-amber-950 text-amber-300'
+                                }`}>
+                                  {ticket.status.toUpperCase()}
+                                </span>
                               </div>
-
-                              <div className="flex flex-wrap items-center gap-2">
-                                {/* Stage 1: Asst Chair */}
-                                {c.assistant_chair_approval ? (
-                                  <button
-                                    onClick={() => handleWelfarePipeline(c.id, 'assistant_chair', 'unsign')}
-                                    disabled={!isAsstChairUser}
-                                    className={`text-xs font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 ${
-                                      isAsstChairUser ? 'bg-emerald-950 hover:bg-rose-950 border border-emerald-800 text-emerald-300 hover:text-rose-200 cursor-pointer' : 'opacity-50 cursor-not-allowed bg-emerald-950 text-emerald-300'
-                                    }`}
-                                  >
-                                    ✓ Asst Signed {isAsstChairUser && <RotateCcw className="w-3 h-3 opacity-60 ml-1" />}
-                                  </button>
-                                ) : (
-                                  <button
-                                    onClick={() => handleWelfarePipeline(c.id, 'assistant_chair', 'sign')}
-                                    disabled={!isAsstChairUser}
-                                    className={`text-xs font-bold px-3.5 py-1.5 rounded-xl ${
-                                      isAsstChairUser ? 'bg-rose-600 hover:bg-rose-500 text-white cursor-pointer' : 'bg-slate-900 text-slate-600 opacity-50 cursor-not-allowed'
-                                    }`}
-                                  >
-                                    1. Sign: Asst Chair
-                                  </button>
-                                )}
-
-                                {/* Stage 2: Chairman */}
-                                {c.chairman_approval ? (
-                                  <button
-                                    onClick={() => handleWelfarePipeline(c.id, 'chairman', 'unsign')}
-                                    disabled={!isChairUser}
-                                    className={`text-xs font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 ${
-                                      isChairUser ? 'bg-emerald-950 hover:bg-rose-950 border border-emerald-800 text-emerald-300 hover:text-rose-200 cursor-pointer' : 'opacity-50 cursor-not-allowed bg-emerald-950 text-emerald-300'
-                                    }`}
-                                  >
-                                    ✓ Chair Signed {isChairUser && <RotateCcw className="w-3 h-3 opacity-60 ml-1" />}
-                                  </button>
-                                ) : (
-                                  <button
-                                    disabled={!canChairSign || !isChairUser}
-                                    onClick={() => handleWelfarePipeline(c.id, 'chairman', 'sign')}
-                                    className={`text-xs font-bold px-3.5 py-1.5 rounded-xl flex items-center gap-1 ${
-                                      canChairSign && isChairUser ? 'bg-rose-600 hover:bg-rose-500 text-white cursor-pointer' : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
-                                    }`}
-                                  >
-                                    {(!canChairSign || !isChairUser) && <Lock className="w-3.5 h-3.5 text-slate-600" />}
-                                    2. Sign: Chairman
-                                  </button>
-                                )}
-
-                                {/* Stage 3: Treasurer */}
-                                {c.treasurer_approval ? (
-                                  <button
-                                    onClick={() => handleWelfarePipeline(c.id, 'treasurer', 'unsign')}
-                                    disabled={!isTreasurerUser}
-                                    className={`text-xs font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 ${
-                                      isTreasurerUser ? 'bg-emerald-950 hover:bg-rose-950 border border-emerald-800 text-emerald-300 hover:text-rose-200 cursor-pointer' : 'opacity-50 cursor-not-allowed bg-emerald-950 text-emerald-300'
-                                    }`}
-                                  >
-                                    ✓ Treas Disbursed {isTreasurerUser && <RotateCcw className="w-3 h-3 opacity-60 ml-1" />}
-                                  </button>
-                                ) : (
-                                  <button
-                                    disabled={!canTreasurerSign || !isTreasurerUser}
-                                    onClick={() => handleWelfarePipeline(c.id, 'treasurer', 'sign')}
-                                    className={`text-xs font-bold px-3.5 py-1.5 rounded-xl flex items-center gap-1 ${
-                                      canTreasurerSign && isTreasurerUser ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white cursor-pointer' : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
-                                    }`}
-                                  >
-                                    {(!canTreasurerSign || !isTreasurerUser) && <Lock className="w-3.5 h-3.5 text-slate-600" />}
-                                    3. Disburse: Treasurer
-                                  </button>
-                                )}
-                              </div>
+                              <p className="text-slate-400">{ticket.profiles?.companies?.name || 'External'} • Member {ticket.profiles?.member_number} • Phone: {ticket.profiles?.phone}</p>
+                              <p className="text-emerald-400 font-bold mt-1">Category: {ticket.category.replace('_', ' ').toUpperCase()}</p>
                             </div>
-
-                            {c.evidence_url && (
-                              <div className="pt-2 border-t border-slate-800">
-                                <a
-                                  href={c.evidence_url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="inline-flex items-center gap-1 text-xs text-amber-400 hover:underline font-semibold"
-                                >
-                                  <Paperclip className="w-3.5 h-3.5" /> Inspect Uploaded Evidence Attachment
-                                </a>
-                              </div>
-                            )}
+                            <span className="text-[10px] text-slate-500 font-mono">{new Date(ticket.created_at).toLocaleString()}</span>
                           </div>
-                        );
-                      })}
+
+                          <div className="p-3 bg-slate-900 border border-slate-800/80 rounded-2xl space-y-1">
+                            <p className="font-bold text-slate-200">Subject: {ticket.subject}</p>
+                            <p className="text-slate-300 leading-relaxed">{ticket.message}</p>
+                          </div>
+
+                          {ticket.admin_response ? (
+                            <div className="p-3 bg-emerald-950/40 border border-emerald-800/40 rounded-2xl text-[11px] text-emerald-300">
+                              <strong>Official Reply:</strong> {ticket.admin_response}
+                            </div>
+                          ) : (
+                            <div className="flex gap-2 pt-2 border-t border-slate-800">
+                              <input
+                                type="text"
+                                placeholder="Type official response to member..."
+                                value={adminReplyText[ticket.id] || ''}
+                                onChange={(e) => setAdminReplyText({ ...adminReplyText, [ticket.id]: e.target.value })}
+                                className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                              />
+                              <button
+                                onClick={() => handleAdminReplyInquiry(ticket.id)}
+                                className="bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-2 rounded-xl text-xs font-bold transition shadow cursor-pointer flex items-center gap-1"
+                              >
+                                <Send className="w-3.5 h-3.5" /> Reply & Resolve
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
@@ -3036,12 +3326,12 @@ export default function App() {
         </div>
       )}
 
-      {/* Mobile Bottom Navigation Bar with Direct Exit Button */}
+      {/* Mobile Bottom Navigation Bar */}
       {session && (
         <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-slate-950/98 backdrop-blur-xl border-t border-slate-800/90 flex justify-around items-center py-2.5 px-1 z-50 shadow-2xl">
           <button
             onClick={() => setActiveTab('overview')}
-            className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1.5 transition ${
+            className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 transition ${
               activeTab === 'overview' ? 'text-emerald-400' : 'text-slate-400'
             }`}
           >
@@ -3051,7 +3341,7 @@ export default function App() {
 
           <button
             onClick={() => setActiveTab('loans')}
-            className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1.5 transition ${
+            className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 transition ${
               activeTab === 'loans' ? 'text-emerald-400' : 'text-slate-400'
             }`}
           >
@@ -3061,7 +3351,7 @@ export default function App() {
 
           <button
             onClick={() => setActiveTab('documents')}
-            className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1.5 transition ${
+            className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 transition ${
               activeTab === 'documents' ? 'text-emerald-400' : 'text-slate-400'
             }`}
           >
@@ -3071,7 +3361,7 @@ export default function App() {
 
           <button
             onClick={() => setActiveTab('guarantors')}
-            className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1.5 relative transition ${
+            className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 relative transition ${
               activeTab === 'guarantors' ? 'text-emerald-400' : 'text-slate-400'
             }`}
           >
@@ -3083,19 +3373,19 @@ export default function App() {
           </button>
 
           <button
-            onClick={() => setActiveTab('mpesa')}
-            className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1.5 transition ${
-              activeTab === 'mpesa' ? 'text-emerald-400' : 'text-slate-400'
+            onClick={() => setActiveTab('support')}
+            className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 transition ${
+              activeTab === 'support' ? 'text-emerald-400' : 'text-slate-400'
             }`}
           >
-            <Smartphone className="w-4 h-4" />
-            <span>M-Pesa</span>
+            <MessageSquare className="w-4 h-4" />
+            <span>Help</span>
           </button>
 
           {['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(profile?.role) && (
             <button
               onClick={() => setActiveTab('admin')}
-              className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1.5 transition ${
+              className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 transition ${
                 activeTab === 'admin' ? 'text-amber-400' : 'text-slate-400'
               }`}
             >
@@ -3107,7 +3397,7 @@ export default function App() {
           {/* Direct Mobile Logout Button */}
           <button
             onClick={() => supabase.auth.signOut()}
-            className="flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1.5 text-rose-400 hover:text-rose-300 transition"
+            className="flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 text-rose-400 hover:text-rose-300 transition"
           >
             <LogOut className="w-4 h-4" />
             <span>Exit</span>

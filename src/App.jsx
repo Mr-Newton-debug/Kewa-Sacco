@@ -453,12 +453,14 @@ export default function App() {
       .order('created_at', { ascending: false });
     if (allLeadershipLoans) setAllLoansLeadership(allLeadershipLoans);
 
-    // Fixed welfare claims fetching to catch all unapproved/pending states
+    // FIXED: Fetch all welfare claims in pending/unapproved status for leadership review
     const { data: claims } = await supabase
       .from('welfare_claims')
-      .select('*, profiles(full_name, member_number, companies(name))')
-      .eq('status', 'pending');
-    if (claims) setAllPendingClaims(claims);
+      .select('*, profiles(full_name, member_number, companies(name))');
+    if (claims) {
+      const activePendingClaims = claims.filter(c => c.status === 'pending' || !c.treasurer_approval);
+      setAllPendingClaims(activePendingClaims);
+    }
 
     const { data: allTickets } = await supabase
       .from('member_inquiries')
@@ -602,7 +604,7 @@ export default function App() {
         setMessage({ text: error.message, type: 'error' });
       }
     } else if (manualAdjustmentType === 'loan_repayment') {
-      // Fetch ALL active loans for this member (Oldest to Newest)
+      // Fetch ALL active running loans for this member (Oldest to Newest)
       const { data: memberActiveLoans } = await supabase
         .from('loans')
         .select('id, balance_remaining, loan_product')
@@ -611,8 +613,22 @@ export default function App() {
         .order('created_at', { ascending: true });
 
       if (!memberActiveLoans || memberActiveLoans.length === 0) {
-        setMessage({ text: `Selected member (${targetMember?.full_name}) currently has no active running loans. Amount posted as Savings instead.`, type: 'error' });
+        // If no active loan exists, automatically route the full amount to savings!
+        await supabase.from('savings_ledger').insert([
+          {
+            member_id: manualTargetMemberId,
+            amount: parsedAmount,
+            transaction_type: 'excess_allocation',
+            reference_code: `${refCode}-SAVINGS`,
+          },
+        ]);
+        logAuditAction('AUTO_ROUTED_SAVINGS', `No active loans found. KES ${parsedAmount.toLocaleString()} credited to ${targetMember?.full_name}'s Savings.`);
+        setMessage({ text: `Notice: Member has no active loans. KES ${parsedAmount.toLocaleString()} was automatically credited to their Savings ledger.`, type: 'success' });
+        setManualAmountRaw('');
+        setManualRefCode('');
         setLoading(false);
+        fetchAdminData();
+        fetchUserData(session.user.id);
         return;
       }
 
@@ -628,7 +644,7 @@ export default function App() {
         remainingCash -= amountToDeduct;
         const newLoanBal = currentBal - amountToDeduct;
 
-        // Record repayment
+        // Record individual repayment
         await supabase.from('loan_repayments').insert([
           {
             loan_id: loan.id,
@@ -638,7 +654,7 @@ export default function App() {
           },
         ]);
 
-        // Update loan balance
+        // Update loan remaining balance
         await supabase
           .from('loans')
           .update({
@@ -647,10 +663,10 @@ export default function App() {
           })
           .eq('id', loan.id);
 
-        distributionLog.push(`KES ${amountToDeduct.toLocaleString()} to ${(loan.loan_product || 'loan').toUpperCase()}`);
+        distributionLog.push(`KES ${amountToDeduct.toLocaleString()} cleared from ${(loan.loan_product || 'loan').toUpperCase()}`);
       }
 
-      // If excess cash remains after clearing all active loans, route excess to Savings Ledger automatically!
+      // If excess cash remains after clearing all active loans, route excess automatically to Savings!
       if (remainingCash > 0) {
         await supabase.from('savings_ledger').insert([
           {
@@ -907,6 +923,7 @@ export default function App() {
     });
   };
 
+  // --- WELFARE SIGNATORY PIPELINE HANDLER ---
   const handleWelfarePipeline = async (claimId, targetRole, action = 'sign') => {
     const isSign = action === 'sign';
 
@@ -3175,7 +3192,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 8: LEADERSHIP HUB */}
+            {/* TAB 8: LEADERSHIP HUB (WITH WELFARE APPROVAL QUEUE) */}
             {activeTab === 'admin' && ['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(userRole) && (
               <div className="space-y-6">
                 
@@ -3193,7 +3210,161 @@ export default function App() {
                   <span className="text-xs text-amber-300/80 font-mono hidden sm:inline">KEWA SACCO Governance Framework</span>
                 </div>
 
-                {/* 1. MEMBER DIRECTORY */}
+                {/* 1. WELFARE CLAIMS APPROVAL QUEUE (NEW) */}
+                <div className="bg-slate-900/90 border border-rose-900/50 rounded-3xl p-6 sm:p-8 shadow-xl">
+                  <div className="flex justify-between items-center mb-2">
+                    <div className="flex items-center gap-2">
+                      <HeartHandshake className="w-5 h-5 text-rose-400" />
+                      <h3 className="text-lg font-bold text-white">Benevolent & Welfare Claims Approval Queue ({allPendingClaims.length})</h3>
+                    </div>
+                    <button
+                      onClick={fetchAdminData}
+                      className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold flex items-center gap-1 cursor-pointer transition border border-slate-700"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" /> Refresh
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-400 mb-4 font-medium">
+                    Review and endorse member benevolent fund claims through the 3-signatory workflow.
+                  </p>
+
+                  {allPendingClaims.length === 0 ? (
+                    <div className="text-center py-8 text-slate-500 text-xs bg-slate-950 rounded-2xl border border-slate-800">
+                      No welfare claims awaiting signatory review.
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {allPendingClaims.map((claim) => {
+                        const canChairSign = claim.assistant_chair_approval;
+                        const canTreasurerSign = claim.assistant_chair_approval && claim.chairman_approval;
+
+                        const isAsstChairUser = userRole === 'assistant_chair' || userRole === 'admin';
+                        const isChairUser = userRole === 'chairman' || userRole === 'admin';
+                        const isTreasurerUser = userRole === 'treasurer' || userRole === 'admin';
+
+                        return (
+                          <div key={claim.id} className="bg-slate-950 border border-slate-800 rounded-3xl p-5 space-y-3 shadow">
+                            <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2">
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <h4 className="text-base font-bold text-white">{claim.profiles?.full_name}</h4>
+                                  <span className="bg-rose-950 text-rose-300 text-[10px] font-bold px-2.5 py-0.5 rounded-full border border-rose-800 uppercase">
+                                    {claim.claim_type}
+                                  </span>
+                                </div>
+                                <p className="text-xs text-slate-400 font-medium">{claim.profiles?.companies?.name || 'External'} • Member {claim.profiles?.member_number}</p>
+                                <p className="text-sm font-black text-rose-400 mt-1">
+                                  KES {Number(claim.amount_requested).toLocaleString()}
+                                </p>
+                                <p className="text-xs text-slate-300 mt-1">{claim.description}</p>
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-2">
+                                {/* Welfare Stage 1 */}
+                                {claim.assistant_chair_approval ? (
+                                  <button
+                                    onClick={() => handleWelfarePipeline(claim.id, 'assistant_chair', 'unsign')}
+                                    disabled={!isAsstChairUser}
+                                    className={`text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5 transition ${
+                                      isAsstChairUser
+                                        ? 'bg-emerald-950 hover:bg-rose-950/80 border border-emerald-800 hover:border-rose-700 text-emerald-300 hover:text-rose-200 cursor-pointer'
+                                        : 'bg-emerald-950/40 border border-emerald-800/40 text-emerald-300/60 cursor-not-allowed'
+                                    }`}
+                                  >
+                                    <CheckCircle className="w-3.5 h-3.5" /> 1. Asst Chair (Signed) {isAsstChairUser && <RotateCcw className="w-3 h-3 ml-1 opacity-60" />}
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={() => handleWelfarePipeline(claim.id, 'assistant_chair', 'sign')}
+                                    disabled={!isAsstChairUser}
+                                    className={`text-xs font-bold px-3.5 py-2 rounded-xl flex items-center gap-1.5 transition shadow ${
+                                      isAsstChairUser
+                                        ? 'bg-amber-600 hover:bg-amber-500 text-white cursor-pointer'
+                                        : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
+                                    }`}
+                                  >
+                                    1. Sign: Asst Chair
+                                  </button>
+                                )}
+
+                                {/* Welfare Stage 2 */}
+                                {claim.chairman_approval ? (
+                                  <button
+                                    onClick={() => handleWelfarePipeline(claim.id, 'chairman', 'unsign')}
+                                    disabled={!isChairUser}
+                                    className={`text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5 transition ${
+                                      isChairUser
+                                        ? 'bg-emerald-950 hover:bg-rose-950/80 border border-emerald-800 hover:border-rose-700 text-emerald-300 hover:text-rose-200 cursor-pointer'
+                                        : 'bg-emerald-950/40 border border-emerald-800/40 text-emerald-300/60 cursor-not-allowed'
+                                    }`}
+                                  >
+                                    <CheckCircle className="w-3.5 h-3.5" /> 2. Chair (Signed) {isChairUser && <RotateCcw className="w-3 h-3 ml-1 opacity-60" />}
+                                  </button>
+                                ) : (
+                                  <button
+                                    disabled={!canChairSign || !isChairUser}
+                                    onClick={() => handleWelfarePipeline(claim.id, 'chairman', 'sign')}
+                                    className={`text-xs font-bold px-3.5 py-2 rounded-xl flex items-center gap-1.5 transition shadow ${
+                                      canChairSign && isChairUser
+                                        ? 'bg-amber-600 hover:bg-amber-500 text-white cursor-pointer'
+                                        : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
+                                    }`}
+                                  >
+                                    {(!canChairSign || !isChairUser) && <Lock className="w-3.5 h-3.5 text-slate-600" />}
+                                    2. Sign: Chairman
+                                  </button>
+                                )}
+
+                                {/* Welfare Stage 3 */}
+                                {claim.treasurer_approval ? (
+                                  <button
+                                    onClick={() => handleWelfarePipeline(claim.id, 'treasurer', 'unsign')}
+                                    disabled={!isTreasurerUser}
+                                    className={`text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5 transition ${
+                                      isTreasurerUser
+                                        ? 'bg-emerald-950 hover:bg-rose-950/80 border border-emerald-800 hover:border-rose-700 text-emerald-300 hover:text-rose-200 cursor-pointer'
+                                        : 'bg-emerald-950/40 border border-emerald-800/40 text-emerald-300/60 cursor-not-allowed'
+                                    }`}
+                                  >
+                                    <CheckCircle className="w-3.5 h-3.5" /> 3. Treas (Disbursed) {isTreasurerUser && <RotateCcw className="w-3 h-3 ml-1 opacity-60" />}
+                                  </button>
+                                ) : (
+                                  <button
+                                    disabled={!canTreasurerSign || !isTreasurerUser}
+                                    onClick={() => handleWelfarePipeline(claim.id, 'treasurer', 'sign')}
+                                    className={`text-xs font-bold px-3.5 py-2 rounded-xl flex items-center gap-1.5 transition shadow ${
+                                      canTreasurerSign && isTreasurerUser
+                                        ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white cursor-pointer'
+                                        : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
+                                    }`}
+                                  >
+                                    {(!canTreasurerSign || !isTreasurerUser) && <Lock className="w-3.5 h-3.5 text-slate-600" />}
+                                    3. Disburse: Treasurer
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            {claim.evidence_url && (
+                              <div className="pt-2 border-t border-slate-800">
+                                <a
+                                  href={claim.evidence_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center gap-1.5 text-xs text-amber-400 hover:underline font-medium"
+                                >
+                                  <FileCheck className="w-4 h-4" /> View Uploaded Supporting Evidence Document
+                                </a>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* 2. MEMBER DIRECTORY */}
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-8 shadow-xl">
                   <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 mb-4">
                     <div>
@@ -3298,7 +3469,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 2. MANUAL ADJUSTMENT (WITH SMART MULTI-LOAN DISTRIBUTION & EXCESS SAVINGS) */}
+                {/* 3. MANUAL ADJUSTMENT */}
                 {['admin', 'chairman', 'treasurer'].includes(userRole) && (
                   <div className="bg-slate-900/90 border border-emerald-900/50 rounded-3xl p-6 sm:p-8 shadow-xl">
                     <div className="flex items-center gap-2 mb-2">
@@ -3377,7 +3548,7 @@ export default function App() {
                   </div>
                 )}
 
-                {/* 3. LOAN RECOVERY MATRIX (WITH SCROLLBAR) */}
+                {/* 4. LOAN RECOVERY MATRIX */}
                 <div className="bg-slate-900/90 border border-rose-900/40 rounded-3xl p-6 sm:p-8 shadow-xl">
                   <div className="flex justify-between items-center mb-2">
                     <div className="flex items-center gap-2">
@@ -3468,7 +3639,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 4. PUBLISH REPORTS */}
+                {/* 5. PUBLISH REPORTS */}
                 {['admin', 'chairman'].includes(userRole) && (
                   <div className="bg-slate-900/90 border border-emerald-900/40 rounded-3xl p-6 sm:p-8 shadow-xl">
                     <div className="flex items-center gap-2 mb-2">
@@ -3542,7 +3713,7 @@ export default function App() {
                   </div>
                 )}
 
-                {/* 5. DUAL PAYROLL CHECKOFF */}
+                {/* 6. DUAL PAYROLL CHECKOFF */}
                 {['admin', 'chairman', 'treasurer'].includes(userRole) && (
                   <div className="bg-slate-900/90 border border-amber-900/40 rounded-3xl p-6 sm:p-8 shadow-xl">
                     <div className="flex items-center gap-2 mb-2">
@@ -3629,7 +3800,7 @@ export default function App() {
                   </div>
                 )}
 
-                {/* 6. SEQUENTIAL 3-SIGNATORY DESK */}
+                {/* 7. SEQUENTIAL 3-SIGNATORY DESK */}
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-8 shadow-xl">
                   <div className="flex items-center gap-2 mb-2">
                     <Clock className="w-5 h-5 text-amber-400" />
@@ -3773,7 +3944,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 7. SUPPORT TICKETS */}
+                {/* 8. SUPPORT TICKETS */}
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-8 shadow-xl">
                   <div className="flex justify-between items-center mb-2">
                     <div className="flex items-center gap-2">
@@ -3846,7 +4017,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 8. POST NOTICES & AUDIT LOGS */}
+                {/* 9. POST NOTICES & AUDIT LOGS */}
                 {['admin', 'chairman'].includes(userRole) && (
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 shadow-xl">

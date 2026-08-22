@@ -19,7 +19,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [authMode, setAuthMode] = useState('login');
   const [showPassword, setShowPassword] = useState(false);
-  const [activeTab, setActiveTab] = useState('overview'); // overview, loans, guarantors, documents, beneficiaries, mpesa, support, admin
+  const [activeTab, setActiveTab] = useState('overview');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Auth State
@@ -139,6 +139,17 @@ export default function App() {
     fetchSaccoDocuments();
     return () => subscription.unsubscribe();
   }, []);
+
+  // Auto-refresh data when switching tabs (e.g., Documents or Admin Hub)
+  useEffect(() => {
+    if (activeTab === 'documents') {
+      fetchSaccoDocuments();
+    } else if (activeTab === 'support' && session) {
+      fetchMemberInquiries(session.user.id);
+    } else if (activeTab === 'admin' && session) {
+      fetchAdminData();
+    }
+  }, [activeTab]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -322,7 +333,7 @@ export default function App() {
 
     const { data: allTickets } = await supabase
       .from('member_inquiries')
-      .select('*, profiles(full_name, member_number, phone, companies(name))')
+      .select('*, profiles:member_id(full_name, member_number, phone, companies(name))')
       .order('created_at', { ascending: false });
     if (allTickets) setAllAdminInquiries(allTickets);
 
@@ -1247,17 +1258,29 @@ export default function App() {
 
   const pendingGuaranteesCount = guarantorRequests.filter((g) => g.status === 'pending').length;
 
-  // Retrieve official contact information for deep-links
-  const chairmanOfficial = allMembers.find((m) => m.role === 'chairman') || { full_name: 'Chairman', phone: '254700000000' };
-  const treasurerOfficial = allMembers.find((m) => m.role === 'treasurer') || { full_name: 'Treasurer', phone: '254700000001' };
-  const asstChairOfficial = allMembers.find((m) => m.role === 'assistant_chair') || { full_name: 'Assistant Chair', phone: '254700000002' };
+  // Retrieve official contacts with real-time leading zero strip (+254 formatter)
+  const chairmanOfficial = allMembers.find((m) => m.role === 'chairman') || { full_name: 'Chairman', phone: '0712345678' };
+  const treasurerOfficial = allMembers.find((m) => m.role === 'treasurer') || { full_name: 'Treasurer', phone: '0712345679' };
+  const asstChairOfficial = allMembers.find((m) => m.role === 'assistant_chair') || { full_name: 'Assistant Chair', phone: '0712345670' };
+
+  // Formats phone numbers from 07... / 01... into Kenyan international +254 format for WhatsApp
+  const formatKenyanWhatsAppNumber = (rawPhone) => {
+    if (!rawPhone) return '254700000000';
+    let clean = rawPhone.toString().replace(/[^0-9]/g, '');
+    if (clean.startsWith('0')) {
+      clean = '254' + clean.substring(1);
+    } else if (clean.startsWith('7') || clean.startsWith('1')) {
+      clean = '254' + clean;
+    }
+    return clean;
+  };
 
   const getWhatsAppLink = (phoneNum, roleName) => {
-    const cleanPhone = (phoneNum || '254700000000').replace(/[^0-9]/g, '');
+    const formattedPhone = formatKenyanWhatsAppNumber(phoneNum);
     const textMsg = encodeURIComponent(
       `Hello ${roleName}, I am ${profile?.full_name || 'a member'} (Member No: ${profile?.member_number || 'N/A'}). I have an inquiry regarding my KEWA SACCO account.`
     );
-    return `https://wa.me/${cleanPhone}?text=${textMsg}`;
+    return `https://wa.me/${formattedPhone}?text=${textMsg}`;
   };
 
   return (
@@ -2242,13 +2265,22 @@ export default function App() {
             {/* TAB 4: OFFICIAL REPORTS & AGM DOCUMENTS LIBRARY */}
             {activeTab === 'documents' && (
               <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-8 space-y-6 shadow-lg">
-                <div>
-                  <h3 className="text-xl font-bold text-white flex items-center gap-2">
-                    <FolderDown className="w-6 h-6 text-emerald-400" /> Official Reports & AGM Booklets
-                  </h3>
-                  <p className="text-xs text-slate-400 mt-1 font-medium">
-                    Access certified annual audit reports, AGM booklets, and society policies digitally.
-                  </p>
+                <div className="flex justify-between items-center">
+                  <div>
+                    <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                      <FolderDown className="w-6 h-6 text-emerald-400" /> Official Reports & AGM Booklets
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-1 font-medium">
+                      Access certified annual audit reports, AGM booklets, and society policies digitally.
+                    </p>
+                  </div>
+                  <button
+                    onClick={fetchSaccoDocuments}
+                    className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold flex items-center gap-1 cursor-pointer transition border border-slate-700"
+                    title="Refresh Library"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" /> Refresh
+                  </button>
                 </div>
 
                 {saccoDocs.length === 0 ? (
@@ -2794,7 +2826,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 8: 3-SIGNATORY LEADERSHIP HUB (STRICT ROLE RESTRICTIONS & TICKET DESK) */}
+            {/* TAB 8: 3-SIGNATORY LEADERSHIP HUB */}
             {activeTab === 'admin' && ['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(profile?.role) && (
               <div className="space-y-6">
                 {/* 1. UPLOAD SACCO AUDIT & AGM REPORTS */}
@@ -3103,9 +3135,18 @@ export default function App() {
 
                 {/* 4. COMMITTEE SUPPORT & INQUIRY TICKETS DESK */}
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-8 shadow-xl">
-                  <div className="flex items-center gap-2 mb-2">
-                    <MessageSquare className="w-5 h-5 text-emerald-400" />
-                    <h3 className="text-lg font-bold text-white">Member Support Tickets & Formal Inquiries</h3>
+                  <div className="flex justify-between items-center mb-2">
+                    <div className="flex items-center gap-2">
+                      <MessageSquare className="w-5 h-5 text-emerald-400" />
+                      <h3 className="text-lg font-bold text-white">Member Support Tickets & Formal Inquiries</h3>
+                    </div>
+                    <button
+                      onClick={fetchAdminData}
+                      className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold flex items-center gap-1 cursor-pointer transition border border-slate-700"
+                      title="Refresh Tickets"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" /> Refresh Tickets
+                    </button>
                   </div>
                   <p className="text-xs text-slate-400 mb-4 font-medium">
                     Review and resolve messages submitted by members directly from their portal accounts.
@@ -3120,7 +3161,7 @@ export default function App() {
                           <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2">
                             <div>
                               <div className="flex items-center gap-2">
-                                <h5 className="font-bold text-white text-sm">{ticket.profiles?.full_name}</h5>
+                                <h5 className="font-bold text-white text-sm">{ticket.profiles?.full_name || 'Member'}</h5>
                                 <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
                                   ticket.status === 'resolved' ? 'bg-emerald-950 text-emerald-300' : 'bg-amber-950 text-amber-300'
                                 }`}>
@@ -3271,22 +3312,22 @@ export default function App() {
 
               <h4 className="font-bold text-white text-xs uppercase tracking-wide">1. Payroll Deduction Authorization</h4>
               <p>
-                By submitting this loan request, I authorize my employer or company checkoff unit to deduct <strong>KES {monthlyInstallment.toFixed(2)}</strong> monthly until settled in full[cite: 1].
+                By submitting this loan request, I authorize my employer or company checkoff unit to deduct <strong>KES {monthlyInstallment.toFixed(2)}</strong> monthly until settled in full.
               </p>
 
               <h4 className="font-bold text-white text-xs uppercase tracking-wide">2. Interest Rate & Repayment Schedules</h4>
               <p>
-                Interest on the loan facility is charged at <strong>{interestRate}% per month</strong>[cite: 1]. Default attracts recovery action under the Co-operative Societies Act[cite: 1].
+                Interest on the loan facility is charged at <strong>{interestRate}% per month</strong>. Default attracts recovery action under the Co-operative Societies Act.
               </p>
 
               <h4 className="font-bold text-white text-xs uppercase tracking-wide">3. Guarantor Liability & Recovery</h4>
               <p>
-                Default or employment cessation triggers liquidation of personal deposits first, followed by proportional recovery from verified guarantors’ savings[cite: 1].
+                Default or employment cessation triggers liquidation of personal deposits first, followed by proportional recovery from verified guarantors’ savings.
               </p>
 
               <h4 className="font-bold text-white text-xs uppercase tracking-wide">4. Sequential 3-Signatory Approval Quorum</h4>
               <p>
-                Disbursement proceeds strictly in sequence: <strong>1. Assistant Chair</strong> $\rightarrow$ <strong>2. Chairman</strong> $\rightarrow$ <strong>3. Treasurer</strong>[cite: 1].
+                Disbursement proceeds strictly in sequence: <strong>1. Assistant Chair</strong> $\rightarrow$ <strong>2. Chairman</strong> $\rightarrow$ <strong>3. Treasurer</strong>.
               </p>
             </div>
 
@@ -3300,7 +3341,7 @@ export default function App() {
                   className="mt-0.5 accent-emerald-500 w-4 h-4 rounded cursor-pointer"
                 />
                 <label htmlFor="agreeTerms" className="text-xs text-slate-300 font-medium cursor-pointer">
-                  I have read, understood, and accept all loan terms and recovery policies[cite: 1].
+                  I have read, understood, and accept all loan terms and recovery policies.
                 </label>
               </div>
 

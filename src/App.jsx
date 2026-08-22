@@ -11,7 +11,7 @@ import {
   ArrowDownRight, ArrowUpRight, HeartHandshake, Bell, Smartphone, 
   Award, ShieldAlert, FileText, Send, History, CheckSquare, Paperclip, FileCheck, HelpCircle,
   Eye, EyeOff, FolderDown, FileArchive, Shield, Lock, RotateCcw, AlertTriangle, Sparkles, Search,
-  MessageSquare, MessageCircle, Bot, Mail, CornerDownRight, Check
+  MessageSquare, MessageCircle, Bot, Mail, CornerDownRight, Check, UserCheck, AlertOctagon
 } from 'lucide-react';
 
 export default function App() {
@@ -47,9 +47,17 @@ export default function App() {
   const [saccoDocs, setSaccoDocs] = useState([]);
   const [welfareClaims, setWelfareClaims] = useState([]);
   const [allPendingLoans, setAllPendingLoans] = useState([]);
+  const [allLoansLeadership, setAllLoansLeadership] = useState([]);
   const [allPendingClaims, setAllPendingClaims] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
   const [message, setMessage] = useState({ text: '', type: '' });
+
+  // Manual Member Adjustment Form State (Leadership Desk)
+  const [manualTargetMemberId, setManualTargetMemberId] = useState('');
+  const [manualAdjustmentType, setManualAdjustmentType] = useState('savings_deposit'); // savings_deposit or loan_repayment
+  const [manualAmount, setManualAmount] = useState('');
+  const [manualRefCode, setManualRefCode] = useState('');
+  const [manualMemberSearch, setManualMemberSearch] = useState('');
 
   // Support & Chatbot State
   const [inquiries, setInquiries] = useState([]);
@@ -64,7 +72,7 @@ export default function App() {
   const [chatInput, setChatInput] = useState('');
   const chatEndRef = useRef(null);
 
-  // Loan Application State with Searchable Autocomplete
+  // Loan Application State
   const [loanProduct, setLoanProduct] = useState('main_loan');
   const [loanPrincipal, setLoanPrincipal] = useState(20000);
   const [loanMonths, setLoanMonths] = useState(12);
@@ -100,18 +108,14 @@ export default function App() {
   const [mpesaType, setMpesaType] = useState('savings_deposit');
   const [mpesaCode, setMpesaCode] = useState('');
 
-  // Dividend Simulator State
-  const [dividendRate, setDividendRate] = useState(10.0);
-  const [interestOnDepositsRate, setInterestOnDepositsRate] = useState(8.5);
-
-  // Admin Hub State
+  // Admin Hub Batch State
   const [batchPreview, setBatchPreview] = useState([]);
   const [batchMonth, setBatchMonth] = useState('AUG-2026');
   const [newNoticeTitle, setNewNoticeTitle] = useState('');
   const [newNoticeContent, setNewNoticeContent] = useState('');
   const [newNoticeCategory, setNewNoticeCategory] = useState('general');
 
-  // Explicit Secure Logout & Input Sanitizer Function
+  // Explicit Secure Logout & Input Sanitizer
   const handlePerformSignOut = async (timeoutReason = false) => {
     setEmail('');
     setPassword('');
@@ -135,12 +139,12 @@ export default function App() {
     }
   };
 
-  // --- 5-MINUTE AUTOMATIC INACTIVITY LOGOUT TIMER ---
+  // 5-Minute Inactivity Timer
   useEffect(() => {
     if (!session) return;
 
     let timeoutId;
-    const INACTIVITY_LIMIT_MS = 5 * 60 * 1000; // 5 minutes
+    const INACTIVITY_LIMIT_MS = 5 * 60 * 1000;
 
     const resetInactivityTimer = () => {
       if (timeoutId) clearTimeout(timeoutId);
@@ -175,7 +179,6 @@ export default function App() {
       if (session) {
         fetchUserData(session.user.id);
       } else {
-        // Complete credential & state wipe on any logout event
         setEmail('');
         setPassword('');
         setNewPassword('');
@@ -326,8 +329,13 @@ export default function App() {
     const { data } = await supabase
       .from('profiles')
       .select('id, full_name, member_number, id_number, phone, role, created_at, companies(name)')
-      .neq('id', currentUserId);
-    if (data) setAllMembers(data);
+      .order('full_name', { ascending: true });
+    if (data) {
+      setAllMembers(data);
+      if (!manualTargetMemberId && data.length > 0) {
+        setManualTargetMemberId(data[0].id);
+      }
+    }
   };
 
   const fetchGuarantorData = async (userId) => {
@@ -370,7 +378,7 @@ export default function App() {
   };
 
   const fetchAdminData = async () => {
-    const { data: members } = await supabase.from('profiles').select('*, companies(name)');
+    const { data: members } = await supabase.from('profiles').select('*, companies(name)').order('full_name', { ascending: true });
     if (members) setAllMembers(members);
 
     const { data: pendingLoans } = await supabase
@@ -378,6 +386,13 @@ export default function App() {
       .select('*, profiles(full_name, member_number, companies(name)), loan_guarantors(*, profiles:guarantor_id(full_name, member_number))')
       .in('status', ['pending', 'guaranteed']);
     if (pendingLoans) setAllPendingLoans(pendingLoans);
+
+    // Fetch All Disbursed & Approved Loans for the Performance Matrix
+    const { data: allLeadershipLoans } = await supabase
+      .from('loans')
+      .select('*, profiles(full_name, member_number, phone, companies(name))')
+      .order('created_at', { ascending: false });
+    if (allLeadershipLoans) setAllLoansLeadership(allLeadershipLoans);
 
     const { data: claims } = await supabase
       .from('welfare_claims')
@@ -481,6 +496,81 @@ export default function App() {
     setLoading(false);
   };
 
+  // --- OFFICIAL MANUAL ADJUSTMENT HANDLER ---
+  const handleManualMemberAdjustment = async (e) => {
+    e.preventDefault();
+    if (!manualTargetMemberId || !manualAmount || Number(manualAmount) <= 0) {
+      setMessage({ text: 'Please select a member and enter a valid positive amount.', type: 'error' });
+      return;
+    }
+
+    setLoading(true);
+    const targetMember = allMembers.find((m) => m.id === manualTargetMemberId);
+    const refCode = manualRefCode.trim().toUpperCase() || `MANUAL-${Date.now().toString().slice(-6)}`;
+
+    if (manualAdjustmentType === 'savings_deposit') {
+      const { error } = await supabase.from('savings_ledger').insert([
+        {
+          member_id: manualTargetMemberId,
+          amount: Number(manualAmount),
+          transaction_type: 'monthly_contribution',
+          reference_code: refCode,
+        },
+      ]);
+
+      if (!error) {
+        logAuditAction('MANUAL_SAVINGS_CREDIT', `Official posted KES ${Number(manualAmount).toLocaleString()} to ${targetMember?.full_name} (${refCode})`);
+        setMessage({ text: `Success! KES ${Number(manualAmount).toLocaleString()} credited to ${targetMember?.full_name}'s Savings.`, type: 'success' });
+        setManualAmount('');
+        setManualRefCode('');
+      } else {
+        setMessage({ text: error.message, type: 'error' });
+      }
+    } else if (manualAdjustmentType === 'loan_repayment') {
+      const { data: memberLoan } = await supabase
+        .from('loans')
+        .select('id, balance_remaining')
+        .eq('member_id', manualTargetMemberId)
+        .in('status', ['approved', 'disbursed'])
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (!memberLoan) {
+        setMessage({ text: `Selected member (${targetMember?.full_name}) currently has no active running loan to repay.`, type: 'error' });
+        setLoading(false);
+        return;
+      }
+
+      await supabase.from('loan_repayments').insert([
+        {
+          loan_id: memberLoan.id,
+          member_id: manualTargetMemberId,
+          amount: Number(manualAmount),
+          reference_code: refCode,
+        },
+      ]);
+
+      const newBal = Math.max(0, Number(memberLoan.balance_remaining) - Number(manualAmount));
+      await supabase
+        .from('loans')
+        .update({
+          balance_remaining: newBal,
+          status: newBal === 0 ? 'completed' : 'approved',
+        })
+        .eq('id', memberLoan.id);
+
+      logAuditAction('MANUAL_LOAN_REPAYMENT', `Official deducted KES ${Number(manualAmount).toLocaleString()} for ${targetMember?.full_name} (${refCode})`);
+      setMessage({ text: `Success! KES ${Number(manualAmount).toLocaleString()} applied to ${targetMember?.full_name}'s active loan. New Balance: KES ${newBal.toLocaleString()}`, type: 'success' });
+      setManualAmount('');
+      setManualRefCode('');
+    }
+
+    fetchAdminData();
+    fetchUserData(session.user.id);
+    setLoading(false);
+  };
+
   // Financial Metrics
   const totalSavings = savings.reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
   const activeLoanBalance = loans
@@ -502,7 +592,7 @@ export default function App() {
   const calculatedTotal = Number(loanPrincipal) + calculatedInterest;
   const monthlyInstallment = calculatedTotal / loanMonths;
 
-  // Searchable Guarantor Autocomplete + Blind Verification
+  // Searchable Guarantor Autocomplete
   const selectGuarantorFromSearch = async (index, member) => {
     const updated = [...guarantorList];
     updated[index].guarantorId = member.id;
@@ -659,7 +749,6 @@ export default function App() {
     setLoading(false);
   };
 
-  // Strict Role-Restricted Multi-Signatory Pipeline with Revocation
   const handleSignatoryPipeline = async (loanId, targetRole, action = 'sign') => {
     const isSign = action === 'sign';
 
@@ -867,7 +956,7 @@ export default function App() {
     fetchBeneficiaries(session.user.id);
   };
 
-  // --- SUPPORT TICKETS & INQUIRIES HANDLER ---
+  // Support Tickets Handler
   const handleCreateInquiry = async (e) => {
     e.preventDefault();
     if (!inquirySubject || !inquiryMessage) return;
@@ -911,7 +1000,7 @@ export default function App() {
     setMessage({ text: 'Response published to member ticket!', type: 'success' });
   };
 
-  // --- INTERACTIVE SACCO SMART BOT ENGINE ---
+  // Bot Engine
   const handleSendChatMessage = (e) => {
     e.preventDefault();
     if (!chatInput.trim()) return;
@@ -1186,7 +1275,7 @@ export default function App() {
     setMessage({ text: 'Announcement published to Member Board!', type: 'success' });
   };
 
-  // Comprehensive Multi-Ledger PDF Statement with Full Loan Progress
+  // PDF Generator
   const generatePDFStatement = (loan = null) => {
     try {
       const doc = new jsPDF();
@@ -1334,6 +1423,28 @@ export default function App() {
     );
     return `https://wa.me/${formattedPhone}?text=${textMsg}`;
   };
+
+  // --- LOAN REPAYMENT PERFORMANCE RANKING CALCULATIONS (WORST TO BEST) ---
+  const performanceRankedLoans = [...allLoansLeadership]
+    .filter((l) => ['approved', 'disbursed', 'completed'].includes(l.status))
+    .map((l) => {
+      const totalPayable = Number(l.total_payable || 1);
+      const balanceRemaining = Number(l.balance_remaining || 0);
+      const totalPaid = Math.max(0, totalPayable - balanceRemaining);
+      const progressPercent = Math.min(100, Math.max(0, (totalPaid / totalPayable) * 100));
+
+      return {
+        ...l,
+        totalPaid,
+        progressPercent,
+      };
+    })
+    .sort((a, b) => a.progressPercent - b.progressPercent); // Ascending: Worst (0%) to Best (100%)
+
+  const filteredMembersForManual = allMembers.filter((m) =>
+    (m.full_name?.toLowerCase() || '').includes(manualMemberSearch.toLowerCase()) ||
+    (m.member_number?.toLowerCase() || '').includes(manualMemberSearch.toLowerCase())
+  );
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-24 sm:pb-12 selection:bg-emerald-500 selection:text-white">
@@ -1541,7 +1652,6 @@ export default function App() {
             </button>
           )}
 
-          {/* Guaranteed Mobile Drawer Sign-Out Button */}
           <div className="pt-4 border-t border-slate-800">
             <button
               onClick={() => handlePerformSignOut(false)}
@@ -1569,7 +1679,7 @@ export default function App() {
         )}
 
         {!session ? (
-          /* AUTH VIEWS (WITH EXPLICIT ZERO AUTOFILL / CLEARANCE) */
+          /* AUTH VIEWS */
           <div className="max-w-md mx-auto mt-6 sm:mt-12 bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-10 shadow-2xl backdrop-blur-xl">
             <div className="text-center mb-6">
               <div className="inline-flex bg-gradient-to-tr from-emerald-600 to-teal-400 p-3 rounded-2xl shadow-xl shadow-emerald-900/30 mb-3">
@@ -2063,7 +2173,7 @@ export default function App() {
                       />
                     </div>
 
-                    {/* SEARCHABLE GUARANTORS AUTOCOMPLETE */}
+                    {/* Searchable Guarantors */}
                     {loanProduct !== 'monthly_shylock' && (
                       <div className="border-t border-slate-800 pt-4 space-y-3">
                         <div className="flex justify-between items-center">
@@ -2109,7 +2219,6 @@ export default function App() {
                                     <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
                                   </div>
 
-                                  {/* Autocomplete Dropdown */}
                                   {g.dropdownOpen && filteredColleagues.length > 0 && (
                                     <div className="absolute top-full left-0 right-0 mt-1 max-h-40 overflow-y-auto bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-30 divide-y divide-slate-800">
                                       {filteredColleagues.slice(0, 8).map((colleague) => (
@@ -2149,7 +2258,6 @@ export default function App() {
                                 )}
                               </div>
 
-                              {/* Blind Privacy Status */}
                               {g.guarantorId && (
                                 <div className={`p-2.5 rounded-xl text-[11px] font-semibold flex items-center gap-1.5 ${
                                   g.eligible
@@ -2204,7 +2312,7 @@ export default function App() {
                   </form>
                 </div>
 
-                {/* MEMBER APPLICATION LIST WITH SIGNATORY TRACKER */}
+                {/* Member Applications List */}
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-7 shadow-lg">
                   <h3 className="text-lg font-bold text-white mb-4">My Loan Applications & Approval Tracker</h3>
                   {loans.length === 0 ? (
@@ -2240,7 +2348,6 @@ export default function App() {
                             </button>
                           </div>
 
-                          {/* Member Real-Time Sequential Tracker */}
                           <div className="bg-slate-900 p-3 rounded-xl border border-slate-800/80 text-[11px] space-y-1.5">
                             <p className="text-slate-400 font-semibold mb-1">Signatory Pipeline Progress:</p>
                             <div className="grid grid-cols-3 gap-1.5 text-center font-mono">
@@ -2683,10 +2790,9 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 7: MEMBER HELPDESK, AI CHATBOT & OFFICIALS DIRECT CONNECT */}
+            {/* TAB 7: MEMBER HELPDESK & BOT */}
             {activeTab === 'support' && (
               <div className="space-y-6">
-                {/* 1. DIRECT 1-CLICK OFFICIALS WHATSAPP CONNECT */}
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-8 shadow-xl">
                   <div className="flex items-center gap-2 mb-2">
                     <MessageCircle className="w-6 h-6 text-emerald-400" />
@@ -2697,7 +2803,7 @@ export default function App() {
                   </p>
 
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    {/* Chairperson Card */}
+                    {/* Chairperson */}
                     <div className="bg-slate-950 border border-slate-800 p-4 rounded-2xl flex flex-col justify-between space-y-3">
                       <div>
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800 uppercase">
@@ -2716,7 +2822,7 @@ export default function App() {
                       </a>
                     </div>
 
-                    {/* Treasurer Card */}
+                    {/* Treasurer */}
                     <div className="bg-slate-950 border border-slate-800 p-4 rounded-2xl flex flex-col justify-between space-y-3">
                       <div>
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800 uppercase">
@@ -2735,7 +2841,7 @@ export default function App() {
                       </a>
                     </div>
 
-                    {/* Assistant Chair Card */}
+                    {/* Assistant Chair */}
                     <div className="bg-slate-950 border border-slate-800 p-4 rounded-2xl flex flex-col justify-between space-y-3">
                       <div>
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800 uppercase">
@@ -2756,9 +2862,8 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* 2. SACCO SMART BOT & INTERNAL INQUIRY FORM */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* Smart Chatbot Assistant */}
+                  {/* AI Bot */}
                   <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 flex flex-col h-[480px] shadow-xl">
                     <div className="flex items-center gap-2 pb-3 border-b border-slate-800">
                       <Bot className="w-5 h-5 text-emerald-400" />
@@ -2800,7 +2905,7 @@ export default function App() {
                     </form>
                   </div>
 
-                  {/* Submit Tracked Inquiry */}
+                  {/* Submit Tracked Ticket */}
                   <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 shadow-xl space-y-4">
                     <div className="flex items-center gap-2">
                       <Mail className="w-5 h-5 text-amber-400" />
@@ -2859,7 +2964,6 @@ export default function App() {
                       </button>
                     </form>
 
-                    {/* Member's Submitted Inquiries */}
                     <div className="pt-3 border-t border-slate-800 space-y-2 max-h-44 overflow-y-auto">
                       <p className="text-[11px] font-bold text-slate-300">My Past Submitted Inquiries:</p>
                       {inquiries.length === 0 ? (
@@ -2890,10 +2994,178 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 8: 3-SIGNATORY LEADERSHIP HUB */}
+            {/* TAB 8: LEADERSHIP HUB WITH MANUAL MEMBER ADJUSTMENT & LOAN RECOVERY MATRIX */}
             {activeTab === 'admin' && ['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(profile?.role) && (
               <div className="space-y-6">
-                {/* 1. UPLOAD SACCO AUDIT & AGM REPORTS */}
+                {/* 1. MANUAL SINGLE-MEMBER ADJUSTMENT DESK */}
+                <div className="bg-slate-900/90 border border-emerald-900/50 rounded-3xl p-6 sm:p-8 shadow-xl">
+                  <div className="flex items-center gap-2 mb-2">
+                    <UserCheck className="w-5 h-5 text-emerald-400" />
+                    <h3 className="text-lg font-bold text-white">Manual Member Contribution / Loan Repayment Desk</h3>
+                  </div>
+                  <p className="text-xs text-slate-400 mb-4 font-medium">
+                    Post manual individual deposits for members paying via cash, direct bank deposit, or non-checkoff streams.
+                  </p>
+
+                  <form onSubmit={handleManualMemberAdjustment} className="space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">Select Beneficiary Member</label>
+                        <select
+                          value={manualTargetMemberId}
+                          onChange={(e) => setManualTargetMemberId(e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                        >
+                          {allMembers.map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.full_name} ({m.member_number}) - {m.companies?.name || 'External'}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">Adjustment Type</label>
+                        <select
+                          value={manualAdjustmentType}
+                          onChange={(e) => setManualAdjustmentType(e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-medium"
+                        >
+                          <option value="savings_deposit">1. Credit Member Monthly Savings</option>
+                          <option value="loan_repayment">2. Apply Active Loan Repayment (Debt Reduction)</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">Amount (KES)</label>
+                        <input
+                          type="number"
+                          required
+                          value={manualAmount}
+                          onChange={(e) => setManualAmount(e.target.value)}
+                          placeholder="e.g. 5000"
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="sm:col-span-2">
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">Audit Reference Code (Optional)</label>
+                        <input
+                          type="text"
+                          value={manualRefCode}
+                          onChange={(e) => setManualRefCode(e.target.value)}
+                          placeholder="e.g. BANK-SLIP-7821 or CASH-RECEIPT-09"
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono uppercase"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-1 flex items-end">
+                        <button
+                          type="submit"
+                          disabled={loading}
+                          className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-2.5 rounded-xl text-xs transition shadow cursor-pointer flex items-center justify-center gap-1.5"
+                        >
+                          <PlusCircle className="w-4 h-4" /> Post Member Credit
+                        </button>
+                      </div>
+                    </div>
+                  </form>
+                </div>
+
+                {/* 2. LOAN RECOVERY & PERFORMANCE MATRIX (WORST TO BEST PROGRESS RANKING) */}
+                <div className="bg-slate-900/90 border border-rose-900/40 rounded-3xl p-6 sm:p-8 shadow-xl">
+                  <div className="flex justify-between items-center mb-2">
+                    <div className="flex items-center gap-2">
+                      <AlertOctagon className="w-5 h-5 text-rose-400" />
+                      <h3 className="text-lg font-bold text-white">Loan Recovery & Performance Matrix (Worst to Best Progress)</h3>
+                    </div>
+                    <button
+                      onClick={fetchAdminData}
+                      className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold flex items-center gap-1 cursor-pointer transition border border-slate-700"
+                      title="Refresh Matrix"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" /> Refresh
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-400 mb-4 font-medium">
+                    Monitors all active borrowers ranked automatically from the lowest repayment percentage to the most compliant.
+                  </p>
+
+                  {performanceRankedLoans.length === 0 ? (
+                    <div className="text-center py-8 text-slate-500 text-sm">No active or historical loans found in the system.</div>
+                  ) : (
+                    <div className="overflow-x-auto border border-slate-800 rounded-2xl bg-slate-950">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-900 text-slate-400 font-semibold sticky top-0">
+                          <tr>
+                            <th className="p-3">Rank & Member</th>
+                            <th className="p-3">Facility</th>
+                            <th className="p-3 text-right">Principal</th>
+                            <th className="p-3 text-right">Total Repaid</th>
+                            <th className="p-3 text-right">Outstanding Debt</th>
+                            <th className="p-3 text-center">Recovery Progress</th>
+                            <th className="p-3 text-center">Performance Risk</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60 font-mono">
+                          {performanceRankedLoans.map((loan, idx) => {
+                            const isZeroRepaid = loan.progressPercent === 0;
+                            const isCompleted = loan.progressPercent >= 100;
+
+                            return (
+                              <tr key={loan.id} className={isZeroRepaid ? 'bg-rose-950/20 hover:bg-rose-950/30' : 'hover:bg-slate-900/40'}>
+                                <td className="p-3">
+                                  <div className="font-sans font-bold text-white">#{idx + 1} {loan.profiles?.full_name}</div>
+                                  <div className="text-[10px] text-slate-400">{loan.profiles?.companies?.name || 'External'} ({loan.profiles?.member_number})</div>
+                                </td>
+                                <td className="p-3 font-sans capitalize text-slate-300">
+                                  {(loan.loan_product || 'main_loan').replace('_', ' ')}
+                                </td>
+                                <td className="p-3 text-right text-slate-300">
+                                  KES {Number(loan.principal_amount).toLocaleString()}
+                                </td>
+                                <td className="p-3 text-right text-emerald-400 font-bold">
+                                  KES {loan.totalPaid.toLocaleString()}
+                                </td>
+                                <td className="p-3 text-right text-amber-400 font-bold">
+                                  KES {Number(loan.balance_remaining).toLocaleString()}
+                                </td>
+                                <td className="p-3 text-center">
+                                  <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden mb-1">
+                                    <div 
+                                      className={`h-full ${isCompleted ? 'bg-blue-500' : isZeroRepaid ? 'bg-rose-500' : 'bg-emerald-500'}`} 
+                                      style={{ width: `${loan.progressPercent}%` }}
+                                    />
+                                  </div>
+                                  <span className="text-[10px] text-slate-300">{loan.progressPercent.toFixed(1)}%</span>
+                                </td>
+                                <td className="p-3 text-center font-sans">
+                                  {isCompleted ? (
+                                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-blue-950 text-blue-300 border border-blue-800">
+                                      CLEARED ✓
+                                    </span>
+                                  ) : isZeroRepaid ? (
+                                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-rose-950 text-rose-300 border border-rose-800 animate-pulse">
+                                      DEFAULT RISK (0%)
+                                    </span>
+                                  ) : (
+                                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-950 text-amber-300 border border-amber-800">
+                                      IN PROGRESS
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* 3. UPLOAD SACCO AUDIT & AGM REPORTS */}
                 <div className="bg-slate-900/90 border border-emerald-900/40 rounded-3xl p-6 sm:p-8 shadow-xl">
                   <div className="flex items-center gap-2 mb-2">
                     <FolderDown className="w-5 h-5 text-emerald-400" />
@@ -2965,7 +3237,7 @@ export default function App() {
                   </form>
                 </div>
 
-                {/* 2. DUAL PAYROLL CHECKOFF */}
+                {/* 4. DUAL PAYROLL CHECKOFF */}
                 <div className="bg-slate-900/90 border border-amber-900/40 rounded-3xl p-6 sm:p-8 shadow-xl">
                   <div className="flex items-center gap-2 mb-2">
                     <FileSpreadsheet className="w-5 h-5 text-amber-400" />
@@ -3050,7 +3322,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 3. SEQUENTIAL 3-SIGNATORY DESK */}
+                {/* 5. SEQUENTIAL 3-SIGNATORY DESK */}
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-8 shadow-xl">
                   <div className="flex items-center gap-2 mb-2">
                     <Clock className="w-5 h-5 text-amber-400" />
@@ -3089,7 +3361,7 @@ export default function App() {
                               </div>
 
                               <div className="flex flex-wrap items-center gap-2">
-                                {/* Stage 1: Assistant Chair */}
+                                {/* Stage 1 */}
                                 {l.assistant_chair_approval ? (
                                   <button
                                     onClick={() => handleSignatoryPipeline(l.id, 'assistant_chair', 'unsign')}
@@ -3117,7 +3389,7 @@ export default function App() {
                                   </button>
                                 )}
 
-                                {/* Stage 2: Chairman */}
+                                {/* Stage 2 */}
                                 {l.chairman_approval ? (
                                   <button
                                     onClick={() => handleSignatoryPipeline(l.id, 'chairman', 'unsign')}
@@ -3146,7 +3418,7 @@ export default function App() {
                                   </button>
                                 )}
 
-                                {/* Stage 3: Treasurer */}
+                                {/* Stage 3 */}
                                 {l.treasurer_approval ? (
                                   <button
                                     onClick={() => handleSignatoryPipeline(l.id, 'treasurer', 'unsign')}
@@ -3197,7 +3469,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 4. COMMITTEE SUPPORT & INQUIRY TICKETS DESK */}
+                {/* 6. COMMITTEE SUPPORT TICKETS DESK */}
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-8 shadow-xl">
                   <div className="flex justify-between items-center mb-2">
                     <div className="flex items-center gap-2">
@@ -3270,7 +3542,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 5. POST NOTICES & AUDIT LOGS */}
+                {/* 7. POST NOTICES & AUDIT LOGS */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 shadow-xl">
                     <div className="flex items-center gap-2 mb-4">
@@ -3499,7 +3771,6 @@ export default function App() {
             </button>
           )}
 
-          {/* Direct Mobile Logout Button */}
           <button
             onClick={() => handlePerformSignOut(false)}
             className="flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 text-rose-400 hover:text-rose-300 transition"

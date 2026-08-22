@@ -58,9 +58,9 @@ export default function App() {
   const [memberDirectorySearch, setMemberDirectorySearch] = useState('');
   const [memberDirectoryCompanyFilter, setMemberDirectoryCompanyFilter] = useState('all');
 
-  // Manual Member Adjustment Form State (Raw and Formatted Strings)
+  // Manual Member Adjustment Form State
   const [manualTargetMemberId, setManualTargetMemberId] = useState('');
-  const [manualAdjustmentType, setManualAdjustmentType] = useState('savings_deposit');
+  const [manualAdjustmentType, setManualAdjustmentType] = useState('loan_repayment');
   const [manualAmountRaw, setManualAmountRaw] = useState('');
   const [manualRefCode, setManualRefCode] = useState('');
 
@@ -77,7 +77,7 @@ export default function App() {
   const [chatInput, setChatInput] = useState('');
   const chatEndRef = useRef(null);
 
-  // Loan Application State with Accounting Inputs
+  // Loan Application State
   const [loanProduct, setLoanProduct] = useState('main_loan');
   const [loanPrincipalRaw, setLoanPrincipalRaw] = useState('20,000');
   const [loanMonths, setLoanMonths] = useState(12);
@@ -101,13 +101,13 @@ export default function App() {
   const [nokPhone, setNokPhone] = useState('');
   const [nokPercent, setNokPercent] = useState('');
 
-  // Welfare Claim Form State with Accounting Inputs
+  // Welfare Claim Form State
   const [claimType, setClaimType] = useState('hospitalization');
   const [claimAmountRaw, setClaimAmountRaw] = useState('');
   const [claimDesc, setClaimDesc] = useState('');
   const [claimDocument, setClaimDocument] = useState(null);
 
-  // M-Pesa State with Accounting Inputs
+  // M-Pesa State
   const [mpesaPhone, setMpesaPhone] = useState('');
   const [mpesaAmountRaw, setMpesaAmountRaw] = useState('');
   const [mpesaType, setMpesaType] = useState('savings_deposit');
@@ -120,7 +120,7 @@ export default function App() {
   const [newNoticeContent, setNewNoticeContent] = useState('');
   const [newNoticeCategory, setNewNoticeCategory] = useState('general');
 
-  // --- ACCOUNTING FORMAT HELPER ---
+  // Accounting Formatter Helper
   const formatAccountingNumber = (val) => {
     if (!val) return '';
     const cleanNum = val.toString().replace(/[^0-9]/g, '');
@@ -134,7 +134,6 @@ export default function App() {
     return clean ? Number(clean) : 0;
   };
 
-  // Secure Logout
   const handlePerformSignOut = async (timeoutReason = false) => {
     setPassword('');
     setNewPassword('');
@@ -163,7 +162,6 @@ export default function App() {
     }
   };
 
-  // 5-Minute Inactivity Timer
   useEffect(() => {
     if (!session || authMode === 'reset') return;
 
@@ -245,6 +243,11 @@ export default function App() {
       fetchAdminData();
     } else if (activeTab === 'overview') {
       fetchAnnouncements();
+    } else if (activeTab === 'beneficiaries' && session) {
+      fetchWelfareClaims(session.user.id);
+      if (['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(userRole)) {
+        fetchAdminData();
+      }
     }
   }, [activeTab]);
 
@@ -450,6 +453,7 @@ export default function App() {
       .order('created_at', { ascending: false });
     if (allLeadershipLoans) setAllLoansLeadership(allLeadershipLoans);
 
+    // Fixed welfare claims fetching to catch all unapproved/pending states
     const { data: claims } = await supabase
       .from('welfare_claims')
       .select('*, profiles(full_name, member_number, companies(name))')
@@ -566,6 +570,7 @@ export default function App() {
     setLoading(false);
   };
 
+  // --- SMART PRO-RATA MULTI-LOAN DISTRIBUTION & EXCESS SAVINGS HANDLER ---
   const handleManualMemberAdjustment = async (e) => {
     e.preventDefault();
     const parsedAmount = parseAccountingNumber(manualAmountRaw);
@@ -597,41 +602,72 @@ export default function App() {
         setMessage({ text: error.message, type: 'error' });
       }
     } else if (manualAdjustmentType === 'loan_repayment') {
-      const { data: memberLoan } = await supabase
+      // Fetch ALL active loans for this member (Oldest to Newest)
+      const { data: memberActiveLoans } = await supabase
         .from('loans')
-        .select('id, balance_remaining')
+        .select('id, balance_remaining, loan_product')
         .eq('member_id', manualTargetMemberId)
         .in('status', ['approved', 'disbursed'])
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
+        .order('created_at', { ascending: true });
 
-      if (!memberLoan) {
-        setMessage({ text: `Selected member (${targetMember?.full_name}) currently has no active running loan to repay.`, type: 'error' });
+      if (!memberActiveLoans || memberActiveLoans.length === 0) {
+        setMessage({ text: `Selected member (${targetMember?.full_name}) currently has no active running loans. Amount posted as Savings instead.`, type: 'error' });
         setLoading(false);
         return;
       }
 
-      await supabase.from('loan_repayments').insert([
-        {
-          loan_id: memberLoan.id,
-          member_id: manualTargetMemberId,
-          amount: parsedAmount,
-          reference_code: refCode,
-        },
-      ]);
+      let remainingCash = parsedAmount;
+      let distributionLog = [];
 
-      const newBal = Math.max(0, Number(memberLoan.balance_remaining) - parsedAmount);
-      await supabase
-        .from('loans')
-        .update({
-          balance_remaining: newBal,
-          status: newBal === 0 ? 'completed' : 'approved',
-        })
-        .eq('id', memberLoan.id);
+      for (const loan of memberActiveLoans) {
+        if (remainingCash <= 0) break;
+        const currentBal = Number(loan.balance_remaining || 0);
+        if (currentBal <= 0) continue;
 
-      logAuditAction('MANUAL_LOAN_REPAYMENT', `Official deducted KES ${parsedAmount.toLocaleString()} for ${targetMember?.full_name} (${refCode})`);
-      setMessage({ text: `Success! KES ${parsedAmount.toLocaleString()} applied to ${targetMember?.full_name}'s active loan. New Balance: KES ${newBal.toLocaleString()}`, type: 'success' });
+        const amountToDeduct = Math.min(remainingCash, currentBal);
+        remainingCash -= amountToDeduct;
+        const newLoanBal = currentBal - amountToDeduct;
+
+        // Record repayment
+        await supabase.from('loan_repayments').insert([
+          {
+            loan_id: loan.id,
+            member_id: manualTargetMemberId,
+            amount: amountToDeduct,
+            reference_code: refCode,
+          },
+        ]);
+
+        // Update loan balance
+        await supabase
+          .from('loans')
+          .update({
+            balance_remaining: newLoanBal,
+            status: newLoanBal === 0 ? 'completed' : 'approved',
+          })
+          .eq('id', loan.id);
+
+        distributionLog.push(`KES ${amountToDeduct.toLocaleString()} to ${(loan.loan_product || 'loan').toUpperCase()}`);
+      }
+
+      // If excess cash remains after clearing all active loans, route excess to Savings Ledger automatically!
+      if (remainingCash > 0) {
+        await supabase.from('savings_ledger').insert([
+          {
+            member_id: manualTargetMemberId,
+            amount: remainingCash,
+            transaction_type: 'excess_allocation',
+            reference_code: `${refCode}-EXCESS`,
+          },
+        ]);
+        distributionLog.push(`KES ${remainingCash.toLocaleString()} excess auto-credited to Savings`);
+      }
+
+      logAuditAction('SMART_MULTI_LOAN_REPAYMENT', `Processed KES ${parsedAmount.toLocaleString()} for ${targetMember?.full_name}: ${distributionLog.join(' | ')}`);
+      setMessage({ 
+        text: `Success! KES ${parsedAmount.toLocaleString()} distributed: ${distributionLog.join(' | ')}.`, 
+        type: 'success' 
+      });
       setManualAmountRaw('');
       setManualRefCode('');
     }
@@ -641,7 +677,6 @@ export default function App() {
     setLoading(false);
   };
 
-  // Financial Metrics
   const totalSavings = savings.reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
   const activeLoanBalance = loans
     .filter((l) => l.status === 'approved' || l.status === 'disbursed')
@@ -870,6 +905,53 @@ export default function App() {
       text: `${targetRole.replace('_', ' ').toUpperCase()} ${isSign ? 'signed successfully.' : 'signature revoked and subsequent gates re-locked.'}`,
       type: 'success',
     });
+  };
+
+  const handleWelfarePipeline = async (claimId, targetRole, action = 'sign') => {
+    const isSign = action === 'sign';
+
+    if (profile?.role !== targetRole && profile?.role !== 'admin') {
+      alert(`Access Denied: Only the verified ${targetRole.replace('_', ' ').toUpperCase()} can perform this action.`);
+      return;
+    }
+
+    const { data: currentClaim } = await supabase.from('welfare_claims').select('*').eq('id', claimId).single();
+    const updatePayload = {};
+
+    if (targetRole === 'assistant_chair') {
+      updatePayload.assistant_chair_approval = isSign;
+      if (!isSign) {
+        updatePayload.chairman_approval = false;
+        updatePayload.treasurer_approval = false;
+        updatePayload.status = 'pending';
+      }
+    } else if (targetRole === 'chairman') {
+      if (isSign && !currentClaim.assistant_chair_approval) {
+        alert('Sequential Gate Locked: Assistant Chair must inspect claim evidence first.');
+        return;
+      }
+      updatePayload.chairman_approval = isSign;
+      if (!isSign) {
+        updatePayload.treasurer_approval = false;
+        updatePayload.status = 'pending';
+      }
+    } else if (targetRole === 'treasurer') {
+      if (isSign && (!currentClaim.assistant_chair_approval || !currentClaim.chairman_approval)) {
+        alert('Sequential Gate Locked: Assistant Chair and Chairman must sign before final welfare disbursement.');
+        return;
+      }
+      updatePayload.treasurer_approval = isSign;
+      updatePayload.status = isSign ? 'approved' : 'pending';
+    }
+
+    await supabase.from('welfare_claims').update(updatePayload).eq('id', claimId);
+    logAuditAction(
+      isSign ? 'WELFARE_SIGNED' : 'WELFARE_REVOKED',
+      `Benevolence ${isSign ? 'endorsed' : 'revoked'} by ${targetRole.replace('_', ' ').toUpperCase()} for Claim #${claimId.slice(0, 8)}`
+    );
+
+    fetchAdminData();
+    fetchUserData(session.user.id);
   };
 
   const handleRespondGuarantor = async (guaranteeId, status, pledgeAmount) => {
@@ -2183,7 +2265,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 2: LOANS (WITH ACCOUNTING INPUTS) */}
+            {/* TAB 2: LOANS */}
             {activeTab === 'loans' && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-7 shadow-lg">
@@ -2814,7 +2896,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 6: M-PESA (WITH ACCOUNTING INPUTS) */}
+            {/* TAB 6: M-PESA */}
             {activeTab === 'mpesa' && (
               <div className="max-w-xl mx-auto bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-10 space-y-6 shadow-2xl">
                 <div className="flex items-center gap-3">
@@ -3216,7 +3298,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 2. MANUAL ADJUSTMENT (WITH ACCOUNTING INPUT) */}
+                {/* 2. MANUAL ADJUSTMENT (WITH SMART MULTI-LOAN DISTRIBUTION & EXCESS SAVINGS) */}
                 {['admin', 'chairman', 'treasurer'].includes(userRole) && (
                   <div className="bg-slate-900/90 border border-emerald-900/50 rounded-3xl p-6 sm:p-8 shadow-xl">
                     <div className="flex items-center gap-2 mb-2">
@@ -3224,7 +3306,7 @@ export default function App() {
                       <h3 className="text-lg font-bold text-white">Manual Member Contribution / Loan Repayment Desk</h3>
                     </div>
                     <p className="text-xs text-slate-400 mb-4 font-medium">
-                      Post manual individual deposits for members paying via cash, direct bank deposit, or non-checkoff streams.
+                      Post payments. Excess amounts after clearing active loans are automatically credited to Savings.
                     </p>
 
                     <form onSubmit={handleManualMemberAdjustment} className="space-y-4">
@@ -3251,8 +3333,8 @@ export default function App() {
                             onChange={(e) => setManualAdjustmentType(e.target.value)}
                             className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-medium"
                           >
-                            <option value="savings_deposit">1. Credit Member Monthly Savings</option>
-                            <option value="loan_repayment">2. Apply Active Loan Repayment (Debt Reduction)</option>
+                            <option value="loan_repayment">1. Smart Loan Repayment (Auto-Split + Excess to Savings)</option>
+                            <option value="savings_deposit">2. Direct Savings Contribution Only</option>
                           </select>
                         </div>
 
@@ -3263,7 +3345,7 @@ export default function App() {
                             required
                             value={manualAmountRaw}
                             onChange={(e) => setManualAmountRaw(formatAccountingNumber(e.target.value))}
-                            placeholder="e.g. 5,000"
+                            placeholder="e.g. 23,000"
                             className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
                           />
                         </div>
@@ -3287,7 +3369,7 @@ export default function App() {
                             disabled={loading}
                             className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-2.5 rounded-xl text-xs transition shadow cursor-pointer flex items-center justify-center gap-1.5"
                           >
-                            <PlusCircle className="w-4 h-4" /> Post Member Credit
+                            <PlusCircle className="w-4 h-4" /> Post Payment
                           </button>
                         </div>
                       </div>
@@ -3295,7 +3377,7 @@ export default function App() {
                   </div>
                 )}
 
-                {/* 3. LOAN RECOVERY MATRIX */}
+                {/* 3. LOAN RECOVERY MATRIX (WITH SCROLLBAR) */}
                 <div className="bg-slate-900/90 border border-rose-900/40 rounded-3xl p-6 sm:p-8 shadow-xl">
                   <div className="flex justify-between items-center mb-2">
                     <div className="flex items-center gap-2">
@@ -3317,9 +3399,9 @@ export default function App() {
                   {performanceRankedLoans.length === 0 ? (
                     <div className="text-center py-8 text-slate-500 text-sm">No active or historical loans found in the system.</div>
                   ) : (
-                    <div className="overflow-x-auto border border-slate-800 rounded-2xl bg-slate-950">
+                    <div className="overflow-x-auto border border-slate-800 rounded-2xl bg-slate-950 max-h-96 overflow-y-auto">
                       <table className="w-full text-left text-xs">
-                        <thead className="bg-slate-900 text-slate-400 font-semibold sticky top-0">
+                        <thead className="bg-slate-900 text-slate-400 font-semibold sticky top-0 z-10">
                           <tr>
                             <th className="p-3">Rank & Member</th>
                             <th className="p-3">Facility</th>

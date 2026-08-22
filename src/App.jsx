@@ -563,7 +563,6 @@ export default function App() {
   const handleSignatoryPipeline = async (loanId, targetRole, action = 'sign') => {
     const isSign = action === 'sign';
 
-    // Strict Enforcement: Check that logged in profile role matches the button
     if (profile?.role !== targetRole && profile?.role !== 'admin') {
       alert(`Access Denied: Only the verified ${targetRole.replace('_', ' ').toUpperCase()} can perform this action.`);
       return;
@@ -1368,7 +1367,6 @@ export default function App() {
                             {c.name}
                           </option>
                         ))}
-                        <option value="external">External / Independent Member</option>
                       </select>
                     </div>
                     <div className="grid grid-cols-2 gap-3">
@@ -2727,7 +2725,7 @@ export default function App() {
                                       canChairSign && isChairUser ? 'bg-rose-600 hover:bg-rose-500 text-white cursor-pointer' : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
                                     }`}
                                   >
-                                    {(!canChairSign || !isChairUser) && <Lock className="w-3 h-3 text-slate-600" />}
+                                    {(!canChairSign || !isChairUser) && <Lock className="w-3.5 h-3.5 text-slate-600" />}
                                     2. Sign: Chairman
                                   </button>
                                 )}
@@ -2751,7 +2749,7 @@ export default function App() {
                                       canTreasurerSign && isTreasurerUser ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white cursor-pointer' : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
                                     }`}
                                   >
-                                    {(!canTreasurerSign || !isTreasurerUser) && <Lock className="w-3 h-3 text-slate-600" />}
+                                    {(!canTreasurerSign || !isTreasurerUser) && <Lock className="w-3.5 h-3.5 text-slate-600" />}
                                     3. Disburse: Treasurer
                                   </button>
                                 )}

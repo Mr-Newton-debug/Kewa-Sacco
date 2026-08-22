@@ -58,10 +58,10 @@ export default function App() {
   const [memberDirectorySearch, setMemberDirectorySearch] = useState('');
   const [memberDirectoryCompanyFilter, setMemberDirectoryCompanyFilter] = useState('all');
 
-  // Manual Member Adjustment Form State
+  // Manual Member Adjustment Form State (Raw and Formatted Strings)
   const [manualTargetMemberId, setManualTargetMemberId] = useState('');
   const [manualAdjustmentType, setManualAdjustmentType] = useState('savings_deposit');
-  const [manualAmount, setManualAmount] = useState('');
+  const [manualAmountRaw, setManualAmountRaw] = useState('');
   const [manualRefCode, setManualRefCode] = useState('');
 
   // Support & Chatbot State
@@ -77,13 +77,13 @@ export default function App() {
   const [chatInput, setChatInput] = useState('');
   const chatEndRef = useRef(null);
 
-  // Loan Application State
+  // Loan Application State with Accounting Inputs
   const [loanProduct, setLoanProduct] = useState('main_loan');
-  const [loanPrincipal, setLoanPrincipal] = useState(20000);
+  const [loanPrincipalRaw, setLoanPrincipalRaw] = useState('20,000');
   const [loanMonths, setLoanMonths] = useState(12);
   const [interestRate, setInterestRate] = useState(1.0);
   const [guarantorList, setGuarantorList] = useState([
-    { guarantorId: '', searchTerm: '', amount: '', eligible: true, note: '', dropdownOpen: false }
+    { guarantorId: '', searchTerm: '', amountRaw: '', eligible: true, note: '', dropdownOpen: false }
   ]);
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [termsAgreed, setTermsAgreed] = useState(false);
@@ -101,15 +101,15 @@ export default function App() {
   const [nokPhone, setNokPhone] = useState('');
   const [nokPercent, setNokPercent] = useState('');
 
-  // Welfare Claim Form State
+  // Welfare Claim Form State with Accounting Inputs
   const [claimType, setClaimType] = useState('hospitalization');
-  const [claimAmount, setClaimAmount] = useState('');
+  const [claimAmountRaw, setClaimAmountRaw] = useState('');
   const [claimDesc, setClaimDesc] = useState('');
   const [claimDocument, setClaimDocument] = useState(null);
 
-  // M-Pesa State
+  // M-Pesa State with Accounting Inputs
   const [mpesaPhone, setMpesaPhone] = useState('');
-  const [mpesaAmount, setMpesaAmount] = useState('');
+  const [mpesaAmountRaw, setMpesaAmountRaw] = useState('');
   const [mpesaType, setMpesaType] = useState('savings_deposit');
   const [mpesaCode, setMpesaCode] = useState('');
 
@@ -119,6 +119,20 @@ export default function App() {
   const [newNoticeTitle, setNewNoticeTitle] = useState('');
   const [newNoticeContent, setNewNoticeContent] = useState('');
   const [newNoticeCategory, setNewNoticeCategory] = useState('general');
+
+  // --- ACCOUNTING FORMAT HELPER ---
+  const formatAccountingNumber = (val) => {
+    if (!val) return '';
+    const cleanNum = val.toString().replace(/[^0-9]/g, '');
+    if (!cleanNum) return '';
+    return Number(cleanNum).toLocaleString('en-KE');
+  };
+
+  const parseAccountingNumber = (val) => {
+    if (!val) return 0;
+    const clean = val.toString().replace(/[^0-9]/g, '');
+    return clean ? Number(clean) : 0;
+  };
 
   // Secure Logout
   const handlePerformSignOut = async (timeoutReason = false) => {
@@ -175,9 +189,7 @@ export default function App() {
     };
   }, [session, authMode]);
 
-  // Robust Auth & Password Recovery Interceptor
   useEffect(() => {
-    // Check URL hash for recovery parameters immediately on mount
     const hashParams = window.location.hash;
     if (hashParams && hashParams.includes('type=recovery')) {
       setAuthMode('reset');
@@ -195,7 +207,7 @@ export default function App() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'PASSWORD_RECOVERY') {
         setAuthMode('reset');
-        setSession(null); // Force screen to display Set New Password form instead of dashboard
+        setSession(null);
       } else {
         if (authMode !== 'reset') {
           setSession(session);
@@ -245,19 +257,19 @@ export default function App() {
     if (prod === 'main_loan') {
       setLoanMonths(12);
       setInterestRate(1.0);
-      setLoanPrincipal(30000);
+      setLoanPrincipalRaw('30,000');
     } else if (prod === 'emergency_loan') {
       setLoanMonths(6);
       setInterestRate(1.0);
-      setLoanPrincipal(15000);
+      setLoanPrincipalRaw('15,000');
     } else if (prod === 'christmas_loan') {
       setLoanMonths(4);
       setInterestRate(1.0);
-      setLoanPrincipal(10000);
+      setLoanPrincipalRaw('10,000');
     } else if (prod === 'monthly_shylock') {
       setLoanMonths(1);
       setInterestRate(5.0);
-      setLoanPrincipal(5000);
+      setLoanPrincipalRaw('5,000');
     }
   };
 
@@ -556,7 +568,8 @@ export default function App() {
 
   const handleManualMemberAdjustment = async (e) => {
     e.preventDefault();
-    if (!manualTargetMemberId || !manualAmount || Number(manualAmount) <= 0) {
+    const parsedAmount = parseAccountingNumber(manualAmountRaw);
+    if (!manualTargetMemberId || parsedAmount <= 0) {
       setMessage({ text: 'Please select a member and enter a valid positive amount.', type: 'error' });
       return;
     }
@@ -569,16 +582,16 @@ export default function App() {
       const { error } = await supabase.from('savings_ledger').insert([
         {
           member_id: manualTargetMemberId,
-          amount: Number(manualAmount),
+          amount: parsedAmount,
           transaction_type: 'monthly_contribution',
           reference_code: refCode,
         },
       ]);
 
       if (!error) {
-        logAuditAction('MANUAL_SAVINGS_CREDIT', `Official posted KES ${Number(manualAmount).toLocaleString()} to ${targetMember?.full_name} (${refCode})`);
-        setMessage({ text: `Success! KES ${Number(manualAmount).toLocaleString()} credited to ${targetMember?.full_name}'s Savings.`, type: 'success' });
-        setManualAmount('');
+        logAuditAction('MANUAL_SAVINGS_CREDIT', `Official posted KES ${parsedAmount.toLocaleString()} to ${targetMember?.full_name} (${refCode})`);
+        setMessage({ text: `Success! KES ${parsedAmount.toLocaleString()} credited to ${targetMember?.full_name}'s Savings.`, type: 'success' });
+        setManualAmountRaw('');
         setManualRefCode('');
       } else {
         setMessage({ text: error.message, type: 'error' });
@@ -603,12 +616,12 @@ export default function App() {
         {
           loan_id: memberLoan.id,
           member_id: manualTargetMemberId,
-          amount: Number(manualAmount),
+          amount: parsedAmount,
           reference_code: refCode,
         },
       ]);
 
-      const newBal = Math.max(0, Number(memberLoan.balance_remaining) - Number(manualAmount));
+      const newBal = Math.max(0, Number(memberLoan.balance_remaining) - parsedAmount);
       await supabase
         .from('loans')
         .update({
@@ -617,9 +630,9 @@ export default function App() {
         })
         .eq('id', memberLoan.id);
 
-      logAuditAction('MANUAL_LOAN_REPAYMENT', `Official deducted KES ${Number(manualAmount).toLocaleString()} for ${targetMember?.full_name} (${refCode})`);
-      setMessage({ text: `Success! KES ${Number(manualAmount).toLocaleString()} applied to ${targetMember?.full_name}'s active loan. New Balance: KES ${newBal.toLocaleString()}`, type: 'success' });
-      setManualAmount('');
+      logAuditAction('MANUAL_LOAN_REPAYMENT', `Official deducted KES ${parsedAmount.toLocaleString()} for ${targetMember?.full_name} (${refCode})`);
+      setMessage({ text: `Success! KES ${parsedAmount.toLocaleString()} applied to ${targetMember?.full_name}'s active loan. New Balance: KES ${newBal.toLocaleString()}`, type: 'success' });
+      setManualAmountRaw('');
       setManualRefCode('');
     }
 
@@ -628,6 +641,7 @@ export default function App() {
     setLoading(false);
   };
 
+  // Financial Metrics
   const totalSavings = savings.reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
   const activeLoanBalance = loans
     .filter((l) => l.status === 'approved' || l.status === 'disbursed')
@@ -644,8 +658,9 @@ export default function App() {
     ? 20000 
     : Math.max(totalSavings * 3, 10000);
 
-  const calculatedInterest = (loanPrincipal * (interestRate / 100)) * loanMonths;
-  const calculatedTotal = Number(loanPrincipal) + calculatedInterest;
+  const loanPrincipalNum = parseAccountingNumber(loanPrincipalRaw);
+  const calculatedInterest = (loanPrincipalNum * (interestRate / 100)) * loanMonths;
+  const calculatedTotal = loanPrincipalNum + calculatedInterest;
   const monthlyInstallment = calculatedTotal / loanMonths;
 
   const selectGuarantorFromSearch = async (index, member) => {
@@ -655,12 +670,11 @@ export default function App() {
     updated[index].dropdownOpen = false;
     setGuarantorList(updated);
 
-    await checkBlindGuarantorEligibility(index, member.id, updated[index].amount);
+    await checkBlindGuarantorEligibility(index, member.id, parseAccountingNumber(updated[index].amountRaw));
   };
 
-  const checkBlindGuarantorEligibility = async (index, memberId, currentPledgeAmount = null) => {
+  const checkBlindGuarantorEligibility = async (index, memberId, currentPledgeAmount = 0) => {
     const updated = [...guarantorList];
-    const pledgeToEvaluate = currentPledgeAmount !== null ? Number(currentPledgeAmount) : Number(updated[index].amount || 0);
 
     if (!memberId) {
       updated[index].eligible = true;
@@ -687,10 +701,10 @@ export default function App() {
     if (calculatedFreeShares <= 0) {
       isEligible = false;
       noteMsg = '⚠️ Ineligible: Colleague currently has no unencumbered Free Shares available.';
-    } else if (pledgeToEvaluate > 0 && pledgeToEvaluate > calculatedFreeShares) {
+    } else if (currentPledgeAmount > 0 && currentPledgeAmount > calculatedFreeShares) {
       isEligible = false;
       noteMsg = '⚠️ Insufficient Free Shares: Colleague cannot cover this requested pledge amount.';
-    } else if (pledgeToEvaluate > 0 && pledgeToEvaluate <= calculatedFreeShares) {
+    } else if (currentPledgeAmount > 0 && currentPledgeAmount <= calculatedFreeShares) {
       isEligible = true;
       noteMsg = '✓ Eligible: Colleague has sufficient Free Shares for this pledge amount.';
     } else {
@@ -704,35 +718,38 @@ export default function App() {
   };
 
   const addGuarantorRow = () => {
-    setGuarantorList([...guarantorList, { guarantorId: '', searchTerm: '', amount: '', eligible: true, note: '', dropdownOpen: false }]);
+    setGuarantorList([...guarantorList, { guarantorId: '', searchTerm: '', amountRaw: '', eligible: true, note: '', dropdownOpen: false }]);
   };
 
   const removeGuarantorRow = (index) => {
     const updated = guarantorList.filter((_, i) => i !== index);
-    setGuarantorList(updated.length > 0 ? updated : [{ guarantorId: '', searchTerm: '', amount: '', eligible: true, note: '', dropdownOpen: false }]);
+    setGuarantorList(updated.length > 0 ? updated : [{ guarantorId: '', searchTerm: '', amountRaw: '', eligible: true, note: '', dropdownOpen: false }]);
   };
 
   const updateGuarantorRow = (index, field, value) => {
     const updated = [...guarantorList];
-    updated[index][field] = value;
-    setGuarantorList(updated);
-
-    if (field === 'amount' && updated[index].guarantorId) {
-      checkBlindGuarantorEligibility(index, updated[index].guarantorId, value);
+    if (field === 'amountRaw') {
+      updated[index][field] = formatAccountingNumber(value);
+      if (updated[index].guarantorId) {
+        checkBlindGuarantorEligibility(index, updated[index].guarantorId, parseAccountingNumber(value));
+      }
+    } else {
+      updated[index][field] = value;
     }
+    setGuarantorList(updated);
   };
 
   const handleInitiateLoan = (e) => {
     e.preventDefault();
     setMessage({ text: '', type: '' });
 
-    if (loanPrincipal > maxLimitForSelectedProduct) {
+    if (loanPrincipalNum > maxLimitForSelectedProduct) {
       setMessage({ text: `Loan exceeds maximum limit of KES ${maxLimitForSelectedProduct.toLocaleString()}.`, type: 'error' });
       return;
     }
 
     if (loanProduct !== 'monthly_shylock') {
-      const validGuarantors = guarantorList.filter((g) => g.guarantorId && Number(g.amount) > 0);
+      const validGuarantors = guarantorList.filter((g) => g.guarantorId && parseAccountingNumber(g.amountRaw) > 0);
       if (validGuarantors.length === 0) {
         setMessage({ text: 'Please assign at least 1 guarantor for this loan product.', type: 'error' });
         return;
@@ -762,13 +779,13 @@ export default function App() {
     setShowTermsModal(false);
     setLoading(true);
 
-    const validGuarantors = guarantorList.filter((g) => g.guarantorId && Number(g.amount) > 0);
+    const validGuarantors = guarantorList.filter((g) => g.guarantorId && parseAccountingNumber(g.amountRaw) > 0);
 
     const { data: loanData, error: loanError } = await supabase.from('loans').insert([
       {
         member_id: session.user.id,
         loan_product: loanProduct,
-        principal_amount: loanPrincipal,
+        principal_amount: loanPrincipalNum,
         interest_rate: interestRate,
         repayment_period_months: loanMonths,
         total_payable: calculatedTotal,
@@ -790,16 +807,16 @@ export default function App() {
       const guarantorsToInsert = validGuarantors.map((g) => ({
         loan_id: loanData.id,
         guarantor_id: g.guarantorId,
-        amount_guaranteed: Number(g.amount),
+        amount_guaranteed: parseAccountingNumber(g.amountRaw),
         status: 'pending',
       }));
       await supabase.from('loan_guarantors').insert(guarantorsToInsert);
     }
 
-    logAuditAction('LOAN_APPLICATION_SUBMITTED', `${loanProduct.toUpperCase()} applied: KES ${loanPrincipal.toLocaleString()} (Terms Accepted)`);
+    logAuditAction('LOAN_APPLICATION_SUBMITTED', `${loanProduct.toUpperCase()} applied: KES ${loanPrincipalNum.toLocaleString()} (Terms Accepted)`);
 
     setMessage({ text: `Loan submitted! Pipeline: 1. Assistant Chair -> 2. Chairman -> 3. Treasurer.`, type: 'success' });
-    setGuarantorList([{ guarantorId: '', searchTerm: '', amount: '', eligible: true, note: '', dropdownOpen: false }]);
+    setGuarantorList([{ guarantorId: '', searchTerm: '', amountRaw: '', eligible: true, note: '', dropdownOpen: false }]);
     fetchUserData(session.user.id);
     setLoading(false);
   };
@@ -855,53 +872,6 @@ export default function App() {
     });
   };
 
-  const handleWelfarePipeline = async (claimId, targetRole, action = 'sign') => {
-    const isSign = action === 'sign';
-
-    if (profile?.role !== targetRole && profile?.role !== 'admin') {
-      alert(`Access Denied: Only the verified ${targetRole.replace('_', ' ').toUpperCase()} can perform this action.`);
-      return;
-    }
-
-    const { data: currentClaim } = await supabase.from('welfare_claims').select('*').eq('id', claimId).single();
-    const updatePayload = {};
-
-    if (targetRole === 'assistant_chair') {
-      updatePayload.assistant_chair_approval = isSign;
-      if (!isSign) {
-        updatePayload.chairman_approval = false;
-        updatePayload.treasurer_approval = false;
-        updatePayload.status = 'pending';
-      }
-    } else if (targetRole === 'chairman') {
-      if (isSign && !currentClaim.assistant_chair_approval) {
-        alert('Sequential Gate Locked: Assistant Chair must inspect claim evidence first.');
-        return;
-      }
-      updatePayload.chairman_approval = isSign;
-      if (!isSign) {
-        updatePayload.treasurer_approval = false;
-        updatePayload.status = 'pending';
-      }
-    } else if (targetRole === 'treasurer') {
-      if (isSign && (!currentClaim.assistant_chair_approval || !currentClaim.chairman_approval)) {
-        alert('Sequential Gate Locked: Assistant Chair and Chairman must sign before final welfare disbursement.');
-        return;
-      }
-      updatePayload.treasurer_approval = isSign;
-      updatePayload.status = isSign ? 'approved' : 'pending';
-    }
-
-    await supabase.from('welfare_claims').update(updatePayload).eq('id', claimId);
-    logAuditAction(
-      isSign ? 'WELFARE_SIGNED' : 'WELFARE_REVOKED',
-      `Benevolence ${isSign ? 'endorsed' : 'revoked'} by ${targetRole.replace('_', ' ').toUpperCase()} for Claim #${claimId.slice(0, 8)}`
-    );
-
-    fetchAdminData();
-    fetchUserData(session.user.id);
-  };
-
   const handleRespondGuarantor = async (guaranteeId, status, pledgeAmount) => {
     if (status === 'accepted' && Number(pledgeAmount) > freeSharesAvailable) {
       setMessage({
@@ -928,6 +898,7 @@ export default function App() {
     e.preventDefault();
     setLoading(true);
     let documentUrl = null;
+    const claimAmtNum = parseAccountingNumber(claimAmountRaw);
 
     if (claimDocument) {
       const fileExt = claimDocument.name.split('.').pop();
@@ -948,7 +919,7 @@ export default function App() {
       {
         member_id: session.user.id,
         claim_type: claimType,
-        amount_requested: Number(claimAmount),
+        amount_requested: claimAmtNum,
         description: claimDesc,
         evidence_url: documentUrl,
         status: 'pending',
@@ -960,9 +931,9 @@ export default function App() {
 
     if (error) setMessage({ text: error.message, type: 'error' });
     else {
-      logAuditAction('WELFARE_CLAIM_FILED', `Welfare claim for KES ${claimAmount} (${claimType})`);
+      logAuditAction('WELFARE_CLAIM_FILED', `Welfare claim for KES ${claimAmtNum.toLocaleString()} (${claimType})`);
       setMessage({ text: 'Welfare claim submitted for Sequential 3-Signatory review.', type: 'success' });
-      setClaimAmount('');
+      setClaimAmountRaw('');
       setClaimDesc('');
       setClaimDocument(null);
       fetchWelfareClaims(session.user.id);
@@ -1088,13 +1059,14 @@ export default function App() {
   const handleMpesaTransaction = async (e) => {
     e.preventDefault();
     setLoading(true);
+    const mpesaAmtNum = parseAccountingNumber(mpesaAmountRaw);
     const receipt = mpesaCode.trim().toUpperCase() || `MP${Math.random().toString(36).substr(2, 8).toUpperCase()}`;
 
     await supabase.from('mpesa_transactions').insert([
       {
         member_id: session.user.id,
         phone_number: mpesaPhone || profile?.phone,
-        amount: Number(mpesaAmount),
+        amount: mpesaAmtNum,
         transaction_type: mpesaType,
         mpesa_receipt_code: receipt,
         status: 'verified',
@@ -1105,13 +1077,13 @@ export default function App() {
       await supabase.from('savings_ledger').insert([
         {
           member_id: session.user.id,
-          amount: Number(mpesaAmount),
+          amount: mpesaAmtNum,
           transaction_type: 'monthly_contribution',
           reference_code: `MPESA-${receipt}`,
         },
       ]);
-      logAuditAction('MPESA_SAVINGS_DEPOSIT', `KES ${mpesaAmount} credited via M-Pesa ${receipt}`);
-      setMessage({ text: `Payment verified! KES ${Number(mpesaAmount).toLocaleString()} credited to Savings.`, type: 'success' });
+      logAuditAction('MPESA_SAVINGS_DEPOSIT', `KES ${mpesaAmtNum.toLocaleString()} credited via M-Pesa ${receipt}`);
+      setMessage({ text: `Payment verified! KES ${mpesaAmtNum.toLocaleString()} credited to Savings.`, type: 'success' });
     } else if (mpesaType === 'loan_repayment') {
       const { data: memberLoan } = await supabase
         .from('loans')
@@ -1127,12 +1099,12 @@ export default function App() {
           {
             loan_id: memberLoan.id,
             member_id: session.user.id,
-            amount: Number(mpesaAmount),
+            amount: mpesaAmtNum,
             reference_code: `MPESA-${receipt}`,
           },
         ]);
 
-        const newBal = Math.max(0, Number(memberLoan.balance_remaining) - Number(mpesaAmount));
+        const newBal = Math.max(0, Number(memberLoan.balance_remaining) - mpesaAmtNum);
         await supabase
           .from('loans')
           .update({
@@ -1141,12 +1113,12 @@ export default function App() {
           })
           .eq('id', memberLoan.id);
 
-        logAuditAction('MPESA_LOAN_REPAYMENT', `KES ${mpesaAmount} loan repayment via M-Pesa ${receipt}`);
-        setMessage({ text: `Payment verified! KES ${Number(mpesaAmount).toLocaleString()} deducted from active loan.`, type: 'success' });
+        logAuditAction('MPESA_LOAN_REPAYMENT', `KES ${mpesaAmtNum.toLocaleString()} loan repayment via M-Pesa ${receipt}`);
+        setMessage({ text: `Payment verified! KES ${mpesaAmtNum.toLocaleString()} deducted from active loan.`, type: 'success' });
       }
     }
 
-    setMpesaAmount('');
+    setMpesaAmountRaw('');
     setMpesaCode('');
     fetchUserData(session.user.id);
     setLoading(false);
@@ -1855,7 +1827,7 @@ export default function App() {
                 </div>
                 <div>
                   <div className="flex justify-between items-center mb-1">
-                    <label className="text-xs font-semibold text-slate-300">Password</label>
+                    <label className="block text-xs font-semibold text-slate-300">Password</label>
                     <button
                       type="button"
                       onClick={() => setAuthMode('forgot')}
@@ -2211,7 +2183,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 2: LOANS */}
+            {/* TAB 2: LOANS (WITH ACCOUNTING INPUTS) */}
             {activeTab === 'loans' && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-7 shadow-lg">
@@ -2277,17 +2249,16 @@ export default function App() {
                   <form onSubmit={handleInitiateLoan} className="space-y-4">
                     <div>
                       <div className="flex justify-between items-center mb-1.5">
-                        <label className="text-xs font-semibold text-slate-300">Principal Amount</label>
-                        <span className="text-emerald-400 font-bold text-sm">KES {Number(loanPrincipal).toLocaleString()}</span>
+                        <label className="text-xs font-semibold text-slate-300">Principal Amount (KES)</label>
+                        <span className="text-emerald-400 font-bold text-sm">KES {loanPrincipalNum.toLocaleString()}</span>
                       </div>
                       <input
-                        type="range"
-                        min="2000"
-                        max={maxLimitForSelectedProduct}
-                        step="1000"
-                        value={loanPrincipal}
-                        onChange={(e) => setLoanPrincipal(Number(e.target.value))}
-                        className="w-full accent-emerald-500"
+                        type="text"
+                        required
+                        value={loanPrincipalRaw}
+                        onChange={(e) => setLoanPrincipalRaw(formatAccountingNumber(e.target.value))}
+                        placeholder="e.g. 20,000"
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white font-mono"
                       />
                     </div>
 
@@ -2372,12 +2343,12 @@ export default function App() {
                                 <div className="w-full sm:w-2/5">
                                   <label className="block text-[10px] text-slate-400 mb-1 font-medium">Pledged (KES)</label>
                                   <input
-                                    type="number"
+                                    type="text"
                                     required
-                                    placeholder="e.g. 5000"
-                                    value={g.amount}
-                                    onChange={(e) => updateGuarantorRow(index, 'amount', e.target.value)}
-                                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-2 text-xs text-white"
+                                    placeholder="e.g. 5,000"
+                                    value={g.amountRaw}
+                                    onChange={(e) => updateGuarantorRow(index, 'amountRaw', e.target.value)}
+                                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-2 text-xs text-white font-mono"
                                   />
                                 </div>
 
@@ -2763,12 +2734,12 @@ export default function App() {
                     <div>
                       <label className="block text-xs text-slate-400 mb-1">Amount Claimed (KES)</label>
                       <input
-                        type="number"
+                        type="text"
                         required
-                        value={claimAmount}
-                        onChange={(e) => setClaimAmount(e.target.value)}
-                        placeholder="e.g. 20000"
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                        value={claimAmountRaw}
+                        onChange={(e) => setClaimAmountRaw(formatAccountingNumber(e.target.value))}
+                        placeholder="e.g. 20,000"
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
                       />
                     </div>
                     <div>
@@ -2843,7 +2814,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 6: M-PESA */}
+            {/* TAB 6: M-PESA (WITH ACCOUNTING INPUTS) */}
             {activeTab === 'mpesa' && (
               <div className="max-w-xl mx-auto bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-10 space-y-6 shadow-2xl">
                 <div className="flex items-center gap-3">
@@ -2891,11 +2862,11 @@ export default function App() {
                   <div>
                     <label className="block text-xs font-semibold text-slate-300 mb-1">Amount (KES)</label>
                     <input
-                      type="number"
+                      type="text"
                       required
-                      value={mpesaAmount}
-                      onChange={(e) => setMpesaAmount(e.target.value)}
-                      placeholder="e.g. 3000"
+                      value={mpesaAmountRaw}
+                      onChange={(e) => setMpesaAmountRaw(formatAccountingNumber(e.target.value))}
+                      placeholder="e.g. 3,000"
                       className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono"
                     />
                   </div>
@@ -3126,7 +3097,6 @@ export default function App() {
             {activeTab === 'admin' && ['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(userRole) && (
               <div className="space-y-6">
                 
-                {/* ROLE BANNER */}
                 <div className="bg-gradient-to-r from-amber-950/80 to-slate-900 border border-amber-800/60 rounded-3xl p-5 flex justify-between items-center shadow-lg">
                   <div>
                     <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-900 text-amber-200 uppercase tracking-wide">
@@ -3246,7 +3216,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 2. MANUAL ADJUSTMENT */}
+                {/* 2. MANUAL ADJUSTMENT (WITH ACCOUNTING INPUT) */}
                 {['admin', 'chairman', 'treasurer'].includes(userRole) && (
                   <div className="bg-slate-900/90 border border-emerald-900/50 rounded-3xl p-6 sm:p-8 shadow-xl">
                     <div className="flex items-center gap-2 mb-2">
@@ -3289,11 +3259,11 @@ export default function App() {
                         <div>
                           <label className="block text-xs font-semibold text-slate-300 mb-1">Amount (KES)</label>
                           <input
-                            type="number"
+                            type="text"
                             required
-                            value={manualAmount}
-                            onChange={(e) => setManualAmount(e.target.value)}
-                            placeholder="e.g. 5000"
+                            value={manualAmountRaw}
+                            onChange={(e) => setManualAmountRaw(formatAccountingNumber(e.target.value))}
+                            placeholder="e.g. 5,000"
                             className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
                           />
                         </div>
@@ -3794,7 +3764,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 8. POST NOTICES & AUDIT LOGS (Chairman & Admin Only) */}
+                {/* 8. POST NOTICES & AUDIT LOGS */}
                 {['admin', 'chairman'].includes(userRole) && (
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 shadow-xl">
@@ -3896,7 +3866,7 @@ export default function App() {
                   Application Summary: {loanProduct.replace('_', ' ').toUpperCase()}
                 </p>
                 <div className="flex justify-between text-slate-300 font-medium">
-                  <span>Principal: <strong>KES {Number(loanPrincipal).toLocaleString()}</strong></span>
+                  <span>Principal: <strong>KES {loanPrincipalNum.toLocaleString()}</strong></span>
                   <span>Duration: <strong>{loanMonths} Month(s)</strong></span>
                   <span>Payable: <strong>KES {calculatedTotal.toLocaleString()}</strong></span>
                 </div>

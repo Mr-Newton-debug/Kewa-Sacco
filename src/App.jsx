@@ -111,6 +111,30 @@ export default function App() {
   const [newNoticeContent, setNewNoticeContent] = useState('');
   const [newNoticeCategory, setNewNoticeCategory] = useState('general');
 
+  // Explicit Secure Logout & Input Sanitizer Function
+  const handlePerformSignOut = async (timeoutReason = false) => {
+    setEmail('');
+    setPassword('');
+    setNewPassword('');
+    setProfile(null);
+    setSavings([]);
+    setLoans([]);
+    setRepayments([]);
+    setBeneficiaries([]);
+    setAuditLogs([]);
+    setInquiries([]);
+    setMobileMenuOpen(false);
+    
+    await supabase.auth.signOut();
+
+    if (timeoutReason) {
+      setMessage({
+        text: 'You were signed out automatically due to 5 minutes of inactivity for your account security.',
+        type: 'error'
+      });
+    }
+  };
+
   // --- 5-MINUTE AUTOMATIC INACTIVITY LOGOUT TIMER ---
   useEffect(() => {
     if (!session) return;
@@ -122,19 +146,14 @@ export default function App() {
       if (timeoutId) clearTimeout(timeoutId);
       timeoutId = setTimeout(async () => {
         logAuditAction('AUTO_TIMEOUT_LOGOUT', 'User logged out automatically due to 5 minutes of inactivity');
-        await supabase.auth.signOut();
-        setMessage({
-          text: 'You were signed out automatically due to 5 minutes of inactivity for your account security.',
-          type: 'error'
-        });
+        await handlePerformSignOut(true);
       }, INACTIVITY_LIMIT_MS);
     };
 
-    // User activity listeners
     const activityEvents = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'click'];
     activityEvents.forEach((evt) => window.addEventListener(evt, resetInactivityTimer));
 
-    resetInactivityTimer(); // start initial timer
+    resetInactivityTimer();
 
     return () => {
       if (timeoutId) clearTimeout(timeoutId);
@@ -153,8 +172,13 @@ export default function App() {
         setAuthMode('reset');
       }
       setSession(session);
-      if (session) fetchUserData(session.user.id);
-      else {
+      if (session) {
+        fetchUserData(session.user.id);
+      } else {
+        // Complete credential & state wipe on any logout event
+        setEmail('');
+        setPassword('');
+        setNewPassword('');
         setProfile(null);
         setSavings([]);
         setLoans([]);
@@ -171,7 +195,6 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // Auto-refresh data on tab change
   useEffect(() => {
     if (activeTab === 'documents') {
       fetchSaccoDocuments();
@@ -1289,7 +1312,6 @@ export default function App() {
 
   const pendingGuaranteesCount = guarantorRequests.filter((g) => g.status === 'pending').length;
 
-  // Retrieve official contacts with real-time leading zero strip (+254 formatter)
   const chairmanOfficial = allMembers.find((m) => m.role === 'chairman') || { full_name: 'Chairman', phone: '0712345678' };
   const treasurerOfficial = allMembers.find((m) => m.role === 'treasurer') || { full_name: 'Treasurer', phone: '0712345679' };
   const asstChairOfficial = allMembers.find((m) => m.role === 'assistant_chair') || { full_name: 'Assistant Chair', phone: '0712345670' };
@@ -1409,7 +1431,7 @@ export default function App() {
             </div>
 
             <button
-              onClick={() => supabase.auth.signOut()}
+              onClick={() => handlePerformSignOut(false)}
               className="hidden lg:flex items-center gap-1.5 bg-slate-900 hover:bg-rose-950/50 text-slate-400 hover:text-rose-300 px-3.5 py-2 rounded-xl text-xs font-semibold transition border border-slate-800 cursor-pointer"
             >
               <LogOut className="w-3.5 h-3.5" /> Exit
@@ -1425,7 +1447,7 @@ export default function App() {
         )}
       </header>
 
-      {/* Fixed Full-Screen Mobile Drawer with High Z-Index */}
+      {/* Fixed Full-Screen Mobile Drawer */}
       {session && mobileMenuOpen && (
         <div className="lg:hidden fixed inset-0 top-[60px] bg-slate-950/98 backdrop-blur-2xl z-[100] px-5 py-6 space-y-3 overflow-y-auto border-t border-slate-800 animate-fadeIn">
           <div className="p-3.5 bg-slate-900/90 border border-slate-800 rounded-2xl mb-4 flex items-center justify-between">
@@ -1522,10 +1544,7 @@ export default function App() {
           {/* Guaranteed Mobile Drawer Sign-Out Button */}
           <div className="pt-4 border-t border-slate-800">
             <button
-              onClick={async () => {
-                setMobileMenuOpen(false);
-                await supabase.auth.signOut();
-              }}
+              onClick={() => handlePerformSignOut(false)}
               className="w-full flex items-center justify-center gap-2 bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-200 py-3.5 rounded-2xl text-sm font-bold shadow-lg cursor-pointer"
             >
               <LogOut className="w-4 h-4" /> Sign Out of Portal
@@ -1550,7 +1569,7 @@ export default function App() {
         )}
 
         {!session ? (
-          /* AUTH VIEWS */
+          /* AUTH VIEWS (WITH EXPLICIT ZERO AUTOFILL / CLEARANCE) */
           <div className="max-w-md mx-auto mt-6 sm:mt-12 bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-10 shadow-2xl backdrop-blur-xl">
             <div className="text-center mb-6">
               <div className="inline-flex bg-gradient-to-tr from-emerald-600 to-teal-400 p-3 rounded-2xl shadow-xl shadow-emerald-900/30 mb-3">
@@ -1571,12 +1590,13 @@ export default function App() {
             </div>
 
             {authMode === 'forgot' && (
-              <form onSubmit={handleForgotPassword} className="space-y-4">
+              <form onSubmit={handleForgotPassword} className="space-y-4" autoComplete="off">
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1.5">Registered Email Address</label>
                   <input
                     type="email"
                     required
+                    autoComplete="off"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="name@domain.com"
@@ -1603,13 +1623,14 @@ export default function App() {
             )}
 
             {authMode === 'reset' && (
-              <form onSubmit={handleUpdatePassword} className="space-y-4">
+              <form onSubmit={handleUpdatePassword} className="space-y-4" autoComplete="off">
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1.5">Enter New Password</label>
                   <div className="relative">
                     <input
                       type={showPassword ? 'text' : 'password'}
                       required
+                      autoComplete="new-password"
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
                       placeholder="••••••••"
@@ -1635,7 +1656,7 @@ export default function App() {
             )}
 
             {(authMode === 'login' || authMode === 'register') && (
-              <form onSubmit={authMode === 'login' ? handleLogin : handleRegister} className="space-y-4">
+              <form onSubmit={authMode === 'login' ? handleLogin : handleRegister} className="space-y-4" autoComplete="off">
                 {authMode === 'register' && (
                   <>
                     <div>
@@ -1643,6 +1664,7 @@ export default function App() {
                       <input
                         type="text"
                         required
+                        autoComplete="off"
                         value={fullName}
                         onChange={(e) => setFullName(e.target.value)}
                         placeholder="John Doe"
@@ -1669,6 +1691,7 @@ export default function App() {
                         <input
                           type="text"
                           required
+                          autoComplete="off"
                           value={memberNumber}
                           onChange={(e) => setMemberNumber(e.target.value)}
                           placeholder="KW-001"
@@ -1680,6 +1703,7 @@ export default function App() {
                         <input
                           type="text"
                           required
+                          autoComplete="off"
                           value={idNumber}
                           onChange={(e) => setIdNumber(e.target.value)}
                           placeholder="12345678"
@@ -1692,6 +1716,7 @@ export default function App() {
                       <input
                         type="tel"
                         required
+                        autoComplete="off"
                         value={phone}
                         onChange={(e) => setPhone(e.target.value)}
                         placeholder="0712345678"
@@ -1706,6 +1731,7 @@ export default function App() {
                   <input
                     type="email"
                     required
+                    autoComplete="off"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="name@domain.com"
@@ -1729,6 +1755,7 @@ export default function App() {
                     <input
                       type={showPassword ? 'text' : 'password'}
                       required
+                      autoComplete="new-password"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="••••••••"
@@ -1939,7 +1966,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 2: LOANS WITH REAL-TIME SEARCHABLE GUARANTOR AUTOCOMPLETE */}
+            {/* TAB 2: LOANS */}
             {activeTab === 'loans' && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-7 shadow-lg">
@@ -2069,6 +2096,7 @@ export default function App() {
                                     <input
                                       type="text"
                                       required
+                                      autoComplete="off"
                                       placeholder="Type name (e.g. Newton, KW-001)..."
                                       value={g.searchTerm}
                                       onChange={(e) => {
@@ -2121,7 +2149,7 @@ export default function App() {
                                 )}
                               </div>
 
-                              {/* Blind Privacy Status (Exact Balances Hidden) */}
+                              {/* Blind Privacy Status */}
                               {g.guarantorId && (
                                 <div className={`p-2.5 rounded-xl text-[11px] font-semibold flex items-center gap-1.5 ${
                                   g.eligible
@@ -2176,7 +2204,7 @@ export default function App() {
                   </form>
                 </div>
 
-                {/* MEMBER APPLICATION LIST WITH LIVE SEQUENTIAL SIGNATORY TRACKER */}
+                {/* MEMBER APPLICATION LIST WITH SIGNATORY TRACKER */}
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-7 shadow-lg">
                   <h3 className="text-lg font-bold text-white mb-4">My Loan Applications & Approval Tracker</h3>
                   {loans.length === 0 ? (
@@ -2383,6 +2411,7 @@ export default function App() {
                       <input
                         type="text"
                         required
+                        autoComplete="off"
                         value={nokName}
                         onChange={(e) => setNokName(e.target.value)}
                         placeholder="e.g. Mary Atieno"
@@ -2423,6 +2452,7 @@ export default function App() {
                         <label className="block text-xs text-slate-400 mb-1">National ID</label>
                         <input
                           type="text"
+                          autoComplete="off"
                           value={nokId}
                           onChange={(e) => setNokId(e.target.value)}
                           placeholder="ID Number"
@@ -2434,6 +2464,7 @@ export default function App() {
                         <input
                           type="tel"
                           required
+                          autoComplete="off"
                           value={nokPhone}
                           onChange={(e) => setNokPhone(e.target.value)}
                           placeholder="07xxxxxxxx"
@@ -2609,6 +2640,7 @@ export default function App() {
                     <input
                       type="tel"
                       required
+                      autoComplete="off"
                       value={mpesaPhone || profile?.phone || ''}
                       onChange={(e) => setMpesaPhone(e.target.value)}
                       placeholder="0712345678"
@@ -2632,6 +2664,7 @@ export default function App() {
                     <label className="block text-xs font-semibold text-slate-300 mb-1">M-Pesa Transaction Code (Optional for STK Push)</label>
                     <input
                       type="text"
+                      autoComplete="off"
                       value={mpesaCode}
                       onChange={(e) => setMpesaCode(e.target.value)}
                       placeholder="e.g. QGH789KL12"
@@ -2767,7 +2800,7 @@ export default function App() {
                     </form>
                   </div>
 
-                  {/* Submit Tracked Inquiry / Internal Ticket */}
+                  {/* Submit Tracked Inquiry */}
                   <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 shadow-xl space-y-4">
                     <div className="flex items-center gap-2">
                       <Mail className="w-5 h-5 text-amber-400" />
@@ -2777,7 +2810,7 @@ export default function App() {
                       </div>
                     </div>
 
-                    <form onSubmit={handleCreateInquiry} className="space-y-3">
+                    <form onSubmit={handleCreateInquiry} className="space-y-3" autoComplete="off">
                       <div>
                         <label className="block text-xs font-semibold text-slate-300 mb-1">Inquiry Category</label>
                         <select
@@ -2797,6 +2830,7 @@ export default function App() {
                         <input
                           type="text"
                           required
+                          autoComplete="off"
                           value={inquirySubject}
                           onChange={(e) => setInquirySubject(e.target.value)}
                           placeholder="Brief summary of your message..."
@@ -3467,7 +3501,7 @@ export default function App() {
 
           {/* Direct Mobile Logout Button */}
           <button
-            onClick={() => supabase.auth.signOut()}
+            onClick={() => handlePerformSignOut(false)}
             className="flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 text-rose-400 hover:text-rose-300 transition"
           >
             <LogOut className="w-4 h-4" />

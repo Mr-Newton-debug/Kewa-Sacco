@@ -94,6 +94,8 @@ export default function App() {
   const [loanPrincipalRaw, setLoanPrincipalRaw] = useState('20,000');
   const [loanMonths, setLoanMonths] = useState(12);
   const [interestRate, setInterestRate] = useState(1.0);
+  const [disbursementMethod, setDisbursementMethod] = useState('mpesa');
+  const [disbursementDetails, setDisbursementDetails] = useState('');
   const [guarantorList, setGuarantorList] = useState([
     { guarantorId: '', searchTerm: '', amountRaw: '', eligible: true, note: '', dropdownOpen: false }
   ]);
@@ -1006,6 +1008,8 @@ export default function App() {
         total_payable: calculatedTotal,
         balance_remaining: calculatedTotal,
         status: 'pending',
+        disbursement_method: disbursementMethod,
+        disbursement_details: disbursementDetails,
         assistant_chair_approval: false,
         chairman_approval: false,
         treasurer_approval: false,
@@ -1028,10 +1032,11 @@ export default function App() {
       await supabase.from('loan_guarantors').insert(guarantorsToInsert);
     }
 
-    logAuditAction('LOAN_APPLICATION_SUBMITTED', `${loanProduct.toUpperCase()} applied: KES ${loanPrincipalNum.toLocaleString()} (Terms Accepted)`);
+    logAuditAction('LOAN_APPLICATION_SUBMITTED', `${loanProduct.toUpperCase()} applied: KES ${loanPrincipalNum.toLocaleString()} (Disbursement: ${disbursementMethod.toUpperCase()})`);
 
     setMessage({ text: `Loan submitted! Pipeline: Assistant Chair -> Chairman -> Treasurer.`, type: 'success' });
     setGuarantorList([{ guarantorId: '', searchTerm: '', amountRaw: '', eligible: true, note: '', dropdownOpen: false }]);
+    setDisbursementDetails('');
     fetchUserData(session.user.id);
     setLoading(false);
   };
@@ -2551,6 +2556,34 @@ export default function App() {
                       />
                     </div>
 
+                    {/* Disbursement Channel Selector */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">Disbursement Channel</label>
+                        <select
+                          value={disbursementMethod}
+                          onChange={(e) => setDisbursementMethod(e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                        >
+                          <option value="mpesa">M-Pesa Mobile Money</option>
+                          <option value="bank">Direct Bank Account Transfer</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">
+                          {disbursementMethod === 'mpesa' ? 'M-Pesa Phone Number' : 'Bank Account Details'}
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={disbursementDetails}
+                          onChange={(e) => setDisbursementDetails(e.target.value)}
+                          placeholder={disbursementMethod === 'mpesa' ? '0712345678' : 'Bank Name, Acc No, Branch'}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
+                        />
+                      </div>
+                    </div>
+
                     {loanProduct !== 'monthly_shylock' && (
                       <div className="border-t border-slate-800 pt-3 space-y-2.5">
                         <div className="flex justify-between items-center">
@@ -2716,7 +2749,7 @@ export default function App() {
                               <h4 className="text-base font-black text-white mt-1">
                                 KES {Number(l.principal_amount).toLocaleString()}
                               </h4>
-                              <p className="text-[11px] text-slate-400 font-medium">{l.repayment_period_months} Month(s) Term</p>
+                              <p className="text-[11px] text-slate-400 font-medium">{l.repayment_period_months} Month(s) Term • Via <span className="uppercase text-emerald-400 font-bold">{l.disbursement_method || 'mpesa'}</span></p>
                             </div>
                             <button
                               onClick={() => generatePDFStatement(l)}
@@ -4259,7 +4292,7 @@ export default function App() {
                                 </div>
                                 <p className="text-[11px] text-slate-400 font-medium">{l.profiles?.companies?.name || 'External'} • Member {l.profiles?.member_number}</p>
                                 <p className="text-xs font-black text-emerald-400 mt-0.5">
-                                  KES {Number(l.principal_amount).toLocaleString()} ({l.repayment_period_months} Mos Term)
+                                  KES {Number(l.principal_amount).toLocaleString()} ({l.repayment_period_months} Mos Term) • Payout: <span className="uppercase text-white font-bold">{l.disbursement_method || 'mpesa'}</span> ({l.disbursement_details || 'N/A'})
                                 </p>
                               </div>
 
@@ -4556,6 +4589,9 @@ export default function App() {
                   <span>Duration: <strong>{loanMonths} Month(s)</strong></span>
                   <span>Payable: <strong>KES {calculatedTotal.toLocaleString()}</strong></span>
                 </div>
+                <p className="text-[11px] text-emerald-400 pt-1">
+                  Disbursement Destination: <strong className="uppercase">{disbursementMethod}</strong> ({disbursementDetails || 'Not specified'})
+                </p>
               </div>
 
               <h4 className="font-bold text-white text-xs uppercase tracking-wide">1. Payroll Deduction Authorization</h4>

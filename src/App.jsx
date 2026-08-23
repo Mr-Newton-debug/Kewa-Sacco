@@ -912,13 +912,10 @@ export default function App() {
       noteMsg = '⚠️ Ineligible: Colleague currently has no unencumbered Free Shares available.';
     } else if (currentPledgeAmount > 0 && currentPledgeAmount > calculatedFreeShares) {
       isEligible = false;
-      noteMsg = `⚠️ Insufficient Free Shares: Colleague only has KES ${calculatedFreeShares.toLocaleString()} available.`;
-    } else if (currentPledgeAmount > 0 && currentPledgeAmount <= calculatedFreeShares) {
-      isEligible = true;
-      noteMsg = `✓ Eligible: Colleague has sufficient Free Shares (KES ${calculatedFreeShares.toLocaleString()}) for this pledge.`;
+      noteMsg = '⚠️ Insufficient Free Shares: Pledged amount exceeds colleague\'s available limit.';
     } else {
       isEligible = true;
-      noteMsg = `✓ Eligible: Colleague has KES ${calculatedFreeShares.toLocaleString()} unencumbered Free Shares.`;
+      noteMsg = '✓ Eligible: Colleague meets the unencumbered savings requirement for this pledge.';
     }
 
     updated[index].eligible = isEligible;

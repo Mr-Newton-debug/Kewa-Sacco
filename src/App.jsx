@@ -49,6 +49,7 @@ export default function App() {
   const [announcements, setAnnouncements] = useState([]);
   const [saccoDocs, setSaccoDocs] = useState([]);
   const [welfareClaims, setWelfareClaims] = useState([]);
+  const [welfareContributions, setWelfareContributions] = useState([]);
   const [allPendingLoans, setAllPendingLoans] = useState([]);
   const [allLoansLeadership, setAllLoansLeadership] = useState([]);
   const [allPendingClaims, setAllPendingClaims] = useState([]);
@@ -412,7 +413,6 @@ export default function App() {
     if (data) setInquiries(data);
   };
 
-  // Pre-load all members with calculated totals
   const fetchAllMembers = async (currentUserId) => {
     const { data } = await supabase
       .from('profiles')
@@ -443,7 +443,6 @@ export default function App() {
     }
   };
 
-  // Fetch Guarantor Data with Auto-Release on Completed Loans
   const fetchGuarantorData = async (userId) => {
     const { data: requests } = await supabase
       .from('loan_guarantors')
@@ -462,7 +461,6 @@ export default function App() {
       .eq('status', 'accepted');
     
     if (activeGuarantees) {
-      // Release guarantee obligation automatically if loan is completed or paid to zero
       const activeRunning = activeGuarantees.filter(
         (g) => (g.loans?.status === 'approved' || g.loans?.status === 'disbursed') && Number(g.loans?.balance_remaining || 0) > 0
       );
@@ -503,7 +501,6 @@ export default function App() {
       .order('created_at', { ascending: false });
     if (allLeadershipLoans) setAllLoansLeadership(allLeadershipLoans);
 
-    // Fetch all system guarantors for the Chairman inspection matrix
     const { data: allGuarantors } = await supabase
       .from('loan_guarantors')
       .select('*, profiles:guarantor_id(full_name, member_number, phone), loans(*, profiles:member_id(full_name, member_number, companies(name)))')
@@ -628,7 +625,6 @@ export default function App() {
     setLoading(false);
   };
 
-  // Manual Member Adjustment with Automatic Guarantor Release on Debt Clearance
   const handleManualMemberAdjustment = async (e) => {
     e.preventDefault();
     const parsedAmount = parseAccountingNumber(manualAmountRaw);
@@ -659,6 +655,21 @@ export default function App() {
       } else {
         setMessage({ text: error.message, type: 'error' });
       }
+    } else if (manualAdjustmentType === 'welfare_monthly_200') {
+      await supabase.from('welfare_contributions').insert([
+        {
+          member_id: manualTargetMemberId,
+          amount: parsedAmount,
+          period_month: new Date().toLocaleString('default', { month: 'short', year: 'numeric' }).toUpperCase(),
+          payment_method: 'direct_cash',
+          reference_code: refCode,
+        },
+      ]);
+
+      logAuditAction('WELFARE_BENEVOLENT_CREDIT', `Posted KES ${parsedAmount.toLocaleString()} Welfare Fund to ${targetMember?.full_name}`);
+      setMessage({ text: `Success! KES ${parsedAmount.toLocaleString()} credited to ${targetMember?.full_name}'s Welfare Benevolent Account.`, type: 'success' });
+      setManualAmountRaw('');
+      setManualRefCode('');
     } else if (manualAdjustmentType === 'loan_repayment') {
       const { data: memberActiveLoans } = await supabase
         .from('loans')
@@ -716,7 +727,6 @@ export default function App() {
           })
           .eq('id', loan.id);
 
-        // When a loan is fully cleared, release all guarantors tied to this loan facility
         if (isCleared) {
           await supabase
             .from('loan_guarantors')
@@ -753,7 +763,6 @@ export default function App() {
     setLoading(false);
   };
 
-  // Historical Migration Engine
   const handleExecuteHistoricalMigration = (e) => {
     e.preventDefault();
     if (!migrationFile) {
@@ -826,7 +835,6 @@ export default function App() {
     });
   };
 
-  // --- EXECUTIVE SOCIETY LEVEL FINANCIAL TOTALS (FOR CHAIRMAN & ADMIN) ---
   const totalSocietySharesCapital = allMembers.reduce((acc, m) => acc + Number(m.totalSavings || 0), 0);
   const totalSocietyUnpaidLoans = allLoansLeadership
     .filter(l => ['approved', 'disbursed'].includes(l.status))
@@ -852,7 +860,6 @@ export default function App() {
 
   const netSocietyLiquidity = (totalSocietySharesCapital + totalSocietyRepaymentsCollected) - totalSocietyDisbursedPrincipal;
 
-  // Individual Member Metrics
   const totalSavings = savings.reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
   const activeLoanBalance = loans
     .filter((l) => (l.status === 'approved' || l.status === 'disbursed') && Number(l.balance_remaining || 0) > 0)
@@ -1976,7 +1983,7 @@ export default function App() {
         )}
 
         {!session || authMode === 'reset' ? (
-          /* AUTH & PASSWORD RECOVERY VIEWS */
+          /* AUTH VIEWS */
           <div className="max-w-md mx-auto mt-6 sm:mt-12 bg-slate-900/90 border border-slate-800/90 rounded-3xl p-5 sm:p-10 shadow-2xl backdrop-blur-xl">
             <div className="text-center mb-5">
               <div className="inline-flex bg-gradient-to-tr from-emerald-600 to-teal-400 p-3 rounded-2xl shadow-xl shadow-emerald-900/30 mb-2">
@@ -3059,7 +3066,7 @@ export default function App() {
                   <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-lg">
                     <div className="flex items-center gap-2 mb-3">
                       <HeartHandshake className="w-4 h-4 text-rose-400" />
-                      <h3 className="text-sm sm:text-base font-bold text-white">Benevolent & Welfare Claims</h3>
+                      <h3 className="text-sm sm:text-base font-bold text-white">Benevolent & Welfare Claims (KES 200 Scheme)</h3>
                     </div>
 
                     <form onSubmit={handleSubmitWelfareClaim} className="space-y-2.5">
@@ -3184,7 +3191,7 @@ export default function App() {
                     <select
                       value={mpesaType}
                       onChange={(e) => setMpesaType(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white"
                     >
                       <option value="savings_deposit">Voluntary Savings Top-Up</option>
                       <option value="loan_repayment">Direct Loan Repayment (Clear Balance)</option>
@@ -3200,7 +3207,7 @@ export default function App() {
                       value={mpesaPhone || profile?.phone || ''}
                       onChange={(e) => setMpesaPhone(e.target.value)}
                       placeholder="0712345678"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono"
                     />
                   </div>
 
@@ -3212,7 +3219,7 @@ export default function App() {
                       value={mpesaAmountRaw}
                       onChange={(e) => setMpesaAmountRaw(formatAccountingNumber(e.target.value))}
                       placeholder="e.g. 3,000"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono"
                     />
                   </div>
 
@@ -3224,7 +3231,7 @@ export default function App() {
                       value={mpesaCode}
                       onChange={(e) => setMpesaCode(e.target.value)}
                       placeholder="e.g. QGH789KL12"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono uppercase"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono uppercase"
                     />
                   </div>
 
@@ -3442,7 +3449,6 @@ export default function App() {
             {activeTab === 'admin' && ['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(userRole) && (
               <div className="space-y-4">
                 
-                {/* ROLE BANNER */}
                 <div className="bg-gradient-to-r from-amber-950/80 to-slate-900 border border-amber-800/60 rounded-2xl sm:rounded-3xl p-4 sm:p-5 flex justify-between items-center shadow-lg">
                   <div>
                     <span className="text-[9px] sm:text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-900 text-amber-200 uppercase tracking-wide">
@@ -3457,7 +3463,7 @@ export default function App() {
                   <span className="text-xs text-amber-300/80 font-mono hidden sm:inline">KEWA SACCO Governance Framework</span>
                 </div>
 
-                {/* 1. EXECUTIVE FINANCIAL OVERSIGHT METRICS (CHAIRMAN & ADMIN ONLY) */}
+                {/* 1. EXECUTIVE FINANCIAL OVERSIGHT METRICS */}
                 {['admin', 'chairman'].includes(userRole) && (
                   <div className="bg-slate-900/90 border border-emerald-900/50 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl space-y-3">
                     <div className="flex items-center gap-2 mb-1">
@@ -3501,7 +3507,7 @@ export default function App() {
                   </div>
                 )}
 
-                {/* 2. GUARANTOR LIABILITY TRACKER MATRIX (CHAIRMAN & ADMIN ONLY) */}
+                {/* 2. GUARANTOR LIABILITY TRACKER MATRIX */}
                 {['admin', 'chairman'].includes(userRole) && (
                   <div className="bg-slate-900/90 border border-purple-900/50 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
                     <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2.5 mb-3">
@@ -3708,7 +3714,7 @@ export default function App() {
                                         : 'bg-emerald-950/40 border border-emerald-800/40 text-emerald-300/60 cursor-not-allowed'
                                     }`}
                                   >
-                                    <CheckCircle className="w-3.5 h-3.5" /> 3. Treas {isTreasurerUser && <RotateCcw className="w-2.5 h-2.5 ml-0.5 opacity-60" />}
+                                    <CheckCircle className="w-3 h-3" /> 3. Treas {isTreasurerUser && <RotateCcw className="w-2.5 h-2.5 ml-0.5 opacity-60" />}
                                   </button>
                                 ) : (
                                   <button
@@ -3918,6 +3924,7 @@ export default function App() {
                           >
                             <option value="loan_repayment">1. Smart Loan Repayment (Exact Loan + Excess to Savings)</option>
                             <option value="savings_deposit">2. Direct Savings Contribution Only</option>
+                            <option value="welfare_monthly_200">3. Welfare Benevolent Fund (KES 200)</option>
                           </select>
                         </div>
 
@@ -3928,7 +3935,7 @@ export default function App() {
                             required
                             value={manualAmountRaw}
                             onChange={(e) => setManualAmountRaw(formatAccountingNumber(e.target.value))}
-                            placeholder="e.g. 9,000"
+                            placeholder="e.g. 200 or 9,000"
                             className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
                           />
                         </div>
@@ -4317,7 +4324,7 @@ export default function App() {
                                     }`}
                                     title={isTreasurerUser ? "Click to Unsign" : "Only Treasurer can modify"}
                                   >
-                                    <CheckCircle className="w-3.5 h-3.5" /> 3. Treas {isTreasurerUser && <RotateCcw className="w-2.5 h-2.5 ml-0.5 opacity-60" />}
+                                    <CheckCircle className="w-3 h-3" /> 3. Treas {isTreasurerUser && <RotateCcw className="w-2.5 h-2.5 ml-0.5 opacity-60" />}
                                   </button>
                                 ) : (
                                   <button
@@ -4429,7 +4436,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 12. POST NOTICES & AUDIT LOGS */}
+                {/* 12. POST NOTICES & AUDIT LOGS (UPDATED WITH DATE & TIME) */}
                 {['admin', 'chairman'].includes(userRole) && (
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
@@ -4481,7 +4488,7 @@ export default function App() {
                         <table className="w-full text-left text-xs">
                           <thead className="bg-slate-900 text-slate-400 sticky top-0 font-semibold">
                             <tr>
-                              <th className="p-2">Time</th>
+                              <th className="p-2">Date & Time</th>
                               <th className="p-2">User</th>
                               <th className="p-2">Action</th>
                               <th className="p-2">Details</th>
@@ -4490,7 +4497,15 @@ export default function App() {
                           <tbody className="divide-y divide-slate-800/60 font-mono text-[10px]">
                             {auditLogs.map((log) => (
                               <tr key={log.id}>
-                                <td className="p-2 text-slate-400">{new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
+                                <td className="p-2 text-slate-400">
+                                  {new Date(log.created_at).toLocaleString('en-GB', { 
+                                    day: '2-digit', 
+                                    month: 'short', 
+                                    year: 'numeric', 
+                                    hour: '2-digit', 
+                                    minute: '2-digit' 
+                                  })}
+                                </td>
                                 <td className="p-2 text-slate-200 font-sans font-bold">{log.user_name || 'Member'}</td>
                                 <td className="p-2 text-emerald-400 font-bold">{log.action}</td>
                                 <td className="p-2 text-slate-300">{log.details}</td>

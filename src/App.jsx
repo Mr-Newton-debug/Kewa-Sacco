@@ -12,7 +12,7 @@ import {
   Award, ShieldAlert, FileText, Send, History, CheckSquare, Paperclip, FileCheck, HelpCircle,
   Eye, EyeOff, FolderDown, FileArchive, Shield, Lock, RotateCcw, AlertTriangle, Sparkles, Search,
   MessageSquare, MessageCircle, Bot, Mail, CornerDownRight, Check, UserCheck, AlertOctagon,
-  Contact2, Filter, AtSign, Megaphone, Settings, ArrowRight, Database
+  Contact2, Filter, AtSign, Megaphone, Settings, ArrowRight, Database, Coins, Layers, CheckCircle2
 } from 'lucide-react';
 
 export default function App() {
@@ -44,11 +44,11 @@ export default function App() {
   const [allMembers, setAllMembers] = useState([]);
   const [guarantorRequests, setGuarantorRequests] = useState([]);
   const [myGuaranteesCommitted, setMyGuaranteesCommitted] = useState([]);
+  const [allSystemGuarantors, setAllSystemGuarantors] = useState([]);
   const [beneficiaries, setBeneficiaries] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
   const [saccoDocs, setSaccoDocs] = useState([]);
   const [welfareClaims, setWelfareClaims] = useState([]);
-  const [welfareContributions, setWelfareContributions] = useState([]);
   const [allPendingLoans, setAllPendingLoans] = useState([]);
   const [allLoansLeadership, setAllLoansLeadership] = useState([]);
   const [allPendingClaims, setAllPendingClaims] = useState([]);
@@ -64,6 +64,7 @@ export default function App() {
   // Directory Search State
   const [memberDirectorySearch, setMemberDirectorySearch] = useState('');
   const [memberDirectoryCompanyFilter, setMemberDirectoryCompanyFilter] = useState('all');
+  const [guarantorTrackerSearch, setGuarantorTrackerSearch] = useState('');
 
   // Manual Member Adjustment Form State
   const [manualTargetMemberId, setManualTargetMemberId] = useState('');
@@ -73,7 +74,6 @@ export default function App() {
 
   // Historical Migration Engine State
   const [migrationFile, setMigrationFile] = useState(null);
-  const [migrationLog, setMigrationLog] = useState('');
 
   // Support & Chatbot State
   const [inquiries, setInquiries] = useState([]);
@@ -350,7 +350,6 @@ export default function App() {
       fetchBeneficiaries(userId);
       fetchWelfareClaims(userId);
       fetchMemberInquiries(userId);
-      fetchWelfareContributions(userId);
       if (['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(profileData.role)) {
         fetchAdminData();
       }
@@ -378,19 +377,6 @@ export default function App() {
     if (repaymentData) setRepayments(repaymentData);
 
     setLoading(false);
-  };
-
-  const fetchWelfareContributions = async (userId) => {
-    try {
-      const { data } = await supabase
-        .from('welfare_contributions')
-        .select('*')
-        .eq('member_id', userId)
-        .order('created_at', { ascending: false });
-      if (data) setWelfareContributions(data);
-    } catch (e) {
-      console.warn('Welfare contributions fetch skipped:', e);
-    }
   };
 
   const handleUpdateProfileDetails = async (e) => {
@@ -457,7 +443,7 @@ export default function App() {
     }
   };
 
-  // Fixed Guarantor Data fetching
+  // Fetch Guarantor Data with Auto-Release on Completed Loans
   const fetchGuarantorData = async (userId) => {
     const { data: requests } = await supabase
       .from('loan_guarantors')
@@ -476,8 +462,9 @@ export default function App() {
       .eq('status', 'accepted');
     
     if (activeGuarantees) {
+      // Release guarantee obligation automatically if loan is completed or paid to zero
       const activeRunning = activeGuarantees.filter(
-        (g) => g.loans?.status === 'approved' || g.loans?.status === 'disbursed'
+        (g) => (g.loans?.status === 'approved' || g.loans?.status === 'disbursed') && Number(g.loans?.balance_remaining || 0) > 0
       );
       setMyGuaranteesCommitted(activeRunning);
     }
@@ -512,9 +499,16 @@ export default function App() {
 
     const { data: allLeadershipLoans } = await supabase
       .from('loans')
-      .select('*, profiles(full_name, member_number, phone, companies(name))')
+      .select('*, profiles(full_name, member_number, phone, companies(name)), loan_repayments(amount)')
       .order('created_at', { ascending: false });
     if (allLeadershipLoans) setAllLoansLeadership(allLeadershipLoans);
+
+    // Fetch all system guarantors for the Chairman inspection matrix
+    const { data: allGuarantors } = await supabase
+      .from('loan_guarantors')
+      .select('*, profiles:guarantor_id(full_name, member_number, phone), loans(*, profiles:member_id(full_name, member_number, companies(name)))')
+      .order('created_at', { ascending: false });
+    if (allGuarantors) setAllSystemGuarantors(allGuarantors);
 
     const { data: claims } = await supabase
       .from('welfare_claims')
@@ -634,7 +628,7 @@ export default function App() {
     setLoading(false);
   };
 
-  // --- MANUAL DISBURSEMENT & OPENING BALANCES ENGINE ---
+  // Manual Member Adjustment with Automatic Guarantor Release on Debt Clearance
   const handleManualMemberAdjustment = async (e) => {
     e.preventDefault();
     const parsedAmount = parseAccountingNumber(manualAmountRaw);
@@ -665,22 +659,6 @@ export default function App() {
       } else {
         setMessage({ text: error.message, type: 'error' });
       }
-    } else if (manualAdjustmentType === 'welfare_monthly_200') {
-      // Record dedicated monthly welfare benevolent contribution
-      await supabase.from('welfare_contributions').insert([
-        {
-          member_id: manualTargetMemberId,
-          amount: parsedAmount,
-          period_month: new Date().toLocaleString('default', { month: 'short', year: 'numeric' }).toUpperCase(),
-          payment_method: 'direct_cash',
-          reference_code: refCode,
-        },
-      ]);
-
-      logAuditAction('WELFARE_BENEVOLENT_CREDIT', `Posted KES ${parsedAmount.toLocaleString()} Welfare Fund to ${targetMember?.full_name}`);
-      setMessage({ text: `Success! KES ${parsedAmount.toLocaleString()} credited to ${targetMember?.full_name}'s Welfare Benevolent Account.`, type: 'success' });
-      setManualAmountRaw('');
-      setManualRefCode('');
     } else if (manualAdjustmentType === 'loan_repayment') {
       const { data: memberActiveLoans } = await supabase
         .from('loans')
@@ -729,15 +707,24 @@ export default function App() {
           },
         ]);
 
+        const isCleared = newLoanBal === 0;
         await supabase
           .from('loans')
           .update({
             balance_remaining: newLoanBal,
-            status: newLoanBal === 0 ? 'completed' : 'approved',
+            status: isCleared ? 'completed' : 'approved',
           })
           .eq('id', loan.id);
 
-        distributionLog.push(`KES ${amountToDeduct.toLocaleString()} applied to ${(loan.loan_product || 'loan').toUpperCase()}`);
+        // When a loan is fully cleared, release all guarantors tied to this loan facility
+        if (isCleared) {
+          await supabase
+            .from('loan_guarantors')
+            .update({ status: 'released' })
+            .eq('loan_id', loan.id);
+        }
+
+        distributionLog.push(`KES ${amountToDeduct.toLocaleString()} applied to ${(loan.loan_product || 'loan').toUpperCase()}${isCleared ? ' (CLEARED & GUARANTORS RELEASED ✓)' : ''}`);
       }
 
       if (remainingCash > 0) {
@@ -766,7 +753,7 @@ export default function App() {
     setLoading(false);
   };
 
-  // --- HISTORICAL DATA MIGRATION ENGINE ---
+  // Historical Migration Engine
   const handleExecuteHistoricalMigration = (e) => {
     e.preventDefault();
     if (!migrationFile) {
@@ -792,7 +779,6 @@ export default function App() {
           const target = allMembers.find(m => m.member_number?.toLowerCase() === memberNo.toLowerCase());
 
           if (target) {
-            // 1. Post opening savings balance
             if (existingSavings > 0) {
               await supabase.from('savings_ledger').insert([
                 {
@@ -804,7 +790,6 @@ export default function App() {
               ]);
             }
 
-            // 2. Post active opening loan
             if (activeDebt > 0) {
               await supabase.from('loans').insert([
                 {
@@ -822,7 +807,6 @@ export default function App() {
                 }
               ]);
             }
-
             successCount++;
           } else {
             errorCount++;
@@ -842,9 +826,36 @@ export default function App() {
     });
   };
 
+  // --- EXECUTIVE SOCIETY LEVEL FINANCIAL TOTALS (FOR CHAIRMAN & ADMIN) ---
+  const totalSocietySharesCapital = allMembers.reduce((acc, m) => acc + Number(m.totalSavings || 0), 0);
+  const totalSocietyUnpaidLoans = allLoansLeadership
+    .filter(l => ['approved', 'disbursed'].includes(l.status))
+    .reduce((acc, l) => acc + Number(l.balance_remaining || 0), 0);
+  
+  const totalSocietyInterestAccrued = allLoansLeadership
+    .filter(l => ['approved', 'disbursed', 'completed'].includes(l.status))
+    .reduce((acc, l) => {
+      const principal = Number(l.principal_amount || 0);
+      const rate = Number(l.interest_rate || 1.0) / 100;
+      const months = Number(l.repayment_period_months || 12);
+      return acc + (principal * rate * months);
+    }, 0);
+
+  const totalSocietyDisbursedPrincipal = allLoansLeadership
+    .filter(l => ['approved', 'disbursed', 'completed'].includes(l.status))
+    .reduce((acc, l) => acc + Number(l.principal_amount || 0), 0);
+
+  const totalSocietyRepaymentsCollected = allLoansLeadership.reduce((acc, l) => {
+    const loanReps = (l.loan_repayments || []).reduce((sum, r) => sum + Number(r.amount || 0), 0);
+    return acc + loanReps;
+  }, 0);
+
+  const netSocietyLiquidity = (totalSocietySharesCapital + totalSocietyRepaymentsCollected) - totalSocietyDisbursedPrincipal;
+
+  // Individual Member Metrics
   const totalSavings = savings.reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
   const activeLoanBalance = loans
-    .filter((l) => l.status === 'approved' || l.status === 'disbursed')
+    .filter((l) => (l.status === 'approved' || l.status === 'disbursed') && Number(l.balance_remaining || 0) > 0)
     .reduce((acc, curr) => acc + Number(curr.balance_remaining || 0), 0);
 
   const totalGuaranteesCommittedAmount = myGuaranteesCommitted.reduce(
@@ -873,7 +884,6 @@ export default function App() {
     checkBlindGuarantorEligibility(index, member.id, parseAccountingNumber(updated[index].amountRaw));
   };
 
-  // Fixed Guarantor Eligibility Checker
   const checkBlindGuarantorEligibility = (index, memberId, currentPledgeAmount = 0) => {
     const updated = [...guarantorList];
 
@@ -1281,14 +1291,12 @@ export default function App() {
     const lower = userText.toLowerCase();
     const newChat = [...chatMessages, { sender: 'user', text: userText }];
 
-    let botReply = "I am trained on KEWA SACCO By-Laws & Credit Policies. You can ask about 'loans', 'free shares', 'guarantors', 'interest rates', 'dividends', 'welfare KES 200 contribution', or submit a ticket to the committee below!";
+    let botReply = "I am trained on KEWA SACCO By-Laws & Credit Policies. You can ask about 'loans', 'free shares', 'guarantors', 'interest rates', 'dividends', or submit a ticket to the committee below!";
 
     if (lower.includes('loan') || lower.includes('apply') || lower.includes('borrow')) {
       botReply = `You can apply for 4 tailored products: 1. Main Loan (Up to 24 mos, 1% rate, 3X savings), 2. Emergency Loan (12 mos, 1%), 3. Christmas Loan (6 mos, 1%), and 4. Monthly Shylock (1 mo, 5% fee). Your maximum limit right now is KES ${maxLimitForSelectedProduct.toLocaleString()}.`;
     } else if (lower.includes('free share') || lower.includes('shares') || lower.includes('pledge') || lower.includes('guarant')) {
       botReply = `Your available Free Shares are currently KES ${freeSharesAvailable.toLocaleString()}. This represents your Total Savings (KES ${totalSavings.toLocaleString()}) minus Active Debt (KES ${activeLoanBalance.toLocaleString()}) and running guarantee pledges (KES ${totalGuaranteesCommittedAmount.toLocaleString()}).`;
-    } else if (lower.includes('welfare') || lower.includes('200') || lower.includes('benevolent')) {
-      botReply = "All members contribute KES 200 monthly for the Benevolent Welfare Fund (via payroll checkoff or annual M-Pesa). It covers: Member Bereavement (KES 50,000), Spouse/Child (KES 30,000), Parent (KES 20,000), and Inpatient Hospitalization >3 days (Up to KES 25,000).";
     } else if (lower.includes('mpesa') || lower.includes('paybill') || lower.includes('deposit')) {
       botReply = `Use Paybill Business No: 522522, Account No: ${profile?.member_number || 'Your Member No'}. You can top-up voluntary savings or make direct loan amortizations instantly in the M-Pesa tab!`;
     }
@@ -1347,13 +1355,22 @@ export default function App() {
         ]);
 
         const newBal = Math.max(0, Number(memberLoan.balance_remaining) - mpesaAmtNum);
+        const isCleared = newBal === 0;
+
         await supabase
           .from('loans')
           .update({
             balance_remaining: newBal,
-            status: newBal === 0 ? 'completed' : 'approved',
+            status: isCleared ? 'completed' : 'approved',
           })
           .eq('id', memberLoan.id);
+
+        if (isCleared) {
+          await supabase
+            .from('loan_guarantors')
+            .update({ status: 'released' })
+            .eq('loan_id', memberLoan.id);
+        }
 
         logAuditAction('MPESA_LOAN_REPAYMENT', `KES ${mpesaAmtNum.toLocaleString()} loan repayment via M-Pesa ${receipt}`);
         setMessage({ text: `Payment verified! KES ${mpesaAmtNum.toLocaleString()} deducted from active loan.`, type: 'success' });
@@ -1386,9 +1403,8 @@ export default function App() {
           const memberNum = (row.member_number || row.member_no || row.MemberNo || '').toString().trim();
           const savingsAmt = parseFloat(row.savings_amount || row.savings || row.Savings || 0);
           const loanAmt = parseFloat(row.loan_amount || row.loan || row.Loan || 0);
-          const welfareAmt = parseFloat(row.welfare_amount || row.welfare || 200);
 
-          if (memberNum && (savingsAmt > 0 || loanAmt > 0 || welfareAmt > 0)) {
+          if (memberNum && (savingsAmt > 0 || loanAmt > 0)) {
             const memberObj = allMembers.find(
               (m) => m.member_number?.toLowerCase() === memberNum.toLowerCase()
             );
@@ -1401,7 +1417,6 @@ export default function App() {
               active_loan_id: activeLoan ? activeLoan.id : null,
               savings_amount: savingsAmt,
               loan_amount: loanAmt,
-              welfare_amount: welfareAmt,
               valid: !!memberObj,
             });
           }
@@ -1418,7 +1433,6 @@ export default function App() {
 
     setLoading(true);
     
-    // 1. Post Savings
     const savingsInserts = validRows
       .filter((r) => r.savings_amount > 0)
       .map((r) => ({
@@ -1432,26 +1446,6 @@ export default function App() {
       await supabase.from('savings_ledger').insert(savingsInserts);
     }
 
-    // 2. Post Welfare KES 200 Deductions
-    const welfareInserts = validRows
-      .filter((r) => r.welfare_amount > 0)
-      .map((r) => ({
-        member_id: r.member_id,
-        amount: r.welfare_amount,
-        period_month: batchMonth,
-        payment_method: 'payroll_checkoff',
-        reference_code: `CHECKOFF-WELFARE-${batchMonth}`,
-      }));
-
-    if (welfareInserts.length > 0) {
-      try {
-        await supabase.from('welfare_contributions').insert(welfareInserts);
-      } catch (e) {
-        console.warn('Welfare batch write skipped:', e);
-      }
-    }
-
-    // 3. Post Loan Repayments
     const loanRows = validRows.filter((r) => r.loan_amount > 0 && r.active_loan_id);
     for (const r of loanRows) {
       await supabase.from('loan_repayments').insert([
@@ -1471,19 +1465,28 @@ export default function App() {
 
       if (currentLoan) {
         const newBal = Math.max(0, Number(currentLoan.balance_remaining) - r.loan_amount);
+        const isCleared = newBal === 0;
+
         await supabase
           .from('loans')
           .update({
             balance_remaining: newBal,
-            status: newBal === 0 ? 'completed' : 'approved',
+            status: isCleared ? 'completed' : 'approved',
           })
           .eq('id', r.active_loan_id);
+
+        if (isCleared) {
+          await supabase
+            .from('loan_guarantors')
+            .update({ status: 'released' })
+            .eq('loan_id', r.active_loan_id);
+        }
       }
     }
 
-    logAuditAction('PAYROLL_CHECKOFF_EXECUTED', `Batch payroll processed for ${batchMonth} (${validRows.length} members with KES 200 Welfare)`);
+    logAuditAction('PAYROLL_CHECKOFF_EXECUTED', `Batch payroll processed for ${batchMonth} (${validRows.length} members)`);
     setMessage({
-      text: `Batch checkoff processed: ${savingsInserts.length} savings credits, ${welfareInserts.length} welfare entries, and ${loanRows.length} loan deductions applied!`,
+      text: `Batch checkoff processed: ${savingsInserts.length} savings credits and ${loanRows.length} loan deductions applied!`,
       type: 'success',
     });
     setBatchPreview([]);
@@ -1566,7 +1569,7 @@ export default function App() {
     setMessage({ text: 'Announcement published to Member Board!', type: 'success' });
   };
 
-  // --- UNIFIED PROGRESSIVE PDF STATEMENT ---
+  // Unified Progressive PDF Statement
   const generatePDFStatement = (loan = null) => {
     try {
       const doc = new jsPDF();
@@ -1728,6 +1731,16 @@ export default function App() {
     return matchesSearch && matchesCompany;
   });
 
+  const filteredGuarantorInspectionList = allSystemGuarantors.filter((g) => {
+    const guarantorName = g.profiles?.full_name?.toLowerCase() || '';
+    const guarantorNo = g.profiles?.member_number?.toLowerCase() || '';
+    const borrowerName = g.loans?.profiles?.full_name?.toLowerCase() || '';
+    const borrowerNo = g.loans?.profiles?.member_number?.toLowerCase() || '';
+    const search = guarantorTrackerSearch.toLowerCase();
+
+    return guarantorName.includes(search) || guarantorNo.includes(search) || borrowerName.includes(search) || borrowerNo.includes(search);
+  });
+
   const userRole = profile?.role || 'member';
 
   return (
@@ -1795,7 +1808,7 @@ export default function App() {
                   activeTab === 'beneficiaries' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
                 }`}
               >
-                Profile & Welfare (KES 200)
+                Profile & Welfare
               </button>
               <button
                 onClick={() => setActiveTab('mpesa')}
@@ -1963,7 +1976,7 @@ export default function App() {
         )}
 
         {!session || authMode === 'reset' ? (
-          /* AUTH VIEWS */
+          /* AUTH & PASSWORD RECOVERY VIEWS */
           <div className="max-w-md mx-auto mt-6 sm:mt-12 bg-slate-900/90 border border-slate-800/90 rounded-3xl p-5 sm:p-10 shadow-2xl backdrop-blur-xl">
             <div className="text-center mb-5">
               <div className="inline-flex bg-gradient-to-tr from-emerald-600 to-teal-400 p-3 rounded-2xl shadow-xl shadow-emerald-900/30 mb-2">
@@ -2731,7 +2744,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 3: GUARANTORS (ACCURATE BORROWER IDENTITY FROM DIRECT LOOKUP) */}
+            {/* TAB 3: GUARANTORS */}
             {activeTab === 'guarantors' && (
               <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 space-y-4 shadow-lg">
                 <div>
@@ -2872,7 +2885,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 5: PROFILE SETTINGS & WELFARE BENEVOLENT DESK */}
+            {/* TAB 5: PROFILE SETTINGS & WELFARE */}
             {activeTab === 'beneficiaries' && (
               <div className="space-y-6">
                 {/* Profile Settings Card */}
@@ -3046,7 +3059,7 @@ export default function App() {
                   <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-lg">
                     <div className="flex items-center gap-2 mb-3">
                       <HeartHandshake className="w-4 h-4 text-rose-400" />
-                      <h3 className="text-sm sm:text-base font-bold text-white">Benevolent & Welfare Claims (KES 200 Scheme)</h3>
+                      <h3 className="text-sm sm:text-base font-bold text-white">Benevolent & Welfare Claims</h3>
                     </div>
 
                     <form onSubmit={handleSubmitWelfareClaim} className="space-y-2.5">
@@ -3155,7 +3168,7 @@ export default function App() {
                   </div>
                   <div>
                     <h3 className="text-base sm:text-lg font-bold text-white">Direct M-Pesa Payment & Top-Up</h3>
-                    <p className="text-[11px] text-slate-400">Instant Savings Deposit, Loan Repayment, or Annual Welfare via M-Pesa</p>
+                    <p className="text-[11px] text-slate-400">Instant Savings Deposit or Loan Repayment via M-Pesa</p>
                   </div>
                 </div>
 
@@ -3429,6 +3442,7 @@ export default function App() {
             {activeTab === 'admin' && ['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(userRole) && (
               <div className="space-y-4">
                 
+                {/* ROLE BANNER */}
                 <div className="bg-gradient-to-r from-amber-950/80 to-slate-900 border border-amber-800/60 rounded-2xl sm:rounded-3xl p-4 sm:p-5 flex justify-between items-center shadow-lg">
                   <div>
                     <span className="text-[9px] sm:text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-900 text-amber-200 uppercase tracking-wide">
@@ -3443,7 +3457,145 @@ export default function App() {
                   <span className="text-xs text-amber-300/80 font-mono hidden sm:inline">KEWA SACCO Governance Framework</span>
                 </div>
 
-                {/* 1. WELFARE CLAIMS APPROVAL QUEUE */}
+                {/* 1. EXECUTIVE FINANCIAL OVERSIGHT METRICS (CHAIRMAN & ADMIN ONLY) */}
+                {['admin', 'chairman'].includes(userRole) && (
+                  <div className="bg-slate-900/90 border border-emerald-900/50 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl space-y-3">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Coins className="w-5 h-5 text-emerald-400" />
+                      <h3 className="text-sm sm:text-base font-bold text-white">Society-Wide Financial Position & Exposure Matrix</h3>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                      <div className="bg-slate-950 border border-slate-800 p-3.5 rounded-2xl shadow">
+                        <p className="text-[10px] text-slate-400 font-semibold uppercase">Total Member Shares</p>
+                        <h4 className="text-base sm:text-xl font-black text-white mt-1">
+                          KES {totalSocietySharesCapital.toLocaleString('en-KE', { minimumFractionDigits: 0 })}
+                        </h4>
+                        <span className="text-[9px] text-emerald-400 font-medium">All Branches Capital</span>
+                      </div>
+
+                      <div className="bg-slate-950 border border-slate-800 p-3.5 rounded-2xl shadow">
+                        <p className="text-[10px] text-slate-400 font-semibold uppercase">Total Accrued Interest</p>
+                        <h4 className="text-base sm:text-xl font-black text-emerald-400 mt-1">
+                          KES {totalSocietyInterestAccrued.toLocaleString('en-KE', { minimumFractionDigits: 0 })}
+                        </h4>
+                        <span className="text-[9px] text-emerald-400 font-medium">Earned Portfolio Returns</span>
+                      </div>
+
+                      <div className="bg-slate-950 border border-slate-800 p-3.5 rounded-2xl shadow">
+                        <p className="text-[10px] text-slate-400 font-semibold uppercase">Total Unpaid Loans</p>
+                        <h4 className="text-base sm:text-xl font-black text-amber-400 mt-1">
+                          KES {totalSocietyUnpaidLoans.toLocaleString('en-KE', { minimumFractionDigits: 0 })}
+                        </h4>
+                        <span className="text-[9px] text-rose-400 font-medium">Gross Active Risk Exposure</span>
+                      </div>
+
+                      <div className="bg-slate-950 border border-slate-800 p-3.5 rounded-2xl shadow">
+                        <p className="text-[10px] text-slate-400 font-semibold uppercase">Net Liquid Capital</p>
+                        <h4 className="text-base sm:text-xl font-black text-teal-300 mt-1">
+                          KES {netSocietyLiquidity.toLocaleString('en-KE', { minimumFractionDigits: 0 })}
+                        </h4>
+                        <span className="text-[9px] text-teal-400 font-medium">Cash Reserve Available</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 2. GUARANTOR LIABILITY TRACKER MATRIX (CHAIRMAN & ADMIN ONLY) */}
+                {['admin', 'chairman'].includes(userRole) && (
+                  <div className="bg-slate-900/90 border border-purple-900/50 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
+                    <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2.5 mb-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <Layers className="w-4 h-4 text-purple-400" />
+                          <h3 className="text-sm sm:text-base font-bold text-white">Guarantor Liability & Individual Tracking Matrix ({filteredGuarantorInspectionList.length})</h3>
+                        </div>
+                        <p className="text-[11px] text-slate-400 mt-0.5 font-medium">
+                          Track individual guarantor liability. When a borrower fully repays a loan, guarantor liability is automatically released.
+                        </p>
+                      </div>
+
+                      <button
+                        onClick={fetchAdminData}
+                        className="self-start sm:self-auto p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-purple-400 text-xs font-semibold flex items-center gap-1 transition border border-slate-700"
+                      >
+                        <RotateCcw className="w-3 h-3" /> Refresh
+                      </button>
+                    </div>
+
+                    <div className="mb-3 relative">
+                      <input
+                        type="text"
+                        placeholder="Search by Guarantor Name, Borrower Name, or Member Number..."
+                        value={guarantorTrackerSearch}
+                        onChange={(e) => setGuarantorTrackerSearch(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white focus:border-purple-500"
+                      />
+                      <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    </div>
+
+                    {filteredGuarantorInspectionList.length === 0 ? (
+                      <div className="text-center py-6 text-slate-500 text-xs bg-slate-950 rounded-2xl border border-slate-800">
+                        No guarantor records matched your search.
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto border border-slate-800 rounded-2xl bg-slate-950 max-h-72 overflow-y-auto">
+                        <table className="w-full text-left text-xs">
+                          <thead className="bg-slate-900 text-slate-400 font-semibold sticky top-0 z-10">
+                            <tr>
+                              <th className="p-2.5">Guarantor Details</th>
+                              <th className="p-2.5">Borrower Details</th>
+                              <th className="p-2.5 text-right">Pledged Amount</th>
+                              <th className="p-2.5 text-right">Loan Balance</th>
+                              <th className="p-2.5 text-center">Liability Status</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-800/60 font-mono">
+                            {filteredGuarantorInspectionList.map((g) => {
+                              const isLoanPaid = g.loans?.status === 'completed' || Number(g.loans?.balance_remaining || 0) === 0 || g.status === 'released';
+
+                              return (
+                                <tr key={g.id} className="hover:bg-slate-900/50 transition">
+                                  <td className="p-2.5 font-sans">
+                                    <div className="font-bold text-white">{g.profiles?.full_name || 'Member'}</div>
+                                    <div className="text-[10px] text-purple-400 font-mono">{g.profiles?.member_number} • {g.profiles?.phone}</div>
+                                  </td>
+                                  <td className="p-2.5 font-sans">
+                                    <div className="font-bold text-white">{g.loans?.profiles?.full_name || 'Borrower'}</div>
+                                    <div className="text-[10px] text-slate-400 font-mono">{g.loans?.profiles?.companies?.name || 'Branch'} ({g.loans?.profiles?.member_number})</div>
+                                  </td>
+                                  <td className="p-2.5 text-right font-bold text-emerald-400">
+                                    KES {Number(g.amount_guaranteed || 0).toLocaleString()}
+                                  </td>
+                                  <td className="p-2.5 text-right font-bold text-amber-400">
+                                    KES {Number(g.loans?.balance_remaining || 0).toLocaleString()}
+                                  </td>
+                                  <td className="p-2.5 text-center font-sans">
+                                    {isLoanPaid ? (
+                                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-blue-950 text-blue-300 border border-blue-800 flex items-center justify-center gap-1">
+                                        <CheckCircle2 className="w-3 h-3" /> RELEASED
+                                      </span>
+                                    ) : g.status === 'accepted' ? (
+                                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-rose-950 text-rose-300 border border-rose-800">
+                                        ACTIVE LIABILITY
+                                      </span>
+                                    ) : (
+                                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-950 text-amber-300 border border-amber-800 uppercase">
+                                        {g.status}
+                                      </span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 3. WELFARE CLAIMS APPROVAL QUEUE */}
                 <div className="bg-slate-900/90 border border-rose-900/50 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
                   <div className="flex justify-between items-center mb-2">
                     <div className="flex items-center gap-2">
@@ -3541,7 +3693,7 @@ export default function App() {
                                         : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
                                     }`}
                                   >
-                                    {(!canChairSign || !isChairUser) && <Lock className="w-3 h-3 text-slate-600" />}
+                                    {(!canChairSign || !isChairUser) && <Lock className="w-3.5 h-3.5 text-slate-600" />}
                                     2. Sign: Chair
                                   </button>
                                 )}
@@ -3556,7 +3708,7 @@ export default function App() {
                                         : 'bg-emerald-950/40 border border-emerald-800/40 text-emerald-300/60 cursor-not-allowed'
                                     }`}
                                   >
-                                    <CheckCircle className="w-3 h-3" /> 3. Treas {isTreasurerUser && <RotateCcw className="w-2.5 h-2.5 ml-0.5 opacity-60" />}
+                                    <CheckCircle className="w-3.5 h-3.5" /> 3. Treas {isTreasurerUser && <RotateCcw className="w-2.5 h-2.5 ml-0.5 opacity-60" />}
                                   </button>
                                 ) : (
                                   <button
@@ -3594,7 +3746,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 2. HISTORICAL DATA IMPORT ENGINE (FOR ACTIVE SACCO BALANCES) */}
+                {/* 4. HISTORICAL DATA IMPORT ENGINE */}
                 {['admin', 'chairman'].includes(userRole) && (
                   <div className="bg-slate-900/90 border border-cyan-900/50 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
                     <div className="flex items-center gap-2 mb-2">
@@ -3624,7 +3776,7 @@ export default function App() {
                   </div>
                 )}
 
-                {/* 3. MEMBER DIRECTORY */}
+                {/* 5. MEMBER DIRECTORY */}
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
                   <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2.5 mb-3">
                     <div>
@@ -3729,7 +3881,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 4. MANUAL ADJUSTMENT (INCLUDES KES 200 WELFARE POSTING) */}
+                {/* 6. MANUAL ADJUSTMENT */}
                 {['admin', 'chairman', 'treasurer'].includes(userRole) && (
                   <div className="bg-slate-900/90 border border-emerald-900/50 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
                     <div className="flex items-center gap-2 mb-2">
@@ -3737,7 +3889,7 @@ export default function App() {
                       <h3 className="text-sm sm:text-base font-bold text-white">Manual Member Contribution / Loan Repayment Desk</h3>
                     </div>
                     <p className="text-[11px] text-slate-400 mb-3 font-medium">
-                      Post individual payments (Savings, Loan Repayment, or Monthly KES 200 Welfare Contributions).
+                      Post payments. Exact loan balance is posted to loans, and the rest goes to savings.
                     </p>
 
                     <form onSubmit={handleManualMemberAdjustment} className="space-y-3">
@@ -3765,8 +3917,7 @@ export default function App() {
                             className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-medium"
                           >
                             <option value="loan_repayment">1. Smart Loan Repayment (Exact Loan + Excess to Savings)</option>
-                            <option value="savings_deposit">2. Direct Monthly Savings / Shares Top-Up</option>
-                            <option value="welfare_monthly_200">3. Welfare Benevolent Fund (KES 200)</option>
+                            <option value="savings_deposit">2. Direct Savings Contribution Only</option>
                           </select>
                         </div>
 
@@ -3777,7 +3928,7 @@ export default function App() {
                             required
                             value={manualAmountRaw}
                             onChange={(e) => setManualAmountRaw(formatAccountingNumber(e.target.value))}
-                            placeholder="e.g. 200 or 9,000"
+                            placeholder="e.g. 9,000"
                             className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
                           />
                         </div>
@@ -3809,7 +3960,7 @@ export default function App() {
                   </div>
                 )}
 
-                {/* 5. LOAN RECOVERY MATRIX */}
+                {/* 7. LOAN RECOVERY MATRIX */}
                 <div className="bg-slate-900/90 border border-rose-900/40 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
                   <div className="flex justify-between items-center mb-2">
                     <div className="flex items-center gap-2">
@@ -3900,7 +4051,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 6. PUBLISH REPORTS */}
+                {/* 8. PUBLISH REPORTS */}
                 {['admin', 'chairman'].includes(userRole) && (
                   <div className="bg-slate-900/90 border border-emerald-900/40 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
                     <div className="flex items-center gap-2 mb-2">
@@ -3974,15 +4125,15 @@ export default function App() {
                   </div>
                 )}
 
-                {/* 7. DUAL PAYROLL CHECKOFF (WITH KES 200 WELFARE INTEGRATION) */}
+                {/* 9. DUAL PAYROLL CHECKOFF */}
                 {['admin', 'chairman', 'treasurer'].includes(userRole) && (
                   <div className="bg-slate-900/90 border border-amber-900/40 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
                     <div className="flex items-center gap-2 mb-2">
                       <FileSpreadsheet className="w-4 h-4 text-amber-400" />
-                      <h3 className="text-sm sm:text-base font-bold text-white">Automated Payroll Checkoff (Savings + Loans + KES 200 Welfare)</h3>
+                      <h3 className="text-sm sm:text-base font-bold text-white">Automated Dual Payroll Checkoff (Savings + Loans)</h3>
                     </div>
                     <p className="text-[11px] text-slate-400 mb-3 font-medium">
-                      Upload monthly deductions CSV (<code className="text-amber-300 font-mono">member_number, savings_amount, loan_amount, welfare_amount</code>).
+                      Upload monthly payroll deductions CSV (<code className="text-amber-300 font-mono">member_number, savings_amount, loan_amount</code>).
                     </p>
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mb-3">
@@ -4028,9 +4179,8 @@ export default function App() {
                               <tr>
                                 <th className="p-2">Member No</th>
                                 <th className="p-2">Matched Name</th>
-                                <th className="p-2 text-right">Savings</th>
-                                <th className="p-2 text-right">Welfare (200)</th>
-                                <th className="p-2 text-right">Loan</th>
+                                <th className="p-2 text-right">Savings Credit</th>
+                                <th className="p-2 text-right">Loan Deduct</th>
                                 <th className="p-2 text-center">Status</th>
                               </tr>
                             </thead>
@@ -4041,9 +4191,6 @@ export default function App() {
                                   <td className="p-2">{row.full_name}</td>
                                   <td className="p-2 text-right font-bold text-emerald-400">
                                     +KES {Number(row.savings_amount || 0).toLocaleString()}
-                                  </td>
-                                  <td className="p-2 text-right font-bold text-rose-400">
-                                    +KES {Number(row.welfare_amount || 200).toLocaleString()}
                                   </td>
                                   <td className="p-2 text-right font-bold text-amber-400">
                                     -KES {Number(row.loan_amount || 0).toLocaleString()}
@@ -4065,7 +4212,7 @@ export default function App() {
                   </div>
                 )}
 
-                {/* 8. SEQUENTIAL 3-SIGNATORY DESK */}
+                {/* 10. SEQUENTIAL 3-SIGNATORY DESK */}
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
                   <div className="flex items-center gap-2 mb-2">
                     <Clock className="w-4 h-4 text-amber-400" />
@@ -4170,7 +4317,7 @@ export default function App() {
                                     }`}
                                     title={isTreasurerUser ? "Click to Unsign" : "Only Treasurer can modify"}
                                   >
-                                    <CheckCircle className="w-3 h-3" /> 3. Treas {isTreasurerUser && <RotateCcw className="w-2.5 h-2.5 ml-0.5 opacity-60" />}
+                                    <CheckCircle className="w-3.5 h-3.5" /> 3. Treas {isTreasurerUser && <RotateCcw className="w-2.5 h-2.5 ml-0.5 opacity-60" />}
                                   </button>
                                 ) : (
                                   <button
@@ -4209,7 +4356,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 9. SUPPORT TICKETS */}
+                {/* 11. SUPPORT TICKETS */}
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
                   <div className="flex justify-between items-center mb-2">
                     <div className="flex items-center gap-2">
@@ -4282,7 +4429,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 10. POST NOTICES & AUDIT LOGS */}
+                {/* 12. POST NOTICES & AUDIT LOGS */}
                 {['admin', 'chairman'].includes(userRole) && (
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
@@ -4361,7 +4508,7 @@ export default function App() {
         )}
       </main>
 
-      {/* LOAN TERMS MODAL WITH VISUAL ARROWS */}
+      {/* LOAN TERMS MODAL */}
       {showTermsModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
           <div className="bg-slate-950 border border-emerald-900/60 rounded-3xl max-w-lg w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">

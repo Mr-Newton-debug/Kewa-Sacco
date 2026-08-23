@@ -12,7 +12,7 @@ import {
   Award, ShieldAlert, FileText, Send, History, CheckSquare, Paperclip, FileCheck, HelpCircle,
   Eye, EyeOff, FolderDown, FileArchive, Shield, Lock, RotateCcw, AlertTriangle, Sparkles, Search,
   MessageSquare, MessageCircle, Bot, Mail, CornerDownRight, Check, UserCheck, AlertOctagon,
-  Contact2, Filter, AtSign, Megaphone, Settings
+  Contact2, Filter, AtSign, Megaphone, Settings, ArrowRight
 } from 'lucide-react';
 
 export default function App() {
@@ -248,11 +248,9 @@ export default function App() {
       fetchMemberInquiries(session.user.id);
     } else if (activeTab === 'admin' && session) {
       fetchAdminData();
-    } else if (activeTab === 'beneficiaries' && session) {
+    } else if (activeTab === 'profile' && session) {
+      fetchBeneficiaries(session.user.id);
       fetchWelfareClaims(session.user.id);
-      if (['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(userRole)) {
-        fetchAdminData();
-      }
     }
   }, [activeTab, session]);
 
@@ -374,7 +372,6 @@ export default function App() {
     setLoading(false);
   };
 
-  // --- HANDLE PROFILE DETAILS UPDATE ---
   const handleUpdateProfileDetails = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -606,7 +603,6 @@ export default function App() {
     setLoading(false);
   };
 
-  // --- CLEAN STANDARD REPAYMENT (EXACT LOAN BALANCES + PRECISE EXCESS SAVINGS POSTING) ---
   const handleManualMemberAdjustment = async (e) => {
     e.preventDefault();
     const parsedAmount = parseAccountingNumber(manualAmountRaw);
@@ -676,7 +672,6 @@ export default function App() {
         remainingCash -= amountToDeduct;
         const newLoanBal = currentBal - amountToDeduct;
 
-        // Post exact loan balance under loan repayments
         await supabase.from('loan_repayments').insert([
           {
             loan_id: loan.id,
@@ -697,7 +692,6 @@ export default function App() {
         distributionLog.push(`KES ${amountToDeduct.toLocaleString()} applied to ${(loan.loan_product || 'loan').toUpperCase()}`);
       }
 
-      // If any excess remains, post the exact rest under savings ledger
       if (remainingCash > 0) {
         await supabase.from('savings_ledger').insert([
           {
@@ -837,6 +831,16 @@ export default function App() {
         return;
       }
 
+      // STRICT CHECK: Sum of all guarantor pledges must match or exceed the loan principal!
+      const totalGuaranteedSum = validGuarantors.reduce((acc, g) => acc + parseAccountingNumber(g.amountRaw), 0);
+      if (totalGuaranteedSum < loanPrincipalNum) {
+        setMessage({ 
+          text: `Guarantor Validation Error: Total pledged guarantees (KES ${totalGuaranteedSum.toLocaleString()}) do not match or cover the requested loan principal (KES ${loanPrincipalNum.toLocaleString()}).`, 
+          type: 'error' 
+        });
+        return;
+      }
+
       for (const g of validGuarantors) {
         if (!g.eligible) {
           setMessage({
@@ -897,7 +901,7 @@ export default function App() {
 
     logAuditAction('LOAN_APPLICATION_SUBMITTED', `${loanProduct.toUpperCase()} applied: KES ${loanPrincipalNum.toLocaleString()} (Terms Accepted)`);
 
-    setMessage({ text: `Loan submitted! Pipeline: 1. Assistant Chair -> 2. Chairman -> 3. Treasurer.`, type: 'success' });
+    setMessage({ text: `Loan submitted! Pipeline: Assistant Chair -> Chairman -> Treasurer.`, type: 'success' });
     setGuarantorList([{ guarantorId: '', searchTerm: '', amountRaw: '', eligible: true, note: '', dropdownOpen: false }]);
     fetchUserData(session.user.id);
     setLoading(false);
@@ -1660,7 +1664,7 @@ export default function App() {
                   activeTab === 'beneficiaries' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
                 }`}
               >
-                Welfare & NOK
+                Profile & Welfare
               </button>
               <button
                 onClick={() => setActiveTab('mpesa')}
@@ -1769,7 +1773,7 @@ export default function App() {
               activeTab === 'beneficiaries' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-slate-300 border border-slate-800/80'
             }`}
           >
-            <HeartHandshake className="w-4 h-4" /> Next of Kin & Profile Settings
+            <Settings className="w-4 h-4" /> Profile Settings & Welfare
           </button>
 
           <button
@@ -2300,13 +2304,18 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 2: LOANS */}
+            {/* TAB 2: LOANS (WITH EXPLICIT LOAN LIMITS DISPLAY) */}
             {activeTab === 'loans' && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-lg">
-                  <div className="flex items-center gap-2 mb-3">
-                    <Calculator className="w-4 h-4 text-emerald-400" />
-                    <h3 className="text-sm sm:text-base font-bold text-white">Apply for a Loan</h3>
+                  <div className="flex justify-between items-center mb-3">
+                    <div className="flex items-center gap-2">
+                      <Calculator className="w-4 h-4 text-emerald-400" />
+                      <h3 className="text-sm sm:text-base font-bold text-white">Apply for a Loan</h3>
+                    </div>
+                    <div className="bg-emerald-950 border border-emerald-800 px-2.5 py-1 rounded-xl text-[11px] font-bold text-emerald-300">
+                      Max Limit: KES {maxLimitForSelectedProduct.toLocaleString()}
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-2 mb-3">
@@ -2401,7 +2410,7 @@ export default function App() {
                         <div className="flex justify-between items-center">
                           <div>
                             <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wide">Assign Member Guarantors</h4>
-                            <p className="text-[10px] text-slate-400">Type colleague's name or member number to search</p>
+                            <p className="text-[10px] text-slate-400">Total pledges must cover loan principal (KES {loanPrincipalNum.toLocaleString()})</p>
                           </div>
                           <button
                             type="button"
@@ -2724,7 +2733,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 5: WELFARE, NEXT OF KIN & PROFILE SETTINGS */}
+            {/* TAB 5: PROFILE SETTINGS & WELFARE */}
             {activeTab === 'beneficiaries' && (
               <div className="space-y-6">
                 {/* Profile Settings Card */}
@@ -3461,7 +3470,7 @@ export default function App() {
 
                     <button
                       onClick={fetchAdminData}
-                      className="self-start sm:self-auto p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold flex items-center gap-1 transition border border-slate-700"
+                      className="self-start sm:self-auto p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold flex items-center gap-1 cursor-pointer transition border border-slate-700"
                     >
                       <RotateCcw className="w-3 h-3" /> Refresh
                     </button>
@@ -3551,7 +3560,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 3. MANUAL ADJUSTMENT (STANDARD EXACT REPAYMENT + EXCESS SAVINGS) */}
+                {/* 3. MANUAL ADJUSTMENT */}
                 {['admin', 'chairman', 'treasurer'].includes(userRole) && (
                   <div className="bg-slate-900/90 border border-emerald-900/50 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
                     <div className="flex items-center gap-2 mb-2">
@@ -4178,7 +4187,7 @@ export default function App() {
         )}
       </main>
 
-      {/* LOAN TERMS MODAL */}
+      {/* LOAN TERMS MODAL WITH VISUAL ARROWS */}
       {showTermsModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
           <div className="bg-slate-950 border border-emerald-900/60 rounded-3xl max-w-lg w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
@@ -4223,8 +4232,13 @@ export default function App() {
               </p>
 
               <h4 className="font-bold text-white text-xs uppercase tracking-wide">4. Sequential 3-Signatory Approval Quorum</h4>
-              <p>
-                Disbursement proceeds strictly in sequence: <strong>1. Assistant Chair</strong> $\rightarrow$ <strong>2. Chairman</strong> $\rightarrow$ <strong>3. Treasurer</strong>.
+              <p className="flex items-center gap-1.5 flex-wrap">
+                Disbursement proceeds strictly in sequence: 
+                <span className="bg-slate-900 px-2 py-0.5 rounded text-emerald-300 font-bold border border-slate-800">1. Assistant Chair</span> 
+                <ArrowRight className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="bg-slate-900 px-2 py-0.5 rounded text-emerald-300 font-bold border border-slate-800">2. Chairman</span> 
+                <ArrowRight className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="bg-slate-900 px-2 py-0.5 rounded text-emerald-300 font-bold border border-slate-800">3. Treasurer</span>.
               </p>
             </div>
 

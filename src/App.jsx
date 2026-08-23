@@ -49,6 +49,7 @@ export default function App() {
   const [announcements, setAnnouncements] = useState([]);
   const [saccoDocs, setSaccoDocs] = useState([]);
   const [welfareClaims, setWelfareClaims] = useState([]);
+  const [welfareContributions, setWelfareContributions] = useState([]);
   const [allPendingLoans, setAllPendingLoans] = useState([]);
   const [allLoansLeadership, setAllLoansLeadership] = useState([]);
   const [allPendingClaims, setAllPendingClaims] = useState([]);
@@ -654,6 +655,21 @@ export default function App() {
       } else {
         setMessage({ text: error.message, type: 'error' });
       }
+    } else if (manualAdjustmentType === 'welfare_monthly_200') {
+      await supabase.from('welfare_contributions').insert([
+        {
+          member_id: manualTargetMemberId,
+          amount: parsedAmount,
+          period_month: new Date().toLocaleString('default', { month: 'short', year: 'numeric' }).toUpperCase(),
+          payment_method: 'direct_cash',
+          reference_code: refCode,
+        },
+      ]);
+
+      logAuditAction('WELFARE_BENEVOLENT_CREDIT', `Posted KES ${parsedAmount.toLocaleString()} Welfare Fund to ${targetMember?.full_name}`);
+      setMessage({ text: `Success! KES ${parsedAmount.toLocaleString()} credited to ${targetMember?.full_name}'s Welfare Benevolent Account.`, type: 'success' });
+      setManualAmountRaw('');
+      setManualRefCode('');
     } else if (manualAdjustmentType === 'loan_repayment') {
       const { data: memberActiveLoans } = await supabase
         .from('loans')
@@ -833,6 +849,7 @@ export default function App() {
     });
   };
 
+  // Executive financial totals calculation
   const totalSocietySharesCapital = allMembers.reduce((acc, m) => acc + Number(m.totalSavings || 0), 0);
   const totalSocietyUnpaidLoans = allLoansLeadership
     .filter(l => ['approved', 'disbursed'].includes(l.status))
@@ -877,6 +894,31 @@ export default function App() {
   const monthlyRate = interestRate / 100;
   const calculatedTotal = loanPrincipalNum * (1 + (monthlyRate * (loanMonths + 1) / 2));
   const monthlyInstallment = calculatedTotal / loanMonths;
+
+  const pendingGuaranteesCount = guarantorRequests.filter((g) => g.status === 'pending').length;
+
+  const chairmanOfficial = allMembers.find((m) => m.role === 'chairman') || { full_name: 'Chairman', phone: '0712345678' };
+  const treasurerOfficial = allMembers.find((m) => m.role === 'treasurer') || { full_name: 'Treasurer', phone: '0712345679' };
+  const asstChairOfficial = allMembers.find((m) => m.role === 'assistant_chair') || { full_name: 'Assistant Chair', phone: '0712345670' };
+
+  const formatKenyanWhatsAppNumber = (rawPhone) => {
+    if (!rawPhone) return '254700000000';
+    let clean = rawPhone.toString().replace(/[^0-9]/g, '');
+    if (clean.startsWith('0')) {
+      clean = '254' + clean.substring(1);
+    } else if (clean.startsWith('7') || clean.startsWith('1')) {
+      clean = '254' + clean;
+    }
+    return clean;
+  };
+
+  const getWhatsAppLink = (phoneNum, roleName) => {
+    const formattedPhone = formatKenyanWhatsAppNumber(phoneNum);
+    const textMsg = encodeURIComponent(
+      `Hello ${roleName}, I am ${profile?.full_name || 'a member'} (Member No: ${profile?.member_number || 'N/A'}). I have an inquiry regarding my KEWA SACCO account.`
+    );
+    return `https://wa.me/${formattedPhone}?text=${textMsg}`;
+  };
 
   const selectGuarantorFromSearch = (index, member) => {
     const updated = [...guarantorList];
@@ -1129,259 +1171,6 @@ export default function App() {
 
     fetchAdminData();
     fetchUserData(session.user.id);
-  };
-
-  const handleRespondGuarantor = async (guaranteeId, status, pledgeAmount) => {
-    if (status === 'accepted' && Number(pledgeAmount) > freeSharesAvailable) {
-      setMessage({
-        text: `Cannot accept guarantee: Pledged KES ${Number(pledgeAmount).toLocaleString()} exceeds your available Free Shares (KES ${freeSharesAvailable.toLocaleString()}).`,
-        type: 'error',
-      });
-      return;
-    }
-
-    const { error } = await supabase
-      .from('loan_guarantors')
-      .update({ status })
-      .eq('id', guaranteeId);
-
-    if (!error) {
-      logAuditAction('GUARANTOR_RESPONSE', `Marked pledge as ${status} (KES ${Number(pledgeAmount).toLocaleString()})`);
-      fetchGuarantorData(session.user.id);
-      fetchUserData(session.user.id);
-      setMessage({ text: `Guarantor response recorded: ${status}.`, type: 'success' });
-    }
-  };
-
-  const handleSubmitWelfareClaim = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    let documentUrl = null;
-    const claimAmtNum = parseAccountingNumber(claimAmountRaw);
-
-    if (claimDocument) {
-      const fileExt = claimDocument.name.split('.').pop();
-      const fileName = `${session.user.id}-${Date.now()}.${fileExt}`;
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('welfare-documents')
-        .upload(fileName, claimDocument);
-
-      if (!uploadError && uploadData) {
-        const { data: { publicUrl } } = supabase.storage
-          .from('welfare-documents')
-          .getPublicUrl(fileName);
-        documentUrl = publicUrl;
-      }
-    }
-
-    const { error } = await supabase.from('welfare_claims').insert([
-      {
-        member_id: session.user.id,
-        claim_type: claimType,
-        amount_requested: claimAmtNum,
-        description: claimDesc,
-        evidence_url: documentUrl,
-        status: 'pending',
-        assistant_chair_approval: false,
-        chairman_approval: false,
-        treasurer_approval: false,
-      },
-    ]);
-
-    if (error) setMessage({ text: error.message, type: 'error' });
-    else {
-      logAuditAction('WELFARE_CLAIM_FILED', `Welfare claim for KES ${claimAmtNum.toLocaleString()} (${claimType})`);
-      setMessage({ text: 'Welfare claim submitted for Sequential 3-Signatory review.', type: 'success' });
-      setClaimAmountRaw('');
-      setClaimDesc('');
-      setClaimDocument(null);
-      fetchWelfareClaims(session.user.id);
-    }
-    setLoading(false);
-  };
-
-  const handleAddBeneficiary = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    const currentTotalAlloc = beneficiaries.reduce((sum, b) => sum + Number(b.allocation_percentage || 0), 0);
-    const newTotal = currentTotalAlloc + Number(nokPercent);
-
-    if (newTotal > 100) {
-      setMessage({ text: `Total allocation exceeds 100%. Currently assigned: ${currentTotalAlloc}%.`, type: 'error' });
-      setLoading(false);
-      return;
-    }
-
-    const { error } = await supabase.from('next_of_kin').insert([
-      {
-        member_id: session.user.id,
-        full_name: nokName,
-        relationship: nokRel,
-        id_number: nokId,
-        phone: nokPhone,
-        allocation_percentage: Number(nokPercent),
-      },
-    ]);
-
-    if (error) setMessage({ text: error.message, type: 'error' });
-    else {
-      logAuditAction('BENEFICIARY_ADDED', `Registered next of kin ${nokName} (${nokPercent}%)`);
-      setMessage({ text: 'Beneficiary registered successfully!', type: 'success' });
-      setNokName('');
-      setNokId('');
-      setNokPhone('');
-      setNokPercent('');
-      fetchBeneficiaries(session.user.id);
-    }
-    setLoading(false);
-  };
-
-  const handleDeleteBeneficiary = async (id) => {
-    await supabase.from('next_of_kin').delete().eq('id', id);
-    fetchBeneficiaries(session.user.id);
-  };
-
-  const handleCreateInquiry = async (e) => {
-    e.preventDefault();
-    if (!inquirySubject || !inquiryMessage) return;
-
-    setLoading(true);
-    const { error } = await supabase.from('member_inquiries').insert([
-      {
-        member_id: session.user.id,
-        subject: inquirySubject,
-        category: inquiryCategory,
-        message: inquiryMessage,
-        status: 'pending',
-      },
-    ]);
-
-    if (error) {
-      setMessage({ text: error.message, type: 'error' });
-    } else {
-      logAuditAction('SUPPORT_INQUIRY_CREATED', `Ticket submitted: "${inquirySubject}"`);
-      setMessage({ text: 'Inquiry submitted! SACCO Leadership has been notified.', type: 'success' });
-      setInquirySubject('');
-      setInquiryMessage('');
-      fetchMemberInquiries(session.user.id);
-    }
-    setLoading(false);
-  };
-
-  const handleAdminReplyInquiry = async (inquiryId) => {
-    const reply = adminReplyText[inquiryId];
-    if (!reply) return;
-
-    await supabase.from('member_inquiries').update({
-      admin_response: reply,
-      status: 'resolved',
-      responded_by: session.user.id,
-      updated_at: new Date().toISOString(),
-    }).eq('id', inquiryId);
-
-    logAuditAction('SUPPORT_INQUIRY_RESOLVED', `Replied to Ticket #${inquiryId.slice(0, 8)}`);
-    fetchAdminData();
-    setMessage({ text: 'Response published to member ticket!', type: 'success' });
-  };
-
-  const handleSendChatMessage = (e) => {
-    e.preventDefault();
-    if (!chatInput.trim()) return;
-
-    const userText = chatInput.trim();
-    const lower = userText.toLowerCase();
-    const newChat = [...chatMessages, { sender: 'user', text: userText }];
-
-    let botReply = "I am trained on KEWA SACCO By-Laws & Credit Policies. You can ask about 'loans', 'free shares', 'guarantors', 'interest rates', 'dividends', or submit a ticket to the committee below!";
-
-    if (lower.includes('loan') || lower.includes('apply') || lower.includes('borrow')) {
-      botReply = `You can apply for 4 tailored products: 1. Main Loan (Up to 24 mos, reducing balance interest, 3X savings), 2. Emergency Loan (12 mos), 3. Christmas Loan (6 mos), and 4. Monthly Shylock (1 mo). Your maximum limit right now is KES ${maxLimitForSelectedProduct.toLocaleString()}.`;
-    } else if (lower.includes('free share') || lower.includes('shares') || lower.includes('pledge') || lower.includes('guarant')) {
-      botReply = `Your available Free Shares are currently KES ${freeSharesAvailable.toLocaleString()}. This represents your Total Savings (KES ${totalSavings.toLocaleString()}) minus Active Debt (KES ${activeLoanBalance.toLocaleString()}) and running guarantee pledges (KES ${totalGuaranteesCommittedAmount.toLocaleString()}).`;
-    } else if (lower.includes('mpesa') || lower.includes('paybill') || lower.includes('deposit')) {
-      botReply = `Use Paybill Business No: 522522, Account No: ${profile?.member_number || 'Your Member No'}. You can top-up voluntary savings or make direct loan amortizations instantly in the M-Pesa tab!`;
-    }
-
-    newChat.push({ sender: 'bot', text: botReply });
-    setChatMessages(newChat);
-    setChatInput('');
-  };
-
-  const handleMpesaTransaction = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    const mpesaAmtNum = parseAccountingNumber(mpesaAmountRaw);
-    const receipt = mpesaCode.trim().toUpperCase() || `MP${Math.random().toString(36).substr(2, 8).toUpperCase()}`;
-
-    await supabase.from('mpesa_transactions').insert([
-      {
-        member_id: session.user.id,
-        phone_number: mpesaPhone || profile?.phone,
-        amount: mpesaAmtNum,
-        transaction_type: mpesaType,
-        mpesa_receipt_code: receipt,
-        status: 'verified',
-      },
-    ]);
-
-    if (mpesaType === 'savings_deposit') {
-      await supabase.from('savings_ledger').insert([
-        {
-          member_id: session.user.id,
-          amount: mpesaAmtNum,
-          transaction_type: 'monthly_contribution',
-          reference_code: `MPESA-${receipt}`,
-        },
-      ]);
-      logAuditAction('MPESA_SAVINGS_DEPOSIT', `KES ${mpesaAmtNum.toLocaleString()} credited via M-Pesa ${receipt}`);
-      setMessage({ text: `Payment verified! KES ${mpesaAmtNum.toLocaleString()} credited to Savings.`, type: 'success' });
-    } else if (mpesaType === 'loan_repayment') {
-      const { data: memberLoan } = await supabase
-        .from('loans')
-        .select('id, balance_remaining')
-        .eq('member_id', session.user.id)
-        .in('status', ['approved', 'disbursed'])
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
-
-      if (memberLoan) {
-        await supabase.from('loan_repayments').insert([
-          {
-            loan_id: memberLoan.id,
-            member_id: session.user.id,
-            amount: mpesaAmtNum,
-            reference_code: `MPESA-${receipt}`,
-          },
-        ]);
-
-        const newBal = Math.max(0, Number(memberLoan.balance_remaining) - mpesaAmtNum);
-        const isCleared = newBal === 0;
-
-        await supabase
-          .from('loans')
-          .update({
-            balance_remaining: newBal,
-            status: isCleared ? 'completed' : 'approved',
-          })
-          .eq('id', memberLoan.id);
-
-        if (isCleared) {
-          await supabase
-            .from('loan_guarantors')
-            .update({ status: 'released' })
-            .eq('loan_id', memberLoan.id);
-        }
-
-        logAuditAction('MPESA_LOAN_REPAYMENT', `KES ${mpesaAmtNum.toLocaleString()} loan repayment via M-Pesa ${receipt}`);
-        setMessage({ text: `Payment verified! KES ${mpesaAmtNum.toLocaleString()} deducted from active loan.`, type: 'success' });
-      }
-    }
-
-    setMpesaAmountRaw('');
-    setMpesaCode('');
-    fetchUserData(session.user.id);
-    setLoading(false);
   };
 
   const performanceRankedLoans = [...allLoansLeadership]

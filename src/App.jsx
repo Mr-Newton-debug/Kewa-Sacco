@@ -235,21 +235,20 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    fetchAnnouncements();
     if (activeTab === 'documents') {
       fetchSaccoDocuments();
     } else if (activeTab === 'support' && session) {
       fetchMemberInquiries(session.user.id);
     } else if (activeTab === 'admin' && session) {
       fetchAdminData();
-    } else if (activeTab === 'overview') {
-      fetchAnnouncements();
     } else if (activeTab === 'beneficiaries' && session) {
       fetchWelfareClaims(session.user.id);
       if (['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(userRole)) {
         fetchAdminData();
       }
     }
-  }, [activeTab]);
+  }, [activeTab, session]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -571,7 +570,7 @@ export default function App() {
     setLoading(false);
   };
 
-  // --- FULLY RESOLVED: SMART MULTI-LOAN DISTRIBUTION + AUTOMATIC EXCESS SAVINGS ENTRY ---
+  // --- STANDARD EXACT LOAN REPAYMENT & EXACT EXCESS SAVINGS POSTING ---
   const handleManualMemberAdjustment = async (e) => {
     e.preventDefault();
     const parsedAmount = parseAccountingNumber(manualAmountRaw);
@@ -641,6 +640,7 @@ export default function App() {
         remainingCash -= amountToDeduct;
         const newLoanBal = currentBal - amountToDeduct;
 
+        // Post EXACT loan balance under loan repayments column
         await supabase.from('loan_repayments').insert([
           {
             loan_id: loan.id,
@@ -658,25 +658,25 @@ export default function App() {
           })
           .eq('id', loan.id);
 
-        distributionLog.push(`KES ${amountToDeduct.toLocaleString()} cleared from ${(loan.loan_product || 'loan').toUpperCase()}`);
+        distributionLog.push(`KES ${amountToDeduct.toLocaleString()} applied to ${(loan.loan_product || 'loan').toUpperCase()}`);
       }
 
-      // CRITICAL FIX: Explicitly insert excess change into savings_ledger so it reflects immediately!
+      // Post the rest strictly under savings
       if (remainingCash > 0) {
         await supabase.from('savings_ledger').insert([
           {
             member_id: manualTargetMemberId,
             amount: remainingCash,
             transaction_type: 'excess_allocation',
-            reference_code: `${refCode}-EXCESS`,
+            reference_code: `${refCode}-EXCESS-SAVINGS`,
           },
         ]);
-        distributionLog.push(`KES ${remainingCash.toLocaleString()} excess credited to Savings`);
+        distributionLog.push(`KES ${remainingCash.toLocaleString()} posted to Savings`);
       }
 
-      logAuditAction('SMART_MULTI_LOAN_REPAYMENT', `Processed KES ${parsedAmount.toLocaleString()} for ${targetMember?.full_name}: ${distributionLog.join(' | ')}`);
+      logAuditAction('EXACT_STANDARD_REPAYMENT', `Processed KES ${parsedAmount.toLocaleString()} for ${targetMember?.full_name}: ${distributionLog.join(' | ')}`);
       setMessage({ 
-        text: `Success! KES ${parsedAmount.toLocaleString()} distributed: ${distributionLog.join(' | ')}.`, 
+        text: `Success! KES ${parsedAmount.toLocaleString()} posted: ${distributionLog.join(' | ')}.`, 
         type: 'success' 
       });
       setManualAmountRaw('');
@@ -1393,6 +1393,7 @@ export default function App() {
     setMessage({ text: 'Announcement published to Member Board!', type: 'success' });
   };
 
+  // --- UNIFIED PROGRESSIVE PDF STATEMENT (CONTRIBUTIONS + LOAN STATEMENT + SUMMATIONS & DIFFERENCE) ---
   const generatePDFStatement = (loan = null) => {
     try {
       const doc = new jsPDF();
@@ -1407,7 +1408,7 @@ export default function App() {
 
       doc.setTextColor(30, 41, 59);
       doc.setFontSize(12);
-      doc.text('OFFICIAL MEMBER AUDIT STATEMENT', 14, 46);
+      doc.text('OFFICIAL MEMBER UNIFIED AUDIT STATEMENT', 14, 46);
 
       doc.setFontSize(9);
       doc.text(`Member Name: ${profile?.full_name || 'N/A'}`, 14, 54);
@@ -1415,102 +1416,88 @@ export default function App() {
       doc.text(`Branch / Company: ${profile?.companies?.name || 'KEWA Sacco'}`, 14, 66);
       doc.text(`National ID: ${profile?.id_number || 'N/A'}`, 120, 54);
       doc.text(`Total Shares/Savings: KES ${totalSavings.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`, 120, 60);
-      doc.text(`Guarantees Committed: KES ${totalGuaranteesCommittedAmount.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`, 120, 66);
-      doc.text(`Free Unencumbered Shares: KES ${freeSharesAvailable.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`, 120, 72);
+      doc.text(`Active Loan Debt: KES ${activeLoanBalance.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`, 120, 66);
+      doc.text(`Free Shares Available: KES ${freeSharesAvailable.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`, 120, 72);
 
-      if (loan) {
-        doc.setFontSize(11);
-        doc.text(`LOAN PROGRESS: ${(loan.loan_product || 'main_loan').replace('_', ' ').toUpperCase()}`, 14, 82);
-        
-        const totalPaidToDate = Math.max(0, Number(loan.total_payable || 0) - Number(loan.balance_remaining || 0));
-        const progressPercentage = loan.total_payable > 0 ? ((totalPaidToDate / loan.total_payable) * 100).toFixed(1) : '0';
+      // 1. COMBINED PROGRESSIVE FINANCIAL STATEMENT TABLE
+      doc.setFontSize(11);
+      doc.setTextColor(6, 78, 59);
+      doc.text('1. Progressive Member Financial Activity Ledger (Contributions (+) & Loan Movements (-))', 14, 82);
 
-        const loanSummaryRows = [
-          ['Principal Borrowed', `KES ${Number(loan.principal_amount).toLocaleString()}`],
-          ['Interest Rate & Term', `${loan.interest_rate}% / mo (${loan.repayment_period_months} Mos)`],
-          ['Total Payable (P + I)', `KES ${Number(loan.total_payable).toLocaleString()}`],
-          ['Total Amount Paid to Date', `KES ${totalPaidToDate.toLocaleString()} (${progressPercentage}% Repaid)`],
-          ['Outstanding Debt Balance', `KES ${Number(loan.balance_remaining).toLocaleString()}`],
-          ['Sequential Signatories', `1. Asst Chair: ${loan.assistant_chair_approval ? 'SIGNED' : 'PENDING'} | 2. Chair: ${loan.chairman_approval ? 'SIGNED' : 'PENDING'} | 3. Treasurer: ${loan.treasurer_approval ? 'SIGNED' : 'PENDING'}`],
-          ['Current Status', (loan.status || 'PENDING').toUpperCase()],
-        ];
+      // Build unified transaction ledger sorted chronologically
+      const unifiedLedger = [
+        ...savings.map(s => ({
+          dateObj: new Date(s.created_at),
+          dateStr: new Date(s.created_at).toLocaleDateString('en-GB'),
+          type: 'SAVINGS CONTRIBUTION',
+          ref: s.reference_code || 'CHECKOFF',
+          amount: Number(s.amount),
+          isPositive: true
+        })),
+        ...loans.map(l => ({
+          dateObj: new Date(l.created_at),
+          dateStr: new Date(l.created_at).toLocaleDateString('en-GB'),
+          type: `LOAN DISBURSED (${(l.loan_product || 'MAIN').replace('_', ' ').toUpperCase()})`,
+          ref: `LOAN-${l.id.slice(0, 6)}`,
+          amount: Number(l.principal_amount),
+          isPositive: true
+        })),
+        ...repayments.map(r => ({
+          dateObj: new Date(r.created_at),
+          dateStr: new Date(r.created_at).toLocaleDateString('en-GB'),
+          type: `LOAN REPAYMENT (${(r.loans?.loan_product || 'LOAN').replace('_', ' ').toUpperCase()})`,
+          ref: r.reference_code || 'DEDUCTION',
+          amount: Number(r.amount),
+          isPositive: false
+        }))
+      ].sort((a, b) => a.dateObj - b.dateObj);
 
-        autoTable(doc, {
-          startY: 87,
-          head: [['Metric', 'Financial Details']],
-          body: loanSummaryRows,
-          theme: 'striped',
-          headStyles: { fillColor: [6, 78, 59] },
-        });
+      const ledgerRows = unifiedLedger.length > 0 ? unifiedLedger.map(item => [
+        item.dateStr,
+        item.type,
+        item.ref,
+        item.isPositive ? `+KES ${item.amount.toLocaleString('en-KE', { minimumFractionDigits: 2 })}` : `-KES ${item.amount.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`
+      ]) : [['-', 'No financial transactions recorded', '-', 'KES 0.00']];
 
-        const loanRepaymentsForThis = repayments.filter((r) => r.loan_id === loan.id);
-        const repY = doc.lastAutoTable.finalY + 8;
-        doc.setFontSize(11);
-        doc.setTextColor(180, 83, 9);
-        doc.text('Specific Amortization History for this Facility', 14, repY);
+      autoTable(doc, {
+        startY: 87,
+        head: [['Transaction Date', 'Activity Type', 'Reference Code', 'Amount (Plus / Minus)']],
+        body: ledgerRows,
+        theme: 'striped',
+        headStyles: { fillColor: [6, 78, 59] },
+      });
 
-        const repRows = loanRepaymentsForThis.length > 0 ? loanRepaymentsForThis.map((r) => [
-          new Date(r.created_at).toLocaleDateString('en-GB'),
-          'MONTHLY LOAN CHECKOFF',
-          r.reference_code || '-',
-          `-KES ${Number(r.amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`
-        ]) : [['-', 'No deductions applied yet', '-', 'KES 0.00']];
+      // 2. FINANCIAL SUMMATIONS & DIFFERENCE BLOCK
+      const sumY = doc.lastAutoTable.finalY + 10;
+      doc.setFontSize(11);
+      doc.setTextColor(180, 83, 9);
+      doc.text('2. Account Summary, Summations & Net Difference', 14, sumY);
 
-        autoTable(doc, {
-          startY: repY + 4,
-          head: [['Payment Date', 'Deduction Type', 'Batch Reference', 'Amount Paid']],
-          body: repRows,
-          theme: 'striped',
-          headStyles: { fillColor: [180, 83, 9] },
-        });
+      const totalCreditsSum = unifiedLedger.filter(i => i.isPositive).reduce((acc, curr) => acc + curr.amount, 0);
+      const totalDebitsSum = unifiedLedger.filter(i => !i.isPositive).reduce((acc, curr) => acc + curr.amount, 0);
+      const netAccountDifference = totalCreditsSum - totalDebitsSum;
 
-      } else {
-        doc.setFontSize(11);
-        doc.setTextColor(6, 78, 59);
-        doc.text('1. Monthly Savings & Shares Contributions Ledger', 14, 82);
+      const summaryRows = [
+        ['Total Credits (Savings Deposits & Loan Disbursements)', `KES ${totalCreditsSum.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`],
+        ['Total Debits (Loan Repayments & Deductions)', `KES ${totalDebitsSum.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`],
+        ['Net Account Difference (Credits minus Debits)', `KES ${netAccountDifference.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`],
+        ['Current Outstanding Loan Balance', `KES ${activeLoanBalance.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`]
+      ];
 
-        const savingsRows = savings.length > 0 ? savings.map((s) => [
-          new Date(s.created_at).toLocaleDateString('en-GB'),
-          (s.transaction_type || '').replace('_', ' ').toUpperCase(),
-          s.reference_code || '-',
-          `+KES ${Number(s.amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`
-        ]) : [['-', 'No contributions recorded', '-', 'KES 0.00']];
-
-        autoTable(doc, {
-          startY: 87,
-          head: [['Credit Date', 'Transaction Type', 'Batch Ref', 'Credit Amount']],
-          body: savingsRows,
-          theme: 'striped',
-          headStyles: { fillColor: [6, 78, 59] },
-        });
-
-        const loanY = doc.lastAutoTable.finalY + 8;
-        doc.setFontSize(11);
-        doc.setTextColor(180, 83, 9);
-        doc.text('2. Monthly Loan Repayments & Deductions Ledger', 14, loanY);
-
-        const repaymentRows = repayments.length > 0 ? repayments.map((r) => [
-          new Date(r.created_at).toLocaleDateString('en-GB'),
-          (r.loans?.loan_product || 'LOAN').replace('_', ' ').toUpperCase(),
-          r.reference_code || '-',
-          `-KES ${Number(r.amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`
-        ]) : [['-', 'No repayments recorded', '-', 'KES 0.00']];
-
-        autoTable(doc, {
-          startY: loanY + 4,
-          head: [['Deduction Date', 'Loan Facility', 'Batch Ref', 'Amount Deducted']],
-          body: repaymentRows,
-          theme: 'striped',
-          headStyles: { fillColor: [180, 83, 9] },
-        });
-      }
+      autoTable(doc, {
+        startY: sumY + 4,
+        head: [['Financial Metric', 'Summation Value']],
+        body: summaryRows,
+        theme: 'striped',
+        headStyles: { fillColor: [180, 83, 9] },
+      });
 
       const finalY = doc.lastAutoTable ? doc.lastAutoTable.finalY + 12 : 150;
       doc.setFontSize(8);
       doc.setTextColor(100, 116, 139);
-      doc.text('This is an official computer-generated statement issued by KEWA SACCO core financial system.', 14, finalY);
+      doc.text('This is an official computer-generated progressive audit statement issued by KEWA SACCO core financial system.', 14, finalY);
 
-      doc.save(`KEWA_Statement_${profile?.member_number || 'Member'}.pdf`);
+      doc.save(`KEWA_Progressive_Statement_${profile?.member_number || 'Member'}.pdf`);
     } catch (err) {
       alert('Could not generate PDF: ' + err.message);
     }
@@ -1574,21 +1561,21 @@ export default function App() {
   const userRole = profile?.role || 'member';
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-24 sm:pb-12 selection:bg-emerald-500 selection:text-white">
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-20 sm:pb-12 selection:bg-emerald-500 selection:text-white">
       {/* Top Navigation */}
-      <header className="border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md px-4 sm:px-8 py-3.5 flex justify-between items-center sticky top-0 z-50 shadow-lg shadow-black/40">
-        <div className="flex items-center gap-3">
-          <div className="bg-gradient-to-tr from-emerald-600 to-teal-400 p-2.5 rounded-2xl shadow-lg shadow-emerald-900/40">
-            <Building2 className="w-5 h-5 text-white" />
+      <header className="border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md px-3 sm:px-8 py-2.5 sm:py-3.5 flex justify-between items-center sticky top-0 z-50 shadow-lg shadow-black/40">
+        <div className="flex items-center gap-2.5">
+          <div className="bg-gradient-to-tr from-emerald-600 to-teal-400 p-2 rounded-xl sm:rounded-2xl shadow-lg shadow-emerald-900/40">
+            <Building2 className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-lg sm:text-xl font-extrabold tracking-tight text-white leading-tight">KEWA SACCO</h1>
-              <span className="text-[10px] bg-emerald-950 text-emerald-300 font-bold px-2 py-0.5 rounded-full border border-emerald-800 flex items-center gap-1">
-                <Sparkles className="w-3 h-3" /> Core
+            <div className="flex items-center gap-1.5">
+              <h1 className="text-base sm:text-xl font-extrabold tracking-tight text-white leading-tight">KEWA SACCO</h1>
+              <span className="text-[9px] bg-emerald-950 text-emerald-300 font-bold px-1.5 py-0.5 rounded-full border border-emerald-800 flex items-center gap-0.5">
+                <Sparkles className="w-2.5 h-2.5" /> Core
               </span>
             </div>
-            <p className="text-[10px] sm:text-xs text-slate-400 font-medium">Kenya Builders • Warren • Eurocon • External</p>
+            <p className="text-[9px] sm:text-xs text-slate-400 font-medium">Kenya Builders • Warren • Eurocon • External</p>
           </div>
         </div>
 
@@ -1677,9 +1664,9 @@ export default function App() {
 
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="lg:hidden flex items-center justify-center p-2.5 rounded-2xl bg-slate-900 border border-slate-800 text-white shadow"
+              className="lg:hidden flex items-center justify-center p-2 rounded-xl bg-slate-900 border border-slate-800 text-white shadow"
             >
-              {mobileMenuOpen ? <X className="w-5 h-5 text-rose-400" /> : <Menu className="w-5 h-5 text-emerald-400" />}
+              {mobileMenuOpen ? <X className="w-4 h-4 text-rose-400" /> : <Menu className="w-4 h-4 text-emerald-400" />}
             </button>
           </div>
         )}
@@ -1687,8 +1674,8 @@ export default function App() {
 
       {/* Fixed Full-Screen Mobile Drawer */}
       {session && authMode !== 'reset' && mobileMenuOpen && (
-        <div className="lg:hidden fixed inset-0 top-[60px] bg-slate-950/98 backdrop-blur-2xl z-[100] px-5 py-6 space-y-3 overflow-y-auto border-t border-slate-800 animate-fadeIn">
-          <div className="p-3.5 bg-slate-900/90 border border-slate-800 rounded-2xl mb-4 flex items-center justify-between">
+        <div className="lg:hidden fixed inset-0 top-[52px] bg-slate-950/98 backdrop-blur-2xl z-[100] px-4 py-5 space-y-2.5 overflow-y-auto border-t border-slate-800 animate-fadeIn">
+          <div className="p-3 bg-slate-900/90 border border-slate-800 rounded-2xl mb-3 flex items-center justify-between">
             <div>
               <p className="text-xs font-bold text-white">{profile?.full_name || 'Member'}</p>
               <p className="text-[10px] text-emerald-400 font-mono">{profile?.member_number || ''}</p>
@@ -1700,7 +1687,7 @@ export default function App() {
 
           <button
             onClick={() => { setActiveTab('overview'); setMobileMenuOpen(false); }}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold transition ${
+            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition ${
               activeTab === 'overview' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-slate-300 border border-slate-800/80'
             }`}
           >
@@ -1709,7 +1696,7 @@ export default function App() {
           
           <button
             onClick={() => { setActiveTab('loans'); setMobileMenuOpen(false); }}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold transition ${
+            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition ${
               activeTab === 'loans' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-slate-300 border border-slate-800/80'
             }`}
           >
@@ -1718,7 +1705,7 @@ export default function App() {
 
           <button
             onClick={() => { setActiveTab('guarantors'); setMobileMenuOpen(false); }}
-            className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl text-sm font-semibold transition ${
+            className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold transition ${
               activeTab === 'guarantors' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-slate-300 border border-slate-800/80'
             }`}
           >
@@ -1726,7 +1713,7 @@ export default function App() {
               <Users className="w-4 h-4" /> Guarantor Requests
             </span>
             {pendingGuaranteesCount > 0 && (
-              <span className="bg-rose-500 text-white text-xs px-2 py-0.5 rounded-full font-bold">
+              <span className="bg-rose-500 text-white text-[10px] px-2 py-0.5 rounded-full font-bold">
                 {pendingGuaranteesCount} new
               </span>
             )}
@@ -1734,7 +1721,7 @@ export default function App() {
 
           <button
             onClick={() => { setActiveTab('documents'); setMobileMenuOpen(false); }}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold transition ${
+            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition ${
               activeTab === 'documents' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-slate-300 border border-slate-800/80'
             }`}
           >
@@ -1743,7 +1730,7 @@ export default function App() {
 
           <button
             onClick={() => { setActiveTab('beneficiaries'); setMobileMenuOpen(false); }}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold transition ${
+            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition ${
               activeTab === 'beneficiaries' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-slate-300 border border-slate-800/80'
             }`}
           >
@@ -1752,7 +1739,7 @@ export default function App() {
 
           <button
             onClick={() => { setActiveTab('mpesa'); setMobileMenuOpen(false); }}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold transition ${
+            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition ${
               activeTab === 'mpesa' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-slate-300 border border-slate-800/80'
             }`}
           >
@@ -1761,7 +1748,7 @@ export default function App() {
 
           <button
             onClick={() => { setActiveTab('support'); setMobileMenuOpen(false); }}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold transition ${
+            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition ${
               activeTab === 'support' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-emerald-300 border border-slate-800/80'
             }`}
           >
@@ -1771,7 +1758,7 @@ export default function App() {
           {['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(userRole) && (
             <button
               onClick={() => { setActiveTab('admin'); setMobileMenuOpen(false); }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold transition ${
+              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition ${
                 activeTab === 'admin' ? 'bg-gradient-to-r from-amber-600 to-orange-600 text-white shadow-lg' : 'bg-slate-900/80 text-amber-300 border border-slate-800/80'
               }`}
             >
@@ -1779,10 +1766,10 @@ export default function App() {
             </button>
           )}
 
-          <div className="pt-4 border-t border-slate-800">
+          <div className="pt-3 border-t border-slate-800">
             <button
               onClick={() => handlePerformSignOut(false)}
-              className="w-full flex items-center justify-center gap-2 bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-200 py-3.5 rounded-2xl text-sm font-bold shadow-lg cursor-pointer"
+              className="w-full flex items-center justify-center gap-2 bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-200 py-3 rounded-xl text-xs font-bold shadow cursor-pointer"
             >
               <LogOut className="w-4 h-4" /> Sign Out of Portal
             </button>
@@ -1791,10 +1778,10 @@ export default function App() {
       )}
 
       {/* Main Container */}
-      <main className="max-w-6xl mx-auto p-4 sm:p-8 space-y-6">
+      <main className="max-w-6xl mx-auto p-3 sm:p-8 space-y-4 sm:space-y-6">
         {message.text && (
           <div
-            className={`p-4 rounded-2xl text-sm font-medium border shadow-lg flex items-center justify-between animate-fadeIn ${
+            className={`p-3.5 rounded-2xl text-xs sm:text-sm font-medium border shadow-lg flex items-center justify-between animate-fadeIn ${
               message.type === 'error'
                 ? 'bg-rose-950/50 border-rose-800/80 text-rose-200'
                 : 'bg-emerald-950/50 border-emerald-800/80 text-emerald-200'
@@ -1807,18 +1794,18 @@ export default function App() {
 
         {!session || authMode === 'reset' ? (
           /* AUTH & PASSWORD RECOVERY VIEWS */
-          <div className="max-w-md mx-auto mt-6 sm:mt-12 bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-10 shadow-2xl backdrop-blur-xl">
-            <div className="text-center mb-6">
-              <div className="inline-flex bg-gradient-to-tr from-emerald-600 to-teal-400 p-3 rounded-2xl shadow-xl shadow-emerald-900/30 mb-3">
+          <div className="max-w-md mx-auto mt-6 sm:mt-12 bg-slate-900/90 border border-slate-800/90 rounded-3xl p-5 sm:p-10 shadow-2xl backdrop-blur-xl">
+            <div className="text-center mb-5">
+              <div className="inline-flex bg-gradient-to-tr from-emerald-600 to-teal-400 p-3 rounded-2xl shadow-xl shadow-emerald-900/30 mb-2">
                 <Building2 className="w-6 h-6 text-white" />
               </div>
-              <h2 className="text-2xl font-black text-white tracking-tight">
+              <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
                 {authMode === 'login' && 'Member Sign In'}
                 {authMode === 'register' && 'Join KEWA SACCO'}
                 {authMode === 'forgot' && 'Reset Password'}
                 {authMode === 'reset' && 'Set New Password'}
               </h2>
-              <p className="text-xs sm:text-sm text-slate-400 mt-1 font-medium">
+              <p className="text-xs text-slate-400 mt-1 font-medium">
                 {authMode === 'login' && 'Access your digital cooperative portal'}
                 {authMode === 'register' && 'Register as internal staff or external member'}
                 {authMode === 'forgot' && 'Receive an email link to regain access'}
@@ -1827,9 +1814,9 @@ export default function App() {
             </div>
 
             {authMode === 'forgot' && (
-              <form onSubmit={handleForgotPassword} className="space-y-4" autoComplete="off">
+              <form onSubmit={handleForgotPassword} className="space-y-3.5" autoComplete="off">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">Registered Email Address</label>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Registered Email Address</label>
                   <input
                     type="email"
                     required
@@ -1837,17 +1824,17 @@ export default function App() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="name@domain.com"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white focus:border-emerald-500 transition"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white focus:border-emerald-500 transition"
                   />
                 </div>
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3 rounded-xl text-sm transition shadow-lg cursor-pointer"
+                  className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3 rounded-xl text-xs sm:text-sm transition shadow-lg cursor-pointer"
                 >
                   {loading ? 'Sending link...' : 'Send Password Reset Link'}
                 </button>
-                <div className="text-center mt-4">
+                <div className="text-center mt-3">
                   <button
                     type="button"
                     onClick={() => setAuthMode('login')}
@@ -1860,9 +1847,9 @@ export default function App() {
             )}
 
             {authMode === 'reset' && (
-              <form onSubmit={handleUpdatePassword} className="space-y-4" autoComplete="off">
+              <form onSubmit={handleUpdatePassword} className="space-y-3.5" autoComplete="off">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">Enter New Password</label>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Enter New Password</label>
                   <div className="relative">
                     <input
                       type={showPassword ? 'text' : 'password'}
@@ -1871,7 +1858,7 @@ export default function App() {
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
                       placeholder="••••••••"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-3.5 pr-10 py-2.5 text-sm text-white focus:border-emerald-500 transition"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-3.5 pr-10 py-2.5 text-xs sm:text-sm text-white focus:border-emerald-500 transition"
                     />
                     <button
                       type="button"
@@ -1885,7 +1872,7 @@ export default function App() {
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3 rounded-xl text-sm transition shadow-lg cursor-pointer"
+                  className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3 rounded-xl text-xs sm:text-sm transition shadow-lg cursor-pointer"
                 >
                   {loading ? 'Saving...' : 'Save New Password & Sign In'}
                 </button>
@@ -1893,7 +1880,7 @@ export default function App() {
             )}
 
             {authMode === 'login' && (
-              <form onSubmit={handleLogin} className="space-y-4" autoComplete="off">
+              <form onSubmit={handleLogin} className="space-y-3.5" autoComplete="off">
                 <div>
                   <div className="flex justify-between items-center mb-1">
                     <label className="block text-xs font-semibold text-slate-300">Email Address</label>
@@ -1901,7 +1888,7 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => setEmail(savedEmailChip)}
-                        className="text-[11px] text-emerald-400 hover:text-emerald-300 font-semibold flex items-center gap-1 bg-emerald-950/60 border border-emerald-800/80 px-2.5 py-0.5 rounded-full transition cursor-pointer"
+                        className="text-[10px] text-emerald-400 hover:text-emerald-300 font-semibold flex items-center gap-1 bg-emerald-950/60 border border-emerald-800/80 px-2 py-0.5 rounded-full transition cursor-pointer"
                         title="Click to auto-fill your last used email"
                       >
                         <AtSign className="w-3 h-3" /> Use: {savedEmailChip}
@@ -1915,7 +1902,7 @@ export default function App() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="name@domain.com"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white focus:border-emerald-500 transition"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white focus:border-emerald-500 transition"
                   />
                 </div>
                 <div>
@@ -1937,7 +1924,7 @@ export default function App() {
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="••••••••"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-3.5 pr-10 py-2.5 text-sm text-white"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-3.5 pr-10 py-2.5 text-xs sm:text-sm text-white"
                     />
                     <button
                       type="button"
@@ -1952,7 +1939,7 @@ export default function App() {
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3 rounded-xl text-sm transition mt-2 shadow-lg cursor-pointer"
+                  className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3 rounded-xl text-xs sm:text-sm transition mt-1 shadow-lg cursor-pointer"
                 >
                   {loading ? 'Processing...' : 'Sign In to Portal'}
                 </button>
@@ -1960,7 +1947,7 @@ export default function App() {
             )}
 
             {authMode === 'register' && (
-              <form onSubmit={handleRegister} className="space-y-4" autoComplete="off">
+              <form onSubmit={handleRegister} className="space-y-3.5" autoComplete="off">
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">Full Name</label>
                   <input
@@ -1970,7 +1957,7 @@ export default function App() {
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
                     placeholder="John Doe"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white"
                   />
                 </div>
                 <div>
@@ -1978,7 +1965,7 @@ export default function App() {
                   <select
                     value={companyId}
                     onChange={(e) => setCompanyId(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white"
                   >
                     {companies.map((c) => (
                       <option key={c.id} value={c.id}>
@@ -1987,7 +1974,7 @@ export default function App() {
                     ))}
                   </select>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-2.5">
                   <div>
                     <label className="block text-xs font-semibold text-slate-300 mb-1">Member No.</label>
                     <input
@@ -1997,7 +1984,7 @@ export default function App() {
                       value={memberNumber}
                       onChange={(e) => setMemberNumber(e.target.value)}
                       placeholder="KW-001"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white font-mono"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs sm:text-sm text-white font-mono"
                     />
                   </div>
                   <div>
@@ -2009,7 +1996,7 @@ export default function App() {
                       value={idNumber}
                       onChange={(e) => setIdNumber(e.target.value)}
                       placeholder="12345678"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white font-mono"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs sm:text-sm text-white font-mono"
                     />
                   </div>
                 </div>
@@ -2022,7 +2009,7 @@ export default function App() {
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     placeholder="0712345678"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white font-mono"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white font-mono"
                   />
                 </div>
                 <div>
@@ -2034,7 +2021,7 @@ export default function App() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="name@domain.com"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white"
                   />
                 </div>
                 <div>
@@ -2047,7 +2034,7 @@ export default function App() {
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="••••••••"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-3.5 pr-10 py-2.5 text-sm text-white"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-3.5 pr-10 py-2.5 text-xs sm:text-sm text-white"
                     />
                     <button
                       type="button"
@@ -2066,7 +2053,7 @@ export default function App() {
                     required
                     checked={odpcConsent}
                     onChange={(e) => setOdpcConsent(e.target.checked)}
-                    className="mt-1 accent-emerald-500 rounded"
+                    className="mt-0.5 accent-emerald-500 rounded"
                   />
                   <label htmlFor="odpc" className="text-[11px] text-slate-400 leading-tight">
                     I consent to KEWA SACCO processing my data under the <strong>Kenya Data Protection Act (2019)</strong>.
@@ -2076,14 +2063,14 @@ export default function App() {
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3 rounded-xl text-sm transition mt-2 shadow-lg cursor-pointer"
+                  className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3 rounded-xl text-xs sm:text-sm transition mt-1 shadow-lg cursor-pointer"
                 >
                   {loading ? 'Processing...' : 'Complete Registration'}
                 </button>
               </form>
             )}
 
-            <div className="text-center mt-6 text-xs text-slate-400 font-medium">
+            <div className="text-center mt-5 text-xs text-slate-400 font-medium">
               {authMode === 'login' ? (
                 <>
                   New member?{' '}
@@ -2108,111 +2095,113 @@ export default function App() {
         ) : (
           /* AUTHENTICATED VIEWS */
           <>
-            <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-5 sm:p-7 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 shadow-xl">
+            <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-3 shadow-xl">
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[11px] font-bold px-3 py-1 rounded-full bg-emerald-950 border border-emerald-800 text-emerald-300">
+                  <span className="text-[10px] sm:text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-950 border border-emerald-800 text-emerald-300">
                     {profile?.companies?.name || 'KEWA Member'}
                   </span>
-                  <span className="text-[11px] font-bold px-3 py-1 rounded-full bg-amber-950 border border-amber-800 text-amber-300 uppercase">
+                  <span className="text-[10px] sm:text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-amber-950 border border-amber-800 text-amber-300 uppercase">
                     Role: {profile?.role ? profile.role.replace('_', ' ') : 'Member'}
                   </span>
                 </div>
-                <h2 className="text-2xl sm:text-3xl font-black text-white mt-2.5 tracking-tight">{profile?.full_name}</h2>
+                <h2 className="text-xl sm:text-3xl font-black text-white mt-2 tracking-tight">{profile?.full_name}</h2>
                 <p className="text-xs text-slate-400 font-medium">Member Number: <span className="text-slate-200 font-bold font-mono">{profile?.member_number}</span></p>
               </div>
 
               <button
                 onClick={() => generatePDFStatement()}
-                className="flex items-center justify-center gap-2 bg-emerald-950/60 hover:bg-emerald-600 text-emerald-300 hover:text-white px-4 py-2.5 rounded-2xl text-xs font-bold border border-emerald-800 transition shadow cursor-pointer"
+                className="w-full md:w-auto flex items-center justify-center gap-2 bg-emerald-950/60 hover:bg-emerald-600 text-emerald-300 hover:text-white px-4 py-2.5 rounded-xl text-xs font-bold border border-emerald-800 transition shadow cursor-pointer"
               >
                 <Download className="w-4 h-4" /> Download Official Statement
               </button>
             </div>
 
-            {/* TAB 1: OVERVIEW */}
+            {/* TAB 1: OVERVIEW (COMPACT HORIZONTAL METRICS + ANNOUNCEMENTS BELOW) */}
             {activeTab === 'overview' && (
-              <div className="space-y-6">
-                {announcements.length > 0 && (
-                  <div className="bg-gradient-to-r from-emerald-950/70 to-teal-950/70 border border-emerald-800/50 rounded-3xl p-5 sm:p-6 shadow-xl">
-                    <div className="flex items-center gap-2 mb-3">
-                      <Megaphone className="w-5 h-5 text-emerald-400 animate-bounce" />
-                      <h3 className="text-sm font-bold text-white uppercase tracking-wider">Official Society Notices & Announcements</h3>
+              <div className="space-y-4">
+                {/* 4 Financial Metric Cards (Compact Grid) */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-4 flex items-center justify-between shadow">
+                    <div>
+                      <p className="text-[11px] font-semibold text-slate-400">Total Savings</p>
+                      <h3 className="text-lg sm:text-xl font-black text-white mt-0.5">
+                        KES {totalSavings.toLocaleString('en-KE', { minimumFractionDigits: 0 })}
+                      </h3>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="bg-emerald-950/80 border border-emerald-800/50 p-2.5 rounded-xl text-emerald-400 hidden sm:block">
+                      <PiggyBank className="w-5 h-5" />
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-4 flex items-center justify-between shadow">
+                    <div>
+                      <p className="text-[11px] font-bold text-emerald-400">Free Shares</p>
+                      <h3 className="text-lg sm:text-xl font-black text-emerald-400 mt-0.5">
+                        KES {freeSharesAvailable.toLocaleString('en-KE', { minimumFractionDigits: 0 })}
+                      </h3>
+                    </div>
+                    <div className="bg-emerald-950/80 border border-emerald-800/50 p-2.5 rounded-xl text-emerald-400 hidden sm:block">
+                      <ShieldCheck className="w-5 h-5" />
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-4 flex items-center justify-between shadow">
+                    <div>
+                      <p className="text-[11px] font-semibold text-slate-400">Guarantees</p>
+                      <h3 className="text-lg sm:text-xl font-black text-rose-400 mt-0.5">
+                        KES {totalGuaranteesCommittedAmount.toLocaleString('en-KE', { minimumFractionDigits: 0 })}
+                      </h3>
+                    </div>
+                    <div className="bg-rose-950/80 border border-rose-800/50 p-2.5 rounded-xl text-rose-400 hidden sm:block">
+                      <ShieldAlert className="w-5 h-5" />
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-4 flex items-center justify-between shadow">
+                    <div>
+                      <p className="text-[11px] font-semibold text-slate-400">Active Debt</p>
+                      <h3 className="text-lg sm:text-xl font-black text-amber-400 mt-0.5">
+                        KES {activeLoanBalance.toLocaleString('en-KE', { minimumFractionDigits: 0 })}
+                      </h3>
+                    </div>
+                    <div className="bg-amber-950/80 border border-amber-800/50 p-2.5 rounded-xl text-amber-400 hidden sm:block">
+                      <TrendingUp className="w-5 h-5" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Announcements Board Placed Immediately Below Metrics */}
+                {announcements.length > 0 && (
+                  <div className="bg-gradient-to-r from-emerald-950/70 to-teal-950/70 border border-emerald-800/50 rounded-2xl sm:rounded-3xl p-4 sm:p-5 shadow-xl">
+                    <div className="flex items-center gap-2 mb-2.5">
+                      <Megaphone className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-400 animate-bounce" />
+                      <h3 className="text-xs sm:text-sm font-bold text-white uppercase tracking-wider">Official Society Notices & Announcements</h3>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                       {announcements.slice(0, 2).map((notice) => (
-                        <div key={notice.id} className="bg-slate-950/80 border border-slate-800 p-4 rounded-2xl space-y-1 shadow">
+                        <div key={notice.id} className="bg-slate-950/80 border border-slate-800 p-3.5 rounded-xl space-y-1 shadow">
                           <div className="flex justify-between items-center text-[10px] text-slate-400">
                             <span className="text-emerald-400 font-bold uppercase">{notice.category || 'General'}</span>
                             <span>{new Date(notice.created_at).toLocaleDateString()}</span>
                           </div>
-                          <h4 className="font-bold text-white text-sm">{notice.title}</h4>
-                          <p className="text-xs text-slate-300 leading-relaxed">{notice.content}</p>
+                          <h4 className="font-bold text-white text-xs sm:text-sm">{notice.title}</h4>
+                          <p className="text-[11px] sm:text-xs text-slate-300 leading-relaxed">{notice.content}</p>
                         </div>
                       ))}
                     </div>
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                  <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 flex items-center justify-between shadow-lg">
-                    <div>
-                      <p className="text-xs font-semibold text-slate-400">Total Savings & Shares</p>
-                      <h3 className="text-2xl font-black text-white mt-1">
-                        KES {totalSavings.toLocaleString('en-KE', { minimumFractionDigits: 2 })}
-                      </h3>
-                    </div>
-                    <div className="bg-emerald-950/80 border border-emerald-800/50 p-3.5 rounded-2xl text-emerald-400 shadow">
-                      <PiggyBank className="w-6 h-6" />
-                    </div>
-                  </div>
-
-                  <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 flex items-center justify-between shadow-lg">
-                    <div>
-                      <p className="text-xs font-bold text-emerald-400">Free Unencumbered Shares</p>
-                      <h3 className="text-2xl font-black text-emerald-400 mt-1">
-                        KES {freeSharesAvailable.toLocaleString('en-KE', { minimumFractionDigits: 2 })}
-                      </h3>
-                    </div>
-                    <div className="bg-emerald-950/80 border border-emerald-800/50 p-3.5 rounded-2xl text-emerald-400 shadow">
-                      <ShieldCheck className="w-6 h-6" />
-                    </div>
-                  </div>
-
-                  <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 flex items-center justify-between shadow-lg">
-                    <div>
-                      <p className="text-xs font-semibold text-slate-400">Guarantees Committed</p>
-                      <h3 className="text-2xl font-black text-rose-400 mt-1">
-                        KES {totalGuaranteesCommittedAmount.toLocaleString('en-KE', { minimumFractionDigits: 2 })}
-                      </h3>
-                    </div>
-                    <div className="bg-rose-950/80 border border-rose-800/50 p-3.5 rounded-2xl text-rose-400 shadow">
-                      <ShieldAlert className="w-6 h-6" />
-                    </div>
-                  </div>
-
-                  <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 flex items-center justify-between shadow-lg">
-                    <div>
-                      <p className="text-xs font-semibold text-slate-400">Active Loan Balance</p>
-                      <h3 className="text-2xl font-black text-amber-400 mt-1">
-                        KES {activeLoanBalance.toLocaleString('en-KE', { minimumFractionDigits: 2 })}
-                      </h3>
-                    </div>
-                    <div className="bg-amber-950/80 border border-amber-800/50 p-3.5 rounded-2xl text-amber-400 shadow">
-                      <TrendingUp className="w-6 h-6" />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 shadow-lg">
-                    <div className="flex items-center gap-2 mb-4">
-                      <ArrowUpRight className="w-5 h-5 text-emerald-400" />
-                      <h4 className="text-base font-bold text-white">Monthly Savings Checkoff Ledger</h4>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-lg">
+                    <div className="flex items-center gap-2 mb-3">
+                      <ArrowUpRight className="w-4 h-4 text-emerald-400" />
+                      <h4 className="text-sm sm:text-base font-bold text-white">Monthly Savings Checkoff Ledger</h4>
                     </div>
 
                     {savings.length === 0 ? (
-                      <div className="text-center py-8 text-slate-500 text-sm">No contributions found.</div>
+                      <div className="text-center py-6 text-slate-500 text-xs">No contributions found.</div>
                     ) : (
                       <div className="overflow-x-auto">
                         <table className="w-full text-left text-xs">
@@ -2226,9 +2215,9 @@ export default function App() {
                           <tbody className="divide-y divide-slate-800/50">
                             {savings.map((s) => (
                               <tr key={s.id}>
-                                <td className="py-2.5 text-slate-300">{new Date(s.created_at).toLocaleDateString()}</td>
-                                <td className="py-2.5 text-slate-400 font-mono">{s.reference_code || '-'}</td>
-                                <td className="py-2.5 text-right font-bold text-emerald-400">
+                                <td className="py-2 text-slate-300">{new Date(s.created_at).toLocaleDateString()}</td>
+                                <td className="py-2 text-slate-400 font-mono">{s.reference_code || '-'}</td>
+                                <td className="py-2 text-right font-bold text-emerald-400">
                                   +KES {Number(s.amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })}
                                 </td>
                               </tr>
@@ -2239,14 +2228,14 @@ export default function App() {
                     )}
                   </div>
 
-                  <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 shadow-lg">
-                    <div className="flex items-center gap-2 mb-4">
-                      <ArrowDownRight className="w-5 h-5 text-amber-400" />
-                      <h4 className="text-base font-bold text-white">Monthly Loan Repayments Ledger</h4>
+                  <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-lg">
+                    <div className="flex items-center gap-2 mb-3">
+                      <ArrowDownRight className="w-4 h-4 text-amber-400" />
+                      <h4 className="text-sm sm:text-base font-bold text-white">Monthly Loan Repayments Ledger</h4>
                     </div>
 
                     {repayments.length === 0 ? (
-                      <div className="text-center py-8 text-slate-500 text-sm">No loan repayments deducted yet.</div>
+                      <div className="text-center py-6 text-slate-500 text-xs">No loan repayments deducted yet.</div>
                     ) : (
                       <div className="overflow-x-auto">
                         <table className="w-full text-left text-xs">
@@ -2260,9 +2249,9 @@ export default function App() {
                           <tbody className="divide-y divide-slate-800/50">
                             {repayments.map((r) => (
                               <tr key={r.id}>
-                                <td className="py-2.5 text-slate-300">{new Date(r.created_at).toLocaleDateString()}</td>
-                                <td className="py-2.5 text-slate-400 font-mono">{r.reference_code || '-'}</td>
-                                <td className="py-2.5 text-right font-bold text-amber-400">
+                                <td className="py-2 text-slate-300">{new Date(r.created_at).toLocaleDateString()}</td>
+                                <td className="py-2 text-slate-400 font-mono">{r.reference_code || '-'}</td>
+                                <td className="py-2 text-right font-bold text-amber-400">
                                   -KES {Number(r.amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })}
                                 </td>
                               </tr>
@@ -2278,72 +2267,72 @@ export default function App() {
 
             {/* TAB 2: LOANS */}
             {activeTab === 'loans' && (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-7 shadow-lg">
-                  <div className="flex items-center gap-2 mb-4">
-                    <Calculator className="w-5 h-5 text-emerald-400" />
-                    <h3 className="text-lg font-bold text-white">Apply for a Loan</h3>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-lg">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Calculator className="w-4 h-4 text-emerald-400" />
+                    <h3 className="text-sm sm:text-base font-bold text-white">Apply for a Loan</h3>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 mb-4">
+                  <div className="grid grid-cols-2 gap-2 mb-3">
                     <button
                       type="button"
                       onClick={() => handleLoanProductChange('main_loan')}
-                      className={`p-3 rounded-2xl border text-left transition cursor-pointer ${
+                      className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
                         loanProduct === 'main_loan' 
                           ? 'bg-emerald-950/80 border-emerald-500 text-white shadow' 
                           : 'bg-slate-950 border-slate-800 text-slate-400'
                       }`}
                     >
                       <span className="text-xs font-bold block">1. Main Loan</span>
-                      <span className="text-[10px] text-slate-400">Long-term (Up to 24 mos, 1%)</span>
+                      <span className="text-[10px] text-slate-400">Long-term (24 mos, 1%)</span>
                     </button>
 
                     <button
                       type="button"
                       onClick={() => handleLoanProductChange('emergency_loan')}
-                      className={`p-3 rounded-2xl border text-left transition cursor-pointer ${
+                      className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
                         loanProduct === 'emergency_loan' 
                           ? 'bg-emerald-950/80 border-emerald-500 text-white shadow' 
                           : 'bg-slate-950 border-slate-800 text-slate-400'
                       }`}
                     >
                       <span className="text-xs font-bold block">2. Emergency Loan</span>
-                      <span className="text-[10px] text-slate-400">School fees & Medical (12 mos)</span>
+                      <span className="text-[10px] text-slate-400">School & Medical (12 mos)</span>
                     </button>
 
                     <button
                       type="button"
                       onClick={() => handleLoanProductChange('christmas_loan')}
-                      className={`p-3 rounded-2xl border text-left transition cursor-pointer ${
+                      className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
                         loanProduct === 'christmas_loan' 
                           ? 'bg-emerald-950/80 border-emerald-500 text-white shadow' 
                           : 'bg-slate-950 border-slate-800 text-slate-400'
                       }`}
                     >
                       <span className="text-xs font-bold block">3. Christmas Loan</span>
-                      <span className="text-[10px] text-slate-400">December festivities (Up to 6 mos)</span>
+                      <span className="text-[10px] text-slate-400">Festivities (6 mos)</span>
                     </button>
 
                     <button
                       type="button"
                       onClick={() => handleLoanProductChange('monthly_shylock')}
-                      className={`p-3 rounded-2xl border text-left transition cursor-pointer ${
+                      className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
                         loanProduct === 'monthly_shylock' 
                           ? 'bg-amber-950/80 border-amber-500 text-white shadow' 
                           : 'bg-slate-950 border-slate-800 text-slate-400'
                       }`}
                     >
                       <span className="text-xs font-bold block text-amber-400">4. Monthly Shylock</span>
-                      <span className="text-[10px] text-slate-400">Instant Advance (Repaid next salary)</span>
+                      <span className="text-[10px] text-slate-400">Instant Advance (1 mo)</span>
                     </button>
                   </div>
 
-                  <form onSubmit={handleInitiateLoan} className="space-y-4">
+                  <form onSubmit={handleInitiateLoan} className="space-y-3">
                     <div>
-                      <div className="flex justify-between items-center mb-1.5">
+                      <div className="flex justify-between items-center mb-1">
                         <label className="text-xs font-semibold text-slate-300">Principal Amount (KES)</label>
-                        <span className="text-emerald-400 font-bold text-sm">KES {loanPrincipalNum.toLocaleString()}</span>
+                        <span className="text-emerald-400 font-bold text-xs">KES {loanPrincipalNum.toLocaleString()}</span>
                       </div>
                       <input
                         type="text"
@@ -2351,14 +2340,14 @@ export default function App() {
                         value={loanPrincipalRaw}
                         onChange={(e) => setLoanPrincipalRaw(formatAccountingNumber(e.target.value))}
                         placeholder="e.g. 20,000"
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white font-mono"
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
                       />
                     </div>
 
                     <div>
-                      <div className="flex justify-between items-center mb-1.5">
+                      <div className="flex justify-between items-center mb-1">
                         <label className="text-xs font-semibold text-slate-300">Repayment Period</label>
-                        <span className="text-emerald-400 font-bold text-sm">{loanMonths} Month(s)</span>
+                        <span className="text-emerald-400 font-bold text-xs">{loanMonths} Month(s)</span>
                       </div>
                       <input
                         type="range"
@@ -2373,18 +2362,18 @@ export default function App() {
                     </div>
 
                     {loanProduct !== 'monthly_shylock' && (
-                      <div className="border-t border-slate-800 pt-4 space-y-3">
+                      <div className="border-t border-slate-800 pt-3 space-y-2.5">
                         <div className="flex justify-between items-center">
                           <div>
                             <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wide">Assign Member Guarantors</h4>
-                            <p className="text-[11px] text-slate-400">Type colleague's name or member number to search</p>
+                            <p className="text-[10px] text-slate-400">Type colleague's name or member number to search</p>
                           </div>
                           <button
                             type="button"
                             onClick={addGuarantorRow}
-                            className="flex items-center gap-1 bg-emerald-950 border border-emerald-800 text-emerald-300 text-xs px-2.5 py-1 rounded-xl cursor-pointer"
+                            className="flex items-center gap-1 bg-emerald-950 border border-emerald-800 text-emerald-300 text-[11px] px-2 py-1 rounded-lg cursor-pointer"
                           >
-                            <Plus className="w-3.5 h-3.5" /> Add Guarantor
+                            <Plus className="w-3 h-3" /> Add
                           </button>
                         </div>
 
@@ -2396,34 +2385,34 @@ export default function App() {
                           );
 
                           return (
-                            <div key={index} className="bg-slate-950 border border-slate-800 p-3.5 rounded-2xl space-y-2 relative">
+                            <div key={index} className="bg-slate-950 border border-slate-800 p-3 rounded-2xl space-y-2 relative">
                               <div className="flex flex-col sm:flex-row gap-2 items-center">
                                 <div className="w-full sm:w-3/5 relative">
-                                  <label className="block text-[10px] text-slate-400 mb-1 font-medium">Search Guarantor #{index + 1}</label>
+                                  <label className="block text-[10px] text-slate-400 mb-0.5 font-medium">Search Guarantor #{index + 1}</label>
                                   <div className="relative">
                                     <input
                                       type="text"
                                       required
                                       autoComplete="off"
-                                      placeholder="Type name (e.g. Newton, KW-001)..."
+                                      placeholder="Type name or number..."
                                       value={g.searchTerm}
                                       onChange={(e) => {
                                         updateGuarantorRow(index, 'searchTerm', e.target.value);
                                         updateGuarantorRow(index, 'dropdownOpen', true);
                                       }}
                                       onFocus={() => updateGuarantorRow(index, 'dropdownOpen', true)}
-                                      className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-8 pr-3 py-2 text-xs text-white"
+                                      className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white"
                                     />
                                     <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
                                   </div>
 
                                   {g.dropdownOpen && filteredColleagues.length > 0 && (
-                                    <div className="absolute top-full left-0 right-0 mt-1 max-h-40 overflow-y-auto bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-30 divide-y divide-slate-800">
+                                    <div className="absolute top-full left-0 right-0 mt-1 max-h-36 overflow-y-auto bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-30 divide-y divide-slate-800">
                                       {filteredColleagues.slice(0, 8).map((colleague) => (
                                         <div
                                           key={colleague.id}
                                           onClick={() => selectGuarantorFromSearch(index, colleague)}
-                                          className="p-2.5 hover:bg-slate-800 text-xs cursor-pointer text-slate-200 transition flex justify-between"
+                                          className="p-2 hover:bg-slate-800 text-xs cursor-pointer text-slate-200 transition flex justify-between"
                                         >
                                           <span><strong>{colleague.full_name}</strong> ({colleague.member_number})</span>
                                           <span className="text-[10px] text-slate-400">{colleague.companies?.name || 'External'}</span>
@@ -2434,14 +2423,14 @@ export default function App() {
                                 </div>
 
                                 <div className="w-full sm:w-2/5">
-                                  <label className="block text-[10px] text-slate-400 mb-1 font-medium">Pledged (KES)</label>
+                                  <label className="block text-[10px] text-slate-400 mb-0.5 font-medium">Pledged (KES)</label>
                                   <input
                                     type="text"
                                     required
                                     placeholder="e.g. 5,000"
                                     value={g.amountRaw}
                                     onChange={(e) => updateGuarantorRow(index, 'amountRaw', e.target.value)}
-                                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-2 text-xs text-white font-mono"
+                                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-white font-mono"
                                   />
                                 </div>
 
@@ -2449,7 +2438,7 @@ export default function App() {
                                   <button
                                     type="button"
                                     onClick={() => removeGuarantorRow(index)}
-                                    className="self-end sm:self-center mt-1 sm:mt-5 text-rose-400 hover:text-rose-300 p-1.5 cursor-pointer"
+                                    className="self-end sm:self-center text-rose-400 hover:text-rose-300 p-1 cursor-pointer"
                                   >
                                     <Trash2 className="w-4 h-4" />
                                   </button>
@@ -2457,7 +2446,7 @@ export default function App() {
                               </div>
 
                               {g.guarantorId && (
-                                <div className={`p-2.5 rounded-xl text-[11px] font-semibold flex items-center gap-1.5 ${
+                                <div className={`p-2 rounded-xl text-[10px] font-semibold flex items-center gap-1.5 ${
                                   g.eligible
                                     ? 'bg-emerald-950/60 border border-emerald-800/60 text-emerald-300'
                                     : 'bg-rose-950/60 border border-rose-800/60 text-rose-300'
@@ -2481,7 +2470,7 @@ export default function App() {
                       </div>
                     )}
 
-                    <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 space-y-1.5 text-xs">
+                    <div className="bg-slate-950 border border-slate-800 rounded-2xl p-3 space-y-1 text-xs">
                       <div className="flex justify-between text-slate-400">
                         <span>Selected Product:</span>
                         <span className="text-white font-bold capitalize">{loanProduct.replace('_', ' ')}</span>
@@ -2494,7 +2483,7 @@ export default function App() {
                         <span>Total Payable:</span>
                         <span className="text-white font-medium">KES {calculatedTotal.toLocaleString()}</span>
                       </div>
-                      <div className="border-t border-slate-800 pt-2 flex justify-between text-sm font-bold text-emerald-400">
+                      <div className="border-t border-slate-800 pt-1.5 flex justify-between text-xs font-bold text-emerald-400">
                         <span>Monthly Installment:</span>
                         <span>KES {monthlyInstallment.toFixed(2)}</span>
                       </div>
@@ -2503,59 +2492,59 @@ export default function App() {
                     <button
                       type="submit"
                       disabled={loading}
-                      className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3 rounded-2xl text-sm transition shadow-lg cursor-pointer"
+                      className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-2.5 rounded-xl text-xs transition shadow-lg cursor-pointer"
                     >
                       Review Terms & Continue Application
                     </button>
                   </form>
                 </div>
 
-                <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-7 shadow-lg">
-                  <h3 className="text-lg font-bold text-white mb-4">My Loan Applications & Approval Tracker</h3>
+                <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-lg">
+                  <h3 className="text-sm sm:text-base font-bold text-white mb-3">My Loan Applications & Approval Tracker</h3>
                   {loans.length === 0 ? (
-                    <div className="text-center py-12 text-slate-500 text-sm">No active or past loans found.</div>
+                    <div className="text-center py-8 text-slate-500 text-xs">No active or past loans found.</div>
                   ) : (
-                    <div className="space-y-4">
+                    <div className="space-y-3">
                       {loans.map((l) => (
-                        <div key={l.id} className="bg-slate-950 border border-slate-800 rounded-2xl p-4 space-y-3 shadow">
+                        <div key={l.id} className="bg-slate-950 border border-slate-800 rounded-2xl p-3.5 space-y-2.5 shadow">
                           <div className="flex justify-between items-start">
                             <div>
-                              <div className="flex items-center gap-2">
-                                <span className={`text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-full ${
+                              <div className="flex items-center gap-1.5">
+                                <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full ${
                                   l.status === 'approved' ? 'bg-emerald-950 border border-emerald-800 text-emerald-300' :
                                   l.status === 'completed' ? 'bg-blue-950 border border-blue-800 text-blue-300' :
                                   l.status === 'pending' ? 'bg-amber-950 border border-amber-800 text-amber-300' : 'bg-slate-800 text-slate-400'
                                 }`}>
                                   Status: {l.status}
                                 </span>
-                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-900 text-slate-300 capitalize border border-slate-800">
+                                <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-slate-900 text-slate-300 capitalize border border-slate-800">
                                   {(l.loan_product || 'main_loan').replace('_', ' ')}
                                 </span>
                               </div>
-                              <h4 className="text-lg font-black text-white mt-1.5">
+                              <h4 className="text-base font-black text-white mt-1">
                                 KES {Number(l.principal_amount).toLocaleString()}
                               </h4>
-                              <p className="text-xs text-slate-400 font-medium">{l.repayment_period_months} Month(s) Term</p>
+                              <p className="text-[11px] text-slate-400 font-medium">{l.repayment_period_months} Month(s) Term</p>
                             </div>
                             <button
                               onClick={() => generatePDFStatement(l)}
-                              className="flex items-center gap-1 bg-slate-900 hover:bg-slate-800 text-emerald-400 px-3 py-1.5 rounded-xl text-xs font-semibold border border-slate-800 cursor-pointer"
+                              className="flex items-center gap-1 bg-slate-900 hover:bg-slate-800 text-emerald-400 px-2.5 py-1 rounded-xl text-[11px] font-semibold border border-slate-800 cursor-pointer"
                             >
-                              <Download className="w-3.5 h-3.5" /> PDF
+                              <Download className="w-3 h-3" /> PDF
                             </button>
                           </div>
 
-                          <div className="bg-slate-900 p-3 rounded-xl border border-slate-800/80 text-[11px] space-y-1.5">
-                            <p className="text-slate-400 font-semibold mb-1">Signatory Pipeline Progress:</p>
-                            <div className="grid grid-cols-3 gap-1.5 text-center font-mono">
-                              <span className={`p-1.5 rounded-lg text-[10px] font-bold ${l.assistant_chair_approval ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-slate-950 text-slate-500'}`}>
-                                1. Asst: {l.assistant_chair_approval ? '✓ SIGNED' : 'PENDING'}
+                          <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800/80 text-[10px] space-y-1">
+                            <p className="text-slate-400 font-semibold mb-0.5">Signatory Pipeline Progress:</p>
+                            <div className="grid grid-cols-3 gap-1 text-center font-mono">
+                              <span className={`p-1 rounded-lg font-bold ${l.assistant_chair_approval ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-slate-950 text-slate-500'}`}>
+                                1. Asst: {l.assistant_chair_approval ? '✓' : 'PENDING'}
                               </span>
-                              <span className={`p-1.5 rounded-lg text-[10px] font-bold ${l.chairman_approval ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-slate-950 text-slate-500'}`}>
-                                2. Chair: {l.chairman_approval ? '✓ SIGNED' : 'PENDING'}
+                              <span className={`p-1 rounded-lg font-bold ${l.chairman_approval ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-slate-950 text-slate-500'}`}>
+                                2. Chair: {l.chairman_approval ? '✓' : 'PENDING'}
                               </span>
-                              <span className={`p-1.5 rounded-lg text-[10px] font-bold ${l.treasurer_approval ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-slate-950 text-slate-500'}`}>
-                                3. Treas: {l.treasurer_approval ? '✓ DISBURSED' : 'PENDING'}
+                              <span className={`p-1 rounded-lg font-bold ${l.treasurer_approval ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-slate-950 text-slate-500'}`}>
+                                3. Treas: {l.treasurer_approval ? '✓' : 'PENDING'}
                               </span>
                             </div>
                           </div>
@@ -2569,34 +2558,34 @@ export default function App() {
 
             {/* TAB 3: GUARANTORS */}
             {activeTab === 'guarantors' && (
-              <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-7 space-y-6 shadow-lg">
+              <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 space-y-4 shadow-lg">
                 <div>
                   <div className="flex items-center gap-2 mb-2">
-                    <Users className="w-5 h-5 text-emerald-400" />
-                    <h3 className="text-lg font-bold text-white">Guarantor Requests Received</h3>
+                    <Users className="w-4 h-4 text-emerald-400" />
+                    <h3 className="text-sm sm:text-base font-bold text-white">Guarantor Requests Received</h3>
                   </div>
-                  <div className="bg-slate-950 border border-slate-800 p-4 rounded-2xl flex justify-between items-center text-xs">
+                  <div className="bg-slate-950 border border-slate-800 p-3 rounded-2xl flex justify-between items-center text-xs">
                     <span className="text-slate-400 font-medium">Your Current Available Free Shares:</span>
-                    <span className="text-emerald-400 font-black text-sm">KES {freeSharesAvailable.toLocaleString()}</span>
+                    <span className="text-emerald-400 font-black text-xs sm:text-sm">KES {freeSharesAvailable.toLocaleString()}</span>
                   </div>
                 </div>
 
                 {guarantorRequests.length === 0 ? (
-                  <div className="text-center py-12 text-slate-500 text-sm">You have no pending guarantor requests.</div>
+                  <div className="text-center py-10 text-slate-500 text-xs">You have no pending guarantor requests.</div>
                 ) : (
-                  <div className="space-y-3">
+                  <div className="space-y-2.5">
                     {guarantorRequests.map((g) => (
-                      <div key={g.id} className="bg-slate-950 border border-slate-800 rounded-2xl p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                      <div key={g.id} className="bg-slate-950 border border-slate-800 rounded-2xl p-3.5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                         <div>
-                          <span className={`text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-full ${
+                          <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full ${
                             g.status === 'accepted' ? 'bg-emerald-950 border border-emerald-800 text-emerald-300' :
                             g.status === 'pending' ? 'bg-amber-950 border border-amber-800 text-amber-300' : 'bg-rose-950 border border-rose-800 text-rose-300'
                           }`}>
                             Guarantee: {g.status}
                           </span>
-                          <h4 className="text-base font-bold text-white mt-1">{g.loans?.profiles?.full_name}</h4>
-                          <p className="text-xs text-slate-400">{g.loans?.profiles?.companies?.name || 'External'} • Member {g.loans?.profiles?.member_number}</p>
-                          <p className="text-xs text-emerald-400 mt-1 font-medium">
+                          <h4 className="text-sm font-bold text-white mt-1">{g.loans?.profiles?.full_name}</h4>
+                          <p className="text-[11px] text-slate-400">{g.loans?.profiles?.companies?.name || 'External'} • Member {g.loans?.profiles?.member_number}</p>
+                          <p className="text-[11px] text-emerald-400 mt-0.5 font-medium">
                             Pledged: KES {Number(g.amount_guaranteed).toLocaleString()} (Product: {(g.loans?.loan_product || 'main_loan').replace('_', ' ').toUpperCase()})
                           </p>
                         </div>
@@ -2605,15 +2594,15 @@ export default function App() {
                           <div className="flex gap-2 w-full sm:w-auto">
                             <button
                               onClick={() => handleRespondGuarantor(g.id, 'accepted', g.amount_guaranteed)}
-                              className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-4 py-2 rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer"
+                              className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold px-3 py-1.5 rounded-xl flex items-center justify-center gap-1 transition cursor-pointer"
                             >
-                              <CheckCircle className="w-4 h-4" /> Accept
+                              <CheckCircle className="w-3.5 h-3.5" /> Accept
                             </button>
                             <button
                               onClick={() => handleRespondGuarantor(g.id, 'rejected', g.amount_guaranteed)}
-                              className="flex-1 sm:flex-none bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold px-4 py-2 rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer"
+                              className="flex-1 sm:flex-none bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-bold px-3 py-1.5 rounded-xl flex items-center justify-center gap-1 transition cursor-pointer"
                             >
-                              <XCircle className="w-4 h-4" /> Decline
+                              <XCircle className="w-3.5 h-3.5" /> Decline
                             </button>
                           </div>
                         )}
@@ -2626,50 +2615,50 @@ export default function App() {
 
             {/* TAB 4: REPORTS & AGM */}
             {activeTab === 'documents' && (
-              <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-8 space-y-6 shadow-lg">
+              <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 space-y-4 shadow-lg">
                 <div className="flex justify-between items-center">
                   <div>
-                    <h3 className="text-xl font-bold text-white flex items-center gap-2">
-                      <FolderDown className="w-6 h-6 text-emerald-400" /> Official Reports & AGM Booklets
+                    <h3 className="text-sm sm:text-base font-bold text-white flex items-center gap-1.5">
+                      <FolderDown className="w-4 h-4 text-emerald-400" /> Official Reports & AGM Booklets
                     </h3>
-                    <p className="text-xs text-slate-400 mt-1 font-medium">
+                    <p className="text-[11px] text-slate-400 mt-0.5 font-medium">
                       Access certified annual audit reports, AGM booklets, and society policies digitally.
                     </p>
                   </div>
                   <button
                     onClick={fetchSaccoDocuments}
-                    className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold flex items-center gap-1 cursor-pointer transition border border-slate-700"
+                    className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold flex items-center gap-1 cursor-pointer transition border border-slate-700"
                     title="Refresh Library"
                   >
-                    <RotateCcw className="w-3.5 h-3.5" /> Refresh
+                    <RotateCcw className="w-3 h-3" /> Refresh
                   </button>
                 </div>
 
                 {saccoDocs.length === 0 ? (
-                  <div className="text-center py-16 border border-slate-800 rounded-3xl bg-slate-950">
-                    <FileArchive className="w-12 h-12 text-slate-600 mx-auto mb-3" />
-                    <p className="text-sm font-semibold text-slate-300">No official documents published yet.</p>
-                    <p className="text-xs text-slate-500 mt-1">Leadership will upload the upcoming AGM and audit packages here.</p>
+                  <div className="text-center py-12 border border-slate-800 rounded-2xl bg-slate-950">
+                    <FileArchive className="w-10 h-10 text-slate-600 mx-auto mb-2" />
+                    <p className="text-xs font-semibold text-slate-300">No official documents published yet.</p>
+                    <p className="text-[11px] text-slate-500 mt-0.5">Leadership will upload the upcoming AGM and audit packages here.</p>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     {saccoDocs.map((doc) => (
-                      <div key={doc.id} className="bg-slate-950 border border-slate-800 rounded-3xl p-5 flex flex-col justify-between space-y-4 shadow">
+                      <div key={doc.id} className="bg-slate-950 border border-slate-800 rounded-2xl p-4 flex flex-col justify-between space-y-3 shadow">
                         <div>
                           <div className="flex justify-between items-start">
-                            <span className={`text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-full ${
+                            <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full ${
                               doc.category === 'audit_report' ? 'bg-emerald-950 border border-emerald-800 text-emerald-300' :
                               doc.category === 'agm_booklet' ? 'bg-amber-950 border border-amber-800 text-amber-300' :
                               'bg-blue-950 border border-blue-800 text-blue-300'
                             }`}>
                               {doc.category.replace('_', ' ')}
                             </span>
-                            <span className="text-xs font-mono text-slate-400">{doc.financial_year}</span>
+                            <span className="text-[11px] font-mono text-slate-400">{doc.financial_year}</span>
                           </div>
 
-                          <h4 className="text-base font-bold text-white mt-2 leading-snug">{doc.title}</h4>
-                          <p className="text-xs text-slate-400 mt-1 flex items-center gap-2">
-                            <span>File Size: {doc.file_size || 'PDF'}</span> • 
+                          <h4 className="text-sm font-bold text-white mt-1.5 leading-snug">{doc.title}</h4>
+                          <p className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1.5">
+                            <span>Size: {doc.file_size || 'PDF'}</span> • 
                             <span>Published: {new Date(doc.created_at).toLocaleDateString()}</span>
                           </p>
                         </div>
@@ -2679,17 +2668,17 @@ export default function App() {
                             href={doc.file_url}
                             target="_blank"
                             rel="noreferrer"
-                            className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 transition shadow"
+                            className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded-xl text-xs flex items-center justify-center gap-1 transition shadow"
                           >
                             <Download className="w-3.5 h-3.5" /> Read / Download PDF
                           </a>
                           {['admin', 'chairman', 'treasurer', 'assistant_chair'].includes(userRole) && (
                             <button
                               onClick={() => handleDeleteSaccoDocument(doc.id, doc.title)}
-                              className="bg-rose-950/60 hover:bg-rose-900 border border-rose-900/60 text-rose-300 p-2.5 rounded-xl text-xs transition cursor-pointer"
+                              className="bg-rose-950/60 hover:bg-rose-900 border border-rose-900/60 text-rose-300 p-2 rounded-xl text-xs transition cursor-pointer"
                               title="Delete Report"
                             >
-                              <Trash2 className="w-4 h-4" />
+                              <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           )}
                         </div>
@@ -2702,14 +2691,14 @@ export default function App() {
 
             {/* TAB 5: WELFARE & NOK */}
             {activeTab === 'beneficiaries' && (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-7 shadow-lg">
-                  <div className="flex items-center gap-2 mb-4">
-                    <Users className="w-5 h-5 text-emerald-400" />
-                    <h3 className="text-lg font-bold text-white">Nominated Beneficiaries (Next of Kin)</h3>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-lg">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Users className="w-4 h-4 text-emerald-400" />
+                    <h3 className="text-sm sm:text-base font-bold text-white">Nominated Beneficiaries (Next of Kin)</h3>
                   </div>
 
-                  <form onSubmit={handleAddBeneficiary} className="space-y-3">
+                  <form onSubmit={handleAddBeneficiary} className="space-y-2.5">
                     <div>
                       <label className="block text-xs text-slate-400 mb-1">Full Name</label>
                       <input
@@ -2719,7 +2708,7 @@ export default function App() {
                         value={nokName}
                         onChange={(e) => setNokName(e.target.value)}
                         placeholder="e.g. Mary Atieno"
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
                       />
                     </div>
                     <div className="grid grid-cols-2 gap-2">
@@ -2728,7 +2717,7 @@ export default function App() {
                         <select
                           value={nokRel}
                           onChange={(e) => setNokRel(e.target.value)}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
                         >
                           <option value="Spouse">Spouse</option>
                           <option value="Child">Child</option>
@@ -2747,7 +2736,7 @@ export default function App() {
                           value={nokPercent}
                           onChange={(e) => setNokPercent(e.target.value)}
                           placeholder="e.g. 50"
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
                         />
                       </div>
                     </div>
@@ -2760,7 +2749,7 @@ export default function App() {
                           value={nokId}
                           onChange={(e) => setNokId(e.target.value)}
                           placeholder="ID Number"
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
                         />
                       </div>
                       <div>
@@ -2772,28 +2761,28 @@ export default function App() {
                           value={nokPhone}
                           onChange={(e) => setNokPhone(e.target.value)}
                           placeholder="07xxxxxxxx"
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
                         />
                       </div>
                     </div>
                     <button
                       type="submit"
                       disabled={loading}
-                      className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 rounded-xl text-xs transition shadow cursor-pointer"
+                      className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded-xl text-xs transition shadow cursor-pointer"
                     >
                       Save Beneficiary
                     </button>
                   </form>
 
-                  <div className="mt-4 pt-4 border-t border-slate-800 space-y-2">
+                  <div className="mt-3 pt-3 border-t border-slate-800 space-y-2">
                     {beneficiaries.map((b) => (
-                      <div key={b.id} className="bg-slate-950 p-3 rounded-2xl flex justify-between items-center text-xs">
+                      <div key={b.id} className="bg-slate-950 p-2.5 rounded-xl flex justify-between items-center text-xs">
                         <div>
-                          <h5 className="font-bold text-white">{b.full_name} ({b.relationship})</h5>
-                          <p className="text-[11px] text-slate-400">Phone: {b.phone} • ID: {b.id_number || '-'}</p>
+                          <h5 className="font-bold text-white text-xs">{b.full_name} ({b.relationship})</h5>
+                          <p className="text-[10px] text-slate-400">Phone: {b.phone} • ID: {b.id_number || '-'}</p>
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className="bg-emerald-950 text-emerald-300 font-bold px-2 py-0.5 rounded border border-emerald-800">
+                          <span className="bg-emerald-950 text-emerald-300 font-bold px-2 py-0.5 rounded text-[10px] border border-emerald-800">
                             {b.allocation_percentage}%
                           </span>
                           <button onClick={() => handleDeleteBeneficiary(b.id)} className="text-rose-400 hover:text-rose-300 cursor-pointer">
@@ -2805,19 +2794,19 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-7 shadow-lg">
-                  <div className="flex items-center gap-2 mb-4">
-                    <HeartHandshake className="w-5 h-5 text-rose-400" />
-                    <h3 className="text-lg font-bold text-white">Benevolent & Welfare Claims</h3>
+                <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-lg">
+                  <div className="flex items-center gap-2 mb-3">
+                    <HeartHandshake className="w-4 h-4 text-rose-400" />
+                    <h3 className="text-sm sm:text-base font-bold text-white">Benevolent & Welfare Claims</h3>
                   </div>
 
-                  <form onSubmit={handleSubmitWelfareClaim} className="space-y-3">
+                  <form onSubmit={handleSubmitWelfareClaim} className="space-y-2.5">
                     <div>
                       <label className="block text-xs text-slate-400 mb-1">Claim Category</label>
                       <select
                         value={claimType}
                         onChange={(e) => setClaimType(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
                       >
                         <option value="hospitalization">Hospitalization / Medical Assistance</option>
                         <option value="bereavement">Bereavement Support</option>
@@ -2832,7 +2821,7 @@ export default function App() {
                         value={claimAmountRaw}
                         onChange={(e) => setClaimAmountRaw(formatAccountingNumber(e.target.value))}
                         placeholder="e.g. 20,000"
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
                       />
                     </div>
                     <div>
@@ -2843,32 +2832,32 @@ export default function App() {
                         value={claimDesc}
                         onChange={(e) => setClaimDesc(e.target.value)}
                         placeholder="Provide circumstances for 3-Signatory review..."
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
                       />
                     </div>
                     <div>
                       <label className="block text-xs text-slate-400 mb-1 flex items-center gap-1 font-medium">
-                        <Paperclip className="w-3.5 h-3.5 text-amber-400" /> Upload Evidence Document (PDF/Photo)
+                        <Paperclip className="w-3 h-3 text-amber-400" /> Upload Evidence Document (PDF/Photo)
                       </label>
                       <input
                         type="file"
                         accept="image/*,.pdf"
                         onChange={(e) => setClaimDocument(e.target.files[0])}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-300 file:mr-3 file:py-1 file:px-2.5 file:rounded-md file:border-0 file:text-xs file:bg-rose-900/60 file:text-rose-200 cursor-pointer"
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1 text-xs text-slate-300 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[11px] file:bg-rose-900/60 file:text-rose-200 cursor-pointer"
                       />
                     </div>
                     <button
                       type="submit"
                       disabled={loading}
-                      className="w-full bg-rose-600 hover:bg-rose-500 text-white font-bold py-2.5 rounded-xl text-xs transition shadow cursor-pointer"
+                      className="w-full bg-rose-600 hover:bg-rose-500 text-white font-bold py-2 rounded-xl text-xs transition shadow cursor-pointer"
                     >
                       Submit Welfare Claim for Sequential Review
                     </button>
                   </form>
 
-                  <div className="mt-4 pt-4 border-t border-slate-800 space-y-2">
+                  <div className="mt-3 pt-3 border-t border-slate-800 space-y-2">
                     {welfareClaims.map((c) => (
-                      <div key={c.id} className="bg-slate-950 p-3 rounded-2xl space-y-2 text-xs">
+                      <div key={c.id} className="bg-slate-950 p-3 rounded-2xl space-y-1.5 text-xs">
                         <div className="flex justify-between items-start">
                           <div>
                             <span className={`text-[9px] uppercase font-bold px-2 py-0.5 rounded-full ${
@@ -2876,10 +2865,10 @@ export default function App() {
                             }`}>
                               {c.status}
                             </span>
-                            <h5 className="font-bold text-white capitalize mt-1">{c.claim_type}</h5>
-                            <p className="text-[11px] text-slate-400">{c.description}</p>
+                            <h5 className="font-bold text-white capitalize mt-1 text-xs">{c.claim_type}</h5>
+                            <p className="text-[10px] text-slate-400">{c.description}</p>
                           </div>
-                          <span className="font-bold text-rose-400">
+                          <span className="font-bold text-rose-400 text-xs">
                             KES {Number(c.amount_requested).toLocaleString()}
                           </span>
                         </div>
@@ -2889,16 +2878,16 @@ export default function App() {
                             href={c.evidence_url}
                             target="_blank"
                             rel="noreferrer"
-                            className="inline-flex items-center gap-1 text-[11px] text-amber-400 hover:underline"
+                            className="inline-flex items-center gap-1 text-[10px] text-amber-400 hover:underline"
                           >
-                            <FileCheck className="w-3.5 h-3.5" /> View Uploaded Evidence Document
+                            <FileCheck className="w-3 h-3" /> View Uploaded Evidence Document
                           </a>
                         )}
 
-                        <div className="grid grid-cols-3 gap-1 text-[10px] font-mono text-center pt-1 border-t border-slate-800/60">
-                          <span className={c.assistant_chair_approval ? 'text-emerald-400 font-bold' : 'text-slate-500'}>1. Asst: {c.assistant_chair_approval ? '✓ SIGNED' : 'PENDING'}</span>
-                          <span className={c.chairman_approval ? 'text-emerald-400 font-bold' : 'text-slate-500'}>2. Chair: {c.chairman_approval ? '✓ SIGNED' : 'PENDING'}</span>
-                          <span className={c.treasurer_approval ? 'text-emerald-400 font-bold' : 'text-slate-500'}>3. Treas: {c.treasurer_approval ? '✓ SIGNED' : 'PENDING'}</span>
+                        <div className="grid grid-cols-3 gap-1 text-[9px] font-mono text-center pt-1 border-t border-slate-800/60">
+                          <span className={c.assistant_chair_approval ? 'text-emerald-400 font-bold' : 'text-slate-500'}>1. Asst: {c.assistant_chair_approval ? '✓' : 'PENDING'}</span>
+                          <span className={c.chairman_approval ? 'text-emerald-400 font-bold' : 'text-slate-500'}>2. Chair: {c.chairman_approval ? '✓' : 'PENDING'}</span>
+                          <span className={c.treasurer_approval ? 'text-emerald-400 font-bold' : 'text-slate-500'}>3. Treas: {c.treasurer_approval ? '✓' : 'PENDING'}</span>
                         </div>
                       </div>
                     ))}
@@ -2909,30 +2898,30 @@ export default function App() {
 
             {/* TAB 6: M-PESA */}
             {activeTab === 'mpesa' && (
-              <div className="max-w-xl mx-auto bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-10 space-y-6 shadow-2xl">
+              <div className="max-w-xl mx-auto bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-5 sm:p-8 space-y-4 shadow-2xl">
                 <div className="flex items-center gap-3">
-                  <div className="bg-emerald-600 p-3 rounded-2xl text-white shadow-lg">
-                    <Smartphone className="w-6 h-6" />
+                  <div className="bg-emerald-600 p-2.5 rounded-2xl text-white shadow-lg">
+                    <Smartphone className="w-5 h-5" />
                   </div>
                   <div>
-                    <h3 className="text-xl font-bold text-white">Direct M-Pesa Payment & Top-Up</h3>
-                    <p className="text-xs text-slate-400">Instant Savings Deposit or Loan Repayment via Safaricom M-Pesa</p>
+                    <h3 className="text-base sm:text-lg font-bold text-white">Direct M-Pesa Payment & Top-Up</h3>
+                    <p className="text-[11px] text-slate-400">Instant Savings Deposit or Loan Repayment via M-Pesa</p>
                   </div>
                 </div>
 
-                <div className="bg-slate-950 border border-slate-800 p-4 rounded-2xl space-y-1 text-xs font-medium">
+                <div className="bg-slate-950 border border-slate-800 p-3.5 rounded-2xl space-y-0.5 text-xs font-medium">
                   <p className="text-slate-300 font-bold">Paybill Instructions:</p>
                   <p className="text-slate-400">Business No: <strong className="text-white font-mono">522522</strong> (KEWA SACCO)</p>
                   <p className="text-slate-400">Account No: <strong className="text-emerald-400 font-mono">{profile?.member_number}</strong></p>
                 </div>
 
-                <form onSubmit={handleMpesaTransaction} className="space-y-4">
+                <form onSubmit={handleMpesaTransaction} className="space-y-3">
                   <div>
                     <label className="block text-xs font-semibold text-slate-300 mb-1">Destination Account</label>
                     <select
                       value={mpesaType}
                       onChange={(e) => setMpesaType(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
                     >
                       <option value="savings_deposit">Voluntary Savings Top-Up</option>
                       <option value="loan_repayment">Direct Loan Repayment (Clear Balance)</option>
@@ -2948,7 +2937,7 @@ export default function App() {
                       value={mpesaPhone || profile?.phone || ''}
                       onChange={(e) => setMpesaPhone(e.target.value)}
                       placeholder="0712345678"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
                     />
                   </div>
 
@@ -2960,26 +2949,26 @@ export default function App() {
                       value={mpesaAmountRaw}
                       onChange={(e) => setMpesaAmountRaw(formatAccountingNumber(e.target.value))}
                       placeholder="e.g. 3,000"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">M-Pesa Transaction Code (Optional for STK Push)</label>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">M-Pesa Transaction Code (Optional)</label>
                     <input
                       type="text"
                       autoComplete="off"
                       value={mpesaCode}
                       onChange={(e) => setMpesaCode(e.target.value)}
                       placeholder="e.g. QGH789KL12"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono uppercase"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono uppercase"
                     />
                   </div>
 
                   <button
                     type="submit"
                     disabled={loading}
-                    className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3.5 rounded-2xl text-sm transition shadow-lg flex items-center justify-center gap-2 cursor-pointer"
+                    className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3 rounded-xl text-xs transition shadow-lg flex items-center justify-center gap-2 cursor-pointer"
                   >
                     <Send className="w-4 h-4" /> Confirm & Credit Account
                   </button>
@@ -2989,87 +2978,87 @@ export default function App() {
 
             {/* TAB 7: HELP & CHAT */}
             {activeTab === 'support' && (
-              <div className="space-y-6">
-                <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-8 shadow-xl">
+              <div className="space-y-4">
+                <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
                   <div className="flex items-center gap-2 mb-2">
-                    <MessageCircle className="w-6 h-6 text-emerald-400" />
-                    <h3 className="text-xl font-bold text-white">Direct Communication with SACCO Officials</h3>
+                    <MessageCircle className="w-5 h-5 text-emerald-400" />
+                    <h3 className="text-base sm:text-lg font-bold text-white">Direct Communication with SACCO Officials</h3>
                   </div>
-                  <p className="text-xs text-slate-400 mb-5 font-medium">
+                  <p className="text-xs text-slate-400 mb-4 font-medium">
                     Tap to open a pre-filled direct WhatsApp message or phone call with your elected executive committee.
                   </p>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div className="bg-slate-950 border border-slate-800 p-4 rounded-2xl flex flex-col justify-between space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="bg-slate-950 border border-slate-800 p-3.5 rounded-2xl flex flex-col justify-between space-y-2.5">
                       <div>
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800 uppercase">
+                        <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800 uppercase">
                           Executive Chairperson
                         </span>
-                        <h4 className="text-base font-bold text-white mt-1.5">{chairmanOfficial.full_name}</h4>
-                        <p className="text-xs text-slate-400">Governance & General Appeals</p>
+                        <h4 className="text-sm font-bold text-white mt-1">{chairmanOfficial.full_name}</h4>
+                        <p className="text-[11px] text-slate-400">Governance & General Appeals</p>
                       </div>
                       <a
                         href={getWhatsAppLink(chairmanOfficial.phone, 'Chairman')}
                         target="_blank"
                         rel="noreferrer"
-                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 transition shadow"
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-1.5 rounded-xl text-xs flex items-center justify-center gap-1.5 transition shadow"
                       >
-                        <MessageCircle className="w-4 h-4" /> Chat on WhatsApp
+                        <MessageCircle className="w-3.5 h-3.5" /> Chat on WhatsApp
                       </a>
                     </div>
 
-                    <div className="bg-slate-950 border border-slate-800 p-4 rounded-2xl flex flex-col justify-between space-y-3">
+                    <div className="bg-slate-950 border border-slate-800 p-3.5 rounded-2xl flex flex-col justify-between space-y-2.5">
                       <div>
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800 uppercase">
+                        <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800 uppercase">
                           Treasurer & Finance
                         </span>
-                        <h4 className="text-base font-bold text-white mt-1.5">{treasurerOfficial.full_name}</h4>
-                        <p className="text-xs text-slate-400">Disbursements & Checkoff Inquiries</p>
+                        <h4 className="text-sm font-bold text-white mt-1">{treasurerOfficial.full_name}</h4>
+                        <p className="text-[11px] text-slate-400">Disbursements & Checkoffs</p>
                       </div>
                       <a
                         href={getWhatsAppLink(treasurerOfficial.phone, 'Treasurer')}
                         target="_blank"
                         rel="noreferrer"
-                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 transition shadow"
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-1.5 rounded-xl text-xs flex items-center justify-center gap-1.5 transition shadow"
                       >
-                        <MessageCircle className="w-4 h-4" /> Chat on WhatsApp
+                        <MessageCircle className="w-3.5 h-3.5" /> Chat on WhatsApp
                       </a>
                     </div>
 
-                    <div className="bg-slate-950 border border-slate-800 p-4 rounded-2xl flex flex-col justify-between space-y-3">
+                    <div className="bg-slate-950 border border-slate-800 p-3.5 rounded-2xl flex flex-col justify-between space-y-2.5">
                       <div>
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800 uppercase">
+                        <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800 uppercase">
                           Assistant Chairperson
                         </span>
-                        <h4 className="text-base font-bold text-white mt-1.5">{asstChairOfficial.full_name}</h4>
-                        <p className="text-xs text-slate-400">Guarantor Verification & Welfare</p>
+                        <h4 className="text-sm font-bold text-white mt-1">{asstChairOfficial.full_name}</h4>
+                        <p className="text-[11px] text-slate-400">Guarantors & Welfare</p>
                       </div>
                       <a
                         href={getWhatsAppLink(asstChairOfficial.phone, 'Assistant Chair')}
                         target="_blank"
                         rel="noreferrer"
-                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 transition shadow"
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-1.5 rounded-xl text-xs flex items-center justify-center gap-1.5 transition shadow"
                       >
-                        <MessageCircle className="w-4 h-4" /> Chat on WhatsApp
+                        <MessageCircle className="w-3.5 h-3.5" /> Chat on WhatsApp
                       </a>
                     </div>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 flex flex-col h-[480px] shadow-xl">
-                    <div className="flex items-center gap-2 pb-3 border-b border-slate-800">
-                      <Bot className="w-5 h-5 text-emerald-400" />
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 flex flex-col h-[440px] shadow-xl">
+                    <div className="flex items-center gap-2 pb-2.5 border-b border-slate-800">
+                      <Bot className="w-4 h-4 text-emerald-400" />
                       <div>
-                        <h4 className="text-sm font-bold text-white">KEWA SACCO AI Assistant</h4>
+                        <h4 className="text-xs sm:text-sm font-bold text-white">KEWA SACCO AI Assistant</h4>
                         <p className="text-[10px] text-slate-400">Instant Automated Policy & Ledger Support</p>
                       </div>
                     </div>
 
-                    <div className="flex-1 overflow-y-auto py-3 space-y-3 pr-1">
+                    <div className="flex-1 overflow-y-auto py-2.5 space-y-2.5 pr-1">
                       {chatMessages.map((msg, idx) => (
                         <div key={idx} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                          <div className={`max-w-[82%] p-3 rounded-2xl text-xs leading-relaxed ${
+                          <div className={`max-w-[85%] p-2.5 rounded-2xl text-xs leading-relaxed ${
                             msg.sender === 'user'
                               ? 'bg-emerald-600 text-white rounded-tr-none'
                               : 'bg-slate-950 border border-slate-800 text-slate-300 rounded-tl-none'
@@ -3086,34 +3075,34 @@ export default function App() {
                         type="text"
                         value={chatInput}
                         onChange={(e) => setChatInput(e.target.value)}
-                        placeholder="Ask about loans, free shares, M-Pesa..."
+                        placeholder="Ask about loans, free shares..."
                         className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
                       />
                       <button
                         type="submit"
                         className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-2 rounded-xl text-xs font-bold transition shadow cursor-pointer"
                       >
-                        <Send className="w-3.5 h-3.5" />
+                        <Send className="w-3 h-3" />
                       </button>
                     </form>
                   </div>
 
-                  <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 shadow-xl space-y-4">
+                  <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl space-y-3">
                     <div className="flex items-center gap-2">
-                      <Mail className="w-5 h-5 text-amber-400" />
+                      <Mail className="w-4 h-4 text-amber-400" />
                       <div>
-                        <h4 className="text-sm font-bold text-white">Submit Internal Message / Ticket</h4>
+                        <h4 className="text-xs sm:text-sm font-bold text-white">Submit Internal Message / Ticket</h4>
                         <p className="text-[10px] text-slate-400">Formally logged in the system for committee action</p>
                       </div>
                     </div>
 
-                    <form onSubmit={handleCreateInquiry} className="space-y-3" autoComplete="off">
+                    <form onSubmit={handleCreateInquiry} className="space-y-2.5" autoComplete="off">
                       <div>
-                        <label className="block text-xs font-semibold text-slate-300 mb-1">Inquiry Category</label>
+                        <label className="block text-[11px] font-semibold text-slate-300 mb-0.5">Inquiry Category</label>
                         <select
                           value={inquiryCategory}
                           onChange={(e) => setInquiryCategory(e.target.value)}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
                         >
                           <option value="loan_inquiry">Loan Application / Guarantor Inquiry</option>
                           <option value="savings_dispute">Payroll Checkoff / Savings Ledger Clarification</option>
@@ -3123,57 +3112,57 @@ export default function App() {
                       </div>
 
                       <div>
-                        <label className="block text-xs font-semibold text-slate-300 mb-1">Subject</label>
+                        <label className="block text-[11px] font-semibold text-slate-300 mb-0.5">Subject</label>
                         <input
                           type="text"
                           required
                           autoComplete="off"
                           value={inquirySubject}
                           onChange={(e) => setInquirySubject(e.target.value)}
-                          placeholder="Brief summary of your message..."
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                          placeholder="Brief summary..."
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
                         />
                       </div>
 
                       <div>
-                        <label className="block text-xs font-semibold text-slate-300 mb-1">Detailed Message</label>
+                        <label className="block text-[11px] font-semibold text-slate-300 mb-0.5">Detailed Message</label>
                         <textarea
                           required
-                          rows="3"
+                          rows="2"
                           value={inquiryMessage}
                           onChange={(e) => setInquiryMessage(e.target.value)}
                           placeholder="Provide details for leadership review..."
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
                         />
                       </div>
 
                       <button
                         type="submit"
                         disabled={loading}
-                        className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-2.5 rounded-xl text-xs transition shadow cursor-pointer flex items-center justify-center gap-1.5"
+                        className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-2 rounded-xl text-xs transition shadow cursor-pointer flex items-center justify-center gap-1"
                       >
                         <Send className="w-3.5 h-3.5" /> Submit Message to Committee
                       </button>
                     </form>
 
-                    <div className="pt-3 border-t border-slate-800 space-y-2 max-h-44 overflow-y-auto">
-                      <p className="text-[11px] font-bold text-slate-300">My Past Submitted Inquiries:</p>
+                    <div className="pt-2 border-t border-slate-800 space-y-1.5 max-h-36 overflow-y-auto">
+                      <p className="text-[10px] font-bold text-slate-300">My Past Submitted Inquiries:</p>
                       {inquiries.length === 0 ? (
-                        <p className="text-[11px] text-slate-500">No tickets submitted yet.</p>
+                        <p className="text-[10px] text-slate-500">No tickets submitted yet.</p>
                       ) : (
                         inquiries.map((inq) => (
-                          <div key={inq.id} className="bg-slate-950 p-3 rounded-2xl border border-slate-800 text-xs space-y-1">
+                          <div key={inq.id} className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 text-xs space-y-1">
                             <div className="flex justify-between items-center">
-                              <span className="font-bold text-white">{inq.subject}</span>
-                              <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                              <span className="font-bold text-white text-[11px]">{inq.subject}</span>
+                              <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded-full ${
                                 inq.status === 'resolved' ? 'bg-emerald-950 text-emerald-300' : 'bg-amber-950 text-amber-300'
                               }`}>
                                 {inq.status.toUpperCase()}
                               </span>
                             </div>
-                            <p className="text-[11px] text-slate-400">{inq.message}</p>
+                            <p className="text-[10px] text-slate-400">{inq.message}</p>
                             {inq.admin_response && (
-                              <div className="mt-1 p-2 bg-emerald-950/40 border border-emerald-800/40 rounded-xl text-[11px] text-emerald-300">
+                              <div className="mt-1 p-1.5 bg-emerald-950/40 border border-emerald-800/40 rounded-lg text-[10px] text-emerald-300">
                                 <strong>Committee Reply:</strong> {inq.admin_response}
                               </div>
                             )}
@@ -3188,14 +3177,14 @@ export default function App() {
 
             {/* TAB 8: LEADERSHIP HUB */}
             {activeTab === 'admin' && ['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(userRole) && (
-              <div className="space-y-6">
+              <div className="space-y-4">
                 
-                <div className="bg-gradient-to-r from-amber-950/80 to-slate-900 border border-amber-800/60 rounded-3xl p-5 flex justify-between items-center shadow-lg">
+                <div className="bg-gradient-to-r from-amber-950/80 to-slate-900 border border-amber-800/60 rounded-2xl sm:rounded-3xl p-4 sm:p-5 flex justify-between items-center shadow-lg">
                   <div>
-                    <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-900 text-amber-200 uppercase tracking-wide">
+                    <span className="text-[9px] sm:text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-900 text-amber-200 uppercase tracking-wide">
                       Active Portfolio View: {userRole.replace('_', ' ').toUpperCase()}
                     </span>
-                    <h3 className="text-lg font-black text-white mt-1">
+                    <h3 className="text-base sm:text-lg font-black text-white mt-1">
                       {userRole === 'chairman' || userRole === 'admin' ? 'Executive Control & Oversight Dashboard' :
                        userRole === 'treasurer' ? 'Treasurer & Financial Operations Desk' :
                        'Assistant Chair & Guarantor Verification Desk'}
@@ -3205,29 +3194,29 @@ export default function App() {
                 </div>
 
                 {/* 1. WELFARE CLAIMS APPROVAL QUEUE */}
-                <div className="bg-slate-900/90 border border-rose-900/50 rounded-3xl p-6 sm:p-8 shadow-xl">
+                <div className="bg-slate-900/90 border border-rose-900/50 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
                   <div className="flex justify-between items-center mb-2">
                     <div className="flex items-center gap-2">
-                      <HeartHandshake className="w-5 h-5 text-rose-400" />
-                      <h3 className="text-lg font-bold text-white">Benevolent & Welfare Claims Approval Queue ({allPendingClaims.length})</h3>
+                      <HeartHandshake className="w-4 h-4 text-rose-400" />
+                      <h3 className="text-sm sm:text-base font-bold text-white">Benevolent & Welfare Claims Approval Queue ({allPendingClaims.length})</h3>
                     </div>
                     <button
                       onClick={fetchAdminData}
-                      className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold flex items-center gap-1 cursor-pointer transition border border-slate-700"
+                      className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold flex items-center gap-1 cursor-pointer transition border border-slate-700"
                     >
-                      <RotateCcw className="w-3.5 h-3.5" /> Refresh
+                      <RotateCcw className="w-3 h-3" /> Refresh
                     </button>
                   </div>
-                  <p className="text-xs text-slate-400 mb-4 font-medium">
+                  <p className="text-[11px] text-slate-400 mb-3 font-medium">
                     Review and endorse member benevolent fund claims through the 3-signatory workflow.
                   </p>
 
                   {allPendingClaims.length === 0 ? (
-                    <div className="text-center py-8 text-slate-500 text-xs bg-slate-950 rounded-2xl border border-slate-800">
+                    <div className="text-center py-6 text-slate-500 text-xs bg-slate-950 rounded-2xl border border-slate-800">
                       No welfare claims awaiting signatory review.
                     </div>
                   ) : (
-                    <div className="space-y-4">
+                    <div className="space-y-3">
                       {allPendingClaims.map((claim) => {
                         const canChairSign = claim.assistant_chair_approval;
                         const canTreasurerSign = claim.assistant_chair_approval && claim.chairman_approval;
@@ -3237,46 +3226,46 @@ export default function App() {
                         const isTreasurerUser = userRole === 'treasurer' || userRole === 'admin';
 
                         return (
-                          <div key={claim.id} className="bg-slate-950 border border-slate-800 rounded-3xl p-5 space-y-3 shadow">
+                          <div key={claim.id} className="bg-slate-950 border border-slate-800 rounded-2xl p-4 space-y-2.5 shadow">
                             <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2">
                               <div>
-                                <div className="flex items-center gap-2">
-                                  <h4 className="text-base font-bold text-white">{claim.profiles?.full_name}</h4>
-                                  <span className="bg-rose-950 text-rose-300 text-[10px] font-bold px-2.5 py-0.5 rounded-full border border-rose-800 uppercase">
+                                <div className="flex items-center gap-1.5">
+                                  <h4 className="text-sm font-bold text-white">{claim.profiles?.full_name}</h4>
+                                  <span className="bg-rose-950 text-rose-300 text-[9px] font-bold px-2 py-0.5 rounded-full border border-rose-800 uppercase">
                                     {claim.claim_type}
                                   </span>
                                 </div>
-                                <p className="text-xs text-slate-400 font-medium">{claim.profiles?.companies?.name || 'External'} • Member {claim.profiles?.member_number}</p>
-                                <p className="text-sm font-black text-rose-400 mt-1">
+                                <p className="text-[11px] text-slate-400 font-medium">{claim.profiles?.companies?.name || 'External'} • Member {claim.profiles?.member_number}</p>
+                                <p className="text-xs font-black text-rose-400 mt-0.5">
                                   KES {Number(claim.amount_requested).toLocaleString()}
                                 </p>
-                                <p className="text-xs text-slate-300 mt-1">{claim.description}</p>
+                                <p className="text-[11px] text-slate-300 mt-0.5">{claim.description}</p>
                               </div>
 
-                              <div className="flex flex-wrap items-center gap-2">
+                              <div className="flex flex-wrap items-center gap-1.5">
                                 {claim.assistant_chair_approval ? (
                                   <button
                                     onClick={() => handleWelfarePipeline(claim.id, 'assistant_chair', 'unsign')}
                                     disabled={!isAsstChairUser}
-                                    className={`text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5 transition ${
+                                    className={`text-[11px] font-bold px-2.5 py-1.5 rounded-xl flex items-center gap-1 transition ${
                                       isAsstChairUser
                                         ? 'bg-emerald-950 hover:bg-rose-950/80 border border-emerald-800 hover:border-rose-700 text-emerald-300 hover:text-rose-200 cursor-pointer'
                                         : 'bg-emerald-950/40 border border-emerald-800/40 text-emerald-300/60 cursor-not-allowed'
                                     }`}
                                   >
-                                    <CheckCircle className="w-3.5 h-3.5" /> 1. Asst Chair (Signed) {isAsstChairUser && <RotateCcw className="w-3 h-3 ml-1 opacity-60" />}
+                                    <CheckCircle className="w-3 h-3" /> 1. Asst {isAsstChairUser && <RotateCcw className="w-2.5 h-2.5 ml-0.5 opacity-60" />}
                                   </button>
                                 ) : (
                                   <button
                                     onClick={() => handleWelfarePipeline(claim.id, 'assistant_chair', 'sign')}
                                     disabled={!isAsstChairUser}
-                                    className={`text-xs font-bold px-3.5 py-2 rounded-xl flex items-center gap-1.5 transition shadow ${
+                                    className={`text-[11px] font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 transition shadow ${
                                       isAsstChairUser
                                         ? 'bg-amber-600 hover:bg-amber-500 text-white cursor-pointer'
                                         : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
                                     }`}
                                   >
-                                    1. Sign: Asst Chair
+                                    1. Sign: Asst
                                   </button>
                                 )}
 
@@ -3284,26 +3273,26 @@ export default function App() {
                                   <button
                                     onClick={() => handleWelfarePipeline(claim.id, 'chairman', 'unsign')}
                                     disabled={!isChairUser}
-                                    className={`text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5 transition ${
+                                    className={`text-[11px] font-bold px-2.5 py-1.5 rounded-xl flex items-center gap-1 transition ${
                                       isChairUser
                                         ? 'bg-emerald-950 hover:bg-rose-950/80 border border-emerald-800 hover:border-rose-700 text-emerald-300 hover:text-rose-200 cursor-pointer'
                                         : 'bg-emerald-950/40 border border-emerald-800/40 text-emerald-300/60 cursor-not-allowed'
                                     }`}
                                   >
-                                    <CheckCircle className="w-3.5 h-3.5" /> 2. Chair (Signed) {isChairUser && <RotateCcw className="w-3 h-3 ml-1 opacity-60" />}
+                                    <CheckCircle className="w-3 h-3" /> 2. Chair {isChairUser && <RotateCcw className="w-2.5 h-2.5 ml-0.5 opacity-60" />}
                                   </button>
                                 ) : (
                                   <button
                                     disabled={!canChairSign || !isChairUser}
                                     onClick={() => handleWelfarePipeline(claim.id, 'chairman', 'sign')}
-                                    className={`text-xs font-bold px-3.5 py-2 rounded-xl flex items-center gap-1.5 transition shadow ${
+                                    className={`text-[11px] font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 transition shadow ${
                                       canChairSign && isChairUser
                                         ? 'bg-amber-600 hover:bg-amber-500 text-white cursor-pointer'
                                         : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
                                     }`}
                                   >
-                                    {(!canChairSign || !isChairUser) && <Lock className="w-3.5 h-3.5 text-slate-600" />}
-                                    2. Sign: Chairman
+                                    {(!canChairSign || !isChairUser) && <Lock className="w-3 h-3 text-slate-600" />}
+                                    2. Sign: Chair
                                   </button>
                                 )}
 
@@ -3311,26 +3300,26 @@ export default function App() {
                                   <button
                                     onClick={() => handleWelfarePipeline(claim.id, 'treasurer', 'unsign')}
                                     disabled={!isTreasurerUser}
-                                    className={`text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5 transition ${
+                                    className={`text-[11px] font-bold px-2.5 py-1.5 rounded-xl flex items-center gap-1 transition ${
                                       isTreasurerUser
                                         ? 'bg-emerald-950 hover:bg-rose-950/80 border border-emerald-800 hover:border-rose-700 text-emerald-300 hover:text-rose-200 cursor-pointer'
                                         : 'bg-emerald-950/40 border border-emerald-800/40 text-emerald-300/60 cursor-not-allowed'
                                     }`}
                                   >
-                                    <CheckCircle className="w-3.5 h-3.5" /> 3. Treas (Disbursed) {isTreasurerUser && <RotateCcw className="w-3 h-3 ml-1 opacity-60" />}
+                                    <CheckCircle className="w-3 h-3" /> 3. Treas {isTreasurerUser && <RotateCcw className="w-2.5 h-2.5 ml-0.5 opacity-60" />}
                                   </button>
                                 ) : (
                                   <button
                                     disabled={!canTreasurerSign || !isTreasurerUser}
                                     onClick={() => handleWelfarePipeline(claim.id, 'treasurer', 'sign')}
-                                    className={`text-xs font-bold px-3.5 py-2 rounded-xl flex items-center gap-1.5 transition shadow ${
+                                    className={`text-[11px] font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 transition shadow ${
                                       canTreasurerSign && isTreasurerUser
                                         ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white cursor-pointer'
                                         : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
                                     }`}
                                   >
-                                    {(!canTreasurerSign || !isTreasurerUser) && <Lock className="w-3.5 h-3.5 text-slate-600" />}
-                                    3. Disburse: Treasurer
+                                    {(!canTreasurerSign || !isTreasurerUser) && <Lock className="w-3 h-3 text-slate-600" />}
+                                    3. Disburse
                                   </button>
                                 )}
                               </div>
@@ -3342,9 +3331,9 @@ export default function App() {
                                   href={claim.evidence_url}
                                   target="_blank"
                                   rel="noreferrer"
-                                  className="inline-flex items-center gap-1.5 text-xs text-amber-400 hover:underline font-medium"
+                                  className="inline-flex items-center gap-1 text-[11px] text-amber-400 hover:underline font-medium"
                                 >
-                                  <FileCheck className="w-4 h-4" /> View Uploaded Supporting Evidence Document
+                                  <FileCheck className="w-3.5 h-3.5" /> View Supporting Evidence Document
                                 </a>
                               </div>
                             )}
@@ -3356,43 +3345,43 @@ export default function App() {
                 </div>
 
                 {/* 2. MEMBER DIRECTORY */}
-                <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-8 shadow-xl">
-                  <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 mb-4">
+                <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
+                  <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2.5 mb-3">
                     <div>
                       <div className="flex items-center gap-2">
-                        <Contact2 className="w-5 h-5 text-emerald-400" />
-                        <h3 className="text-lg font-bold text-white">Registered Members Directory ({filteredMemberDirectory.length} Total)</h3>
+                        <Contact2 className="w-4 h-4 text-emerald-400" />
+                        <h3 className="text-sm sm:text-base font-bold text-white">Registered Members Directory ({filteredMemberDirectory.length})</h3>
                       </div>
-                      <p className="text-xs text-slate-400 mt-1 font-medium">
-                        Complete cooperative register displaying member demographics, branch affiliation, active debt, and accumulated shares.
+                      <p className="text-[11px] text-slate-400 mt-0.5 font-medium">
+                        Complete cooperative register displaying demographics, active debt, and shares.
                       </p>
                     </div>
 
                     <button
                       onClick={fetchAdminData}
-                      className="self-start sm:self-auto p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold flex items-center gap-1.5 transition border border-slate-700"
+                      className="self-start sm:self-auto p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold flex items-center gap-1 transition border border-slate-700"
                     >
-                      <RotateCcw className="w-3.5 h-3.5" /> Refresh List
+                      <RotateCcw className="w-3 h-3" /> Refresh
                     </button>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mb-3">
                     <div className="sm:col-span-2 relative">
                       <input
                         type="text"
-                        placeholder="Search member by Name, Member No, National ID, or Phone..."
+                        placeholder="Search member by Name, Member No, ID, or Phone..."
                         value={memberDirectorySearch}
                         onChange={(e) => setMemberDirectorySearch(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-white focus:border-emerald-500"
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white focus:border-emerald-500"
                       />
-                      <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
                     </div>
 
                     <div>
                       <select
                         value={memberDirectoryCompanyFilter}
                         onChange={(e) => setMemberDirectoryCompanyFilter(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
                       >
                         <option value="all">All Branches / Companies</option>
                         <option value="Kenya Builders">Kenya Builders & Concrete</option>
@@ -3404,46 +3393,46 @@ export default function App() {
                   </div>
 
                   {filteredMemberDirectory.length === 0 ? (
-                    <div className="text-center py-10 text-slate-500 text-xs bg-slate-950 rounded-2xl border border-slate-800">
+                    <div className="text-center py-8 text-slate-500 text-xs bg-slate-950 rounded-2xl border border-slate-800">
                       No members matched your search criteria.
                     </div>
                   ) : (
-                    <div className="overflow-x-auto border border-slate-800 rounded-2xl bg-slate-950 max-h-96 overflow-y-auto">
+                    <div className="overflow-x-auto border border-slate-800 rounded-2xl bg-slate-950 max-h-80 overflow-y-auto">
                       <table className="w-full text-left text-xs">
                         <thead className="bg-slate-900 text-slate-400 font-semibold sticky top-0 z-10">
                           <tr>
-                            <th className="p-3">Member Details</th>
-                            <th className="p-3">Branch / Company</th>
-                            <th className="p-3">National ID</th>
-                            <th className="p-3">Phone Number</th>
-                            <th className="p-3 text-right">Total Savings</th>
-                            <th className="p-3 text-right">Active Loan</th>
-                            <th className="p-3 text-center">System Role</th>
+                            <th className="p-2.5">Member Details</th>
+                            <th className="p-2.5">Branch / Company</th>
+                            <th className="p-2.5">National ID</th>
+                            <th className="p-2.5">Phone Number</th>
+                            <th className="p-2.5 text-right">Total Savings</th>
+                            <th className="p-2.5 text-right">Active Loan</th>
+                            <th className="p-2.5 text-center">System Role</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-800/60 font-mono">
                           {filteredMemberDirectory.map((m) => (
                             <tr key={m.id} className="hover:bg-slate-900/50 transition">
-                              <td className="p-3 font-sans">
+                              <td className="p-2.5 font-sans">
                                 <div className="font-bold text-white">{m.full_name}</div>
                                 <div className="text-[10px] text-emerald-400 font-mono">{m.member_number}</div>
                               </td>
-                              <td className="p-3 font-sans text-slate-300">
+                              <td className="p-2.5 font-sans text-slate-300">
                                 {m.companies?.name || 'External'}
                               </td>
-                              <td className="p-3 text-slate-300">
+                              <td className="p-2.5 text-slate-300">
                                 {m.id_number || '-'}
                               </td>
-                              <td className="p-3 text-slate-300">
+                              <td className="p-2.5 text-slate-300">
                                 {m.phone || '-'}
                               </td>
-                              <td className="p-3 text-right font-bold text-emerald-400">
+                              <td className="p-2.5 text-right font-bold text-emerald-400">
                                 KES {Number(m.totalSavings || 0).toLocaleString()}
                               </td>
-                              <td className="p-3 text-right font-bold text-amber-400">
+                              <td className="p-2.5 text-right font-bold text-amber-400">
                                 KES {Number(m.totalActiveDebt || 0).toLocaleString()}
                               </td>
-                              <td className="p-3 text-center font-sans">
+                              <td className="p-2.5 text-center font-sans">
                                 <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${
                                   m.role === 'admin' || m.role === 'chairman' ? 'bg-purple-950 text-purple-300 border border-purple-800' :
                                   m.role === 'treasurer' || m.role === 'assistant_chair' ? 'bg-amber-950 text-amber-300 border border-amber-800' :
@@ -3460,25 +3449,25 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 3. MANUAL ADJUSTMENT */}
+                {/* 3. MANUAL ADJUSTMENT (EXACT LOAN BALANCES + EXACT SAVINGS EXCESS) */}
                 {['admin', 'chairman', 'treasurer'].includes(userRole) && (
-                  <div className="bg-slate-900/90 border border-emerald-900/50 rounded-3xl p-6 sm:p-8 shadow-xl">
+                  <div className="bg-slate-900/90 border border-emerald-900/50 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
                     <div className="flex items-center gap-2 mb-2">
-                      <UserCheck className="w-5 h-5 text-emerald-400" />
-                      <h3 className="text-lg font-bold text-white">Manual Member Contribution / Loan Repayment Desk</h3>
+                      <UserCheck className="w-4 h-4 text-emerald-400" />
+                      <h3 className="text-sm sm:text-base font-bold text-white">Manual Member Contribution / Loan Repayment Desk</h3>
                     </div>
-                    <p className="text-xs text-slate-400 mb-4 font-medium">
-                      Post payments. Excess amounts after clearing active loans are automatically credited to Savings.
+                    <p className="text-[11px] text-slate-400 mb-3 font-medium">
+                      Post payments. Excess amounts after clearing active loans are precisely posted under Savings.
                     </p>
 
-                    <form onSubmit={handleManualMemberAdjustment} className="space-y-4">
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <form onSubmit={handleManualMemberAdjustment} className="space-y-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                         <div>
                           <label className="block text-xs font-semibold text-slate-300 mb-1">Select Beneficiary Member</label>
                           <select
                             value={manualTargetMemberId}
                             onChange={(e) => setManualTargetMemberId(e.target.value)}
-                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
                           >
                             {allMembers.map((m) => (
                               <option key={m.id} value={m.id}>
@@ -3493,9 +3482,9 @@ export default function App() {
                           <select
                             value={manualAdjustmentType}
                             onChange={(e) => setManualAdjustmentType(e.target.value)}
-                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-medium"
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-medium"
                           >
-                            <option value="loan_repayment">1. Smart Loan Repayment (Auto-Split + Excess to Savings)</option>
+                            <option value="loan_repayment">1. Smart Loan Repayment (Exact Balance + Excess to Savings)</option>
                             <option value="savings_deposit">2. Direct Savings Contribution Only</option>
                           </select>
                         </div>
@@ -3507,13 +3496,13 @@ export default function App() {
                             required
                             value={manualAmountRaw}
                             onChange={(e) => setManualAmountRaw(formatAccountingNumber(e.target.value))}
-                            placeholder="e.g. 23,000"
-                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
+                            placeholder="e.g. 9,000"
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
                           />
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                         <div className="sm:col-span-2">
                           <label className="block text-xs font-semibold text-slate-300 mb-1">Audit Reference Code (Optional)</label>
                           <input
@@ -3521,7 +3510,7 @@ export default function App() {
                             value={manualRefCode}
                             onChange={(e) => setManualRefCode(e.target.value)}
                             placeholder="e.g. BANK-SLIP-7821 or CASH-RECEIPT-09"
-                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono uppercase"
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono uppercase"
                           />
                         </div>
 
@@ -3529,7 +3518,7 @@ export default function App() {
                           <button
                             type="submit"
                             disabled={loading}
-                            className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-2.5 rounded-xl text-xs transition shadow cursor-pointer flex items-center justify-center gap-1.5"
+                            className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-2 rounded-xl text-xs transition shadow cursor-pointer flex items-center justify-center gap-1.5"
                           >
                             <PlusCircle className="w-4 h-4" /> Post Payment
                           </button>
@@ -3540,38 +3529,38 @@ export default function App() {
                 )}
 
                 {/* 4. LOAN RECOVERY MATRIX */}
-                <div className="bg-slate-900/90 border border-rose-900/40 rounded-3xl p-6 sm:p-8 shadow-xl">
+                <div className="bg-slate-900/90 border border-rose-900/40 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
                   <div className="flex justify-between items-center mb-2">
                     <div className="flex items-center gap-2">
-                      <AlertOctagon className="w-5 h-5 text-rose-400" />
-                      <h3 className="text-lg font-bold text-white">Loan Recovery & Performance Matrix (Worst to Best Progress)</h3>
+                      <AlertOctagon className="w-4 h-4 text-rose-400" />
+                      <h3 className="text-sm sm:text-base font-bold text-white">Loan Recovery & Performance Matrix (Worst to Best)</h3>
                     </div>
                     <button
                       onClick={fetchAdminData}
-                      className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold flex items-center gap-1 cursor-pointer transition border border-slate-700"
+                      className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold flex items-center gap-1 cursor-pointer transition border border-slate-700"
                       title="Refresh Matrix"
                     >
-                      <RotateCcw className="w-3.5 h-3.5" /> Refresh
+                      <RotateCcw className="w-3 h-3" /> Refresh
                     </button>
                   </div>
-                  <p className="text-xs text-slate-400 mb-4 font-medium">
+                  <p className="text-[11px] text-slate-400 mb-3 font-medium">
                     Monitors all active borrowers ranked automatically from the lowest repayment percentage to the most compliant.
                   </p>
 
                   {performanceRankedLoans.length === 0 ? (
-                    <div className="text-center py-8 text-slate-500 text-sm">No active or historical loans found in the system.</div>
+                    <div className="text-center py-8 text-slate-500 text-xs">No active or historical loans found in the system.</div>
                   ) : (
-                    <div className="overflow-x-auto border border-slate-800 rounded-2xl bg-slate-950 max-h-96 overflow-y-auto">
+                    <div className="overflow-x-auto border border-slate-800 rounded-2xl bg-slate-950 max-h-80 overflow-y-auto">
                       <table className="w-full text-left text-xs">
                         <thead className="bg-slate-900 text-slate-400 font-semibold sticky top-0 z-10">
                           <tr>
-                            <th className="p-3">Rank & Member</th>
-                            <th className="p-3">Facility</th>
-                            <th className="p-3 text-right">Principal</th>
-                            <th className="p-3 text-right">Total Repaid</th>
-                            <th className="p-3 text-right">Outstanding Debt</th>
-                            <th className="p-3 text-center">Recovery Progress</th>
-                            <th className="p-3 text-center">Performance Risk</th>
+                            <th className="p-2.5">Rank & Member</th>
+                            <th className="p-2.5">Facility</th>
+                            <th className="p-2.5 text-right">Principal</th>
+                            <th className="p-2.5 text-right">Total Repaid</th>
+                            <th className="p-2.5 text-right">Outstanding Debt</th>
+                            <th className="p-2.5 text-center">Recovery Progress</th>
+                            <th className="p-2.5 text-center">Performance Risk</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-800/60 font-mono">
@@ -3581,42 +3570,42 @@ export default function App() {
 
                             return (
                               <tr key={loan.id} className={isZeroRepaid ? 'bg-rose-950/20 hover:bg-rose-950/30' : 'hover:bg-slate-900/40'}>
-                                <td className="p-3">
+                                <td className="p-2.5">
                                   <div className="font-sans font-bold text-white">#{idx + 1} {loan.profiles?.full_name}</div>
                                   <div className="text-[10px] text-slate-400">{loan.profiles?.companies?.name || 'External'} ({loan.profiles?.member_number})</div>
                                 </td>
-                                <td className="p-3 font-sans capitalize text-slate-300">
+                                <td className="p-2.5 font-sans capitalize text-slate-300">
                                   {(loan.loan_product || 'main_loan').replace('_', ' ')}
                                 </td>
-                                <td className="p-3 text-right text-slate-300">
+                                <td className="p-2.5 text-right text-slate-300">
                                   KES {Number(loan.principal_amount).toLocaleString()}
                                 </td>
-                                <td className="p-3 text-right text-emerald-400 font-bold">
+                                <td className="p-2.5 text-right text-emerald-400 font-bold">
                                   KES {loan.totalPaid.toLocaleString()}
                                 </td>
-                                <td className="p-3 text-right text-amber-400 font-bold">
+                                <td className="p-2.5 text-right text-amber-400 font-bold">
                                   KES {Number(loan.balance_remaining).toLocaleString()}
                                 </td>
-                                <td className="p-3 text-center">
-                                  <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden mb-1">
+                                <td className="p-2.5 text-center">
+                                  <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden mb-1">
                                     <div 
                                       className={`h-full ${isCompleted ? 'bg-blue-500' : isZeroRepaid ? 'bg-rose-500' : 'bg-emerald-500'}`} 
                                       style={{ width: `${loan.progressPercent}%` }}
                                     />
                                   </div>
-                                  <span className="text-[10px] text-slate-300">{loan.progressPercent.toFixed(1)}%</span>
+                                  <span className="text-[9px] text-slate-300">{loan.progressPercent.toFixed(1)}%</span>
                                 </td>
-                                <td className="p-3 text-center font-sans">
+                                <td className="p-2.5 text-center font-sans">
                                   {isCompleted ? (
-                                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-blue-950 text-blue-300 border border-blue-800">
+                                    <span className="px-2 py-0.5 rounded-full text-[8px] font-bold bg-blue-950 text-blue-300 border border-blue-800">
                                       CLEARED ✓
                                     </span>
                                   ) : isZeroRepaid ? (
-                                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-rose-950 text-rose-300 border border-rose-800 animate-pulse">
+                                    <span className="px-2 py-0.5 rounded-full text-[8px] font-bold bg-rose-950 text-rose-300 border border-rose-800 animate-pulse">
                                       DEFAULT RISK (0%)
                                     </span>
                                   ) : (
-                                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-950 text-amber-300 border border-amber-800">
+                                    <span className="px-2 py-0.5 rounded-full text-[8px] font-bold bg-amber-950 text-amber-300 border border-amber-800">
                                       IN PROGRESS
                                     </span>
                                   )}
@@ -3632,16 +3621,16 @@ export default function App() {
 
                 {/* 5. PUBLISH REPORTS */}
                 {['admin', 'chairman'].includes(userRole) && (
-                  <div className="bg-slate-900/90 border border-emerald-900/40 rounded-3xl p-6 sm:p-8 shadow-xl">
+                  <div className="bg-slate-900/90 border border-emerald-900/40 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
                     <div className="flex items-center gap-2 mb-2">
-                      <FolderDown className="w-5 h-5 text-emerald-400" />
-                      <h3 className="text-lg font-bold text-white">Publish Official Report / Audit Booklet</h3>
+                      <FolderDown className="w-4 h-4 text-emerald-400" />
+                      <h3 className="text-sm sm:text-base font-bold text-white">Publish Official Report / Audit Booklet</h3>
                     </div>
-                    <p className="text-xs text-slate-400 mb-4 font-medium">
-                      Upload verified PDF documents (Audit Reports, AGM Booklets, By-laws). Members can read and download them instantly.
+                    <p className="text-[11px] text-slate-400 mb-3 font-medium">
+                      Upload verified PDF documents (Audit Reports, AGM Booklets, By-laws) for members.
                     </p>
 
-                    <form onSubmit={handleUploadSaccoDocument} className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <form onSubmit={handleUploadSaccoDocument} className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                       <div>
                         <label className="block text-xs font-semibold text-slate-300 mb-1">Document Title</label>
                         <input
@@ -3650,7 +3639,7 @@ export default function App() {
                           value={docTitle}
                           onChange={(e) => setDocTitle(e.target.value)}
                           placeholder="e.g. KEWA SACCO Audited Financials 2025"
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
                         />
                       </div>
 
@@ -3659,7 +3648,7 @@ export default function App() {
                         <select
                           value={docCategory}
                           onChange={(e) => setDocCategory(e.target.value)}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
                         >
                           <option value="audit_report">Audited Financial Statements</option>
                           <option value="agm_booklet">Annual AGM Booklet & Minutes</option>
@@ -3676,7 +3665,7 @@ export default function App() {
                           value={docYear}
                           onChange={(e) => setDocYear(e.target.value)}
                           placeholder="e.g. 2025/2026"
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
                         />
                       </div>
 
@@ -3687,7 +3676,7 @@ export default function App() {
                           accept=".pdf"
                           required
                           onChange={(e) => setDocFile(e.target.files[0])}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-300 file:mr-3 file:py-1 file:px-2.5 file:rounded-md file:border-0 file:text-xs file:bg-emerald-600 file:text-white cursor-pointer"
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1 text-xs text-slate-300 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[11px] file:bg-emerald-600 file:text-white cursor-pointer"
                         />
                       </div>
 
@@ -3695,9 +3684,9 @@ export default function App() {
                         <button
                           type="submit"
                           disabled={loading}
-                          className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-2.5 rounded-xl text-xs transition shadow cursor-pointer flex items-center justify-center gap-1.5"
+                          className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-2 rounded-xl text-xs transition shadow cursor-pointer flex items-center justify-center gap-1.5"
                         >
-                          <UploadCloud className="w-4 h-4" /> Publish Report
+                          <UploadCloud className="w-3.5 h-3.5" /> Publish Report
                         </button>
                       </div>
                     </form>
@@ -3706,16 +3695,16 @@ export default function App() {
 
                 {/* 6. DUAL PAYROLL CHECKOFF */}
                 {['admin', 'chairman', 'treasurer'].includes(userRole) && (
-                  <div className="bg-slate-900/90 border border-amber-900/40 rounded-3xl p-6 sm:p-8 shadow-xl">
+                  <div className="bg-slate-900/90 border border-amber-900/40 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
                     <div className="flex items-center gap-2 mb-2">
-                      <FileSpreadsheet className="w-5 h-5 text-amber-400" />
-                      <h3 className="text-lg font-bold text-white">Automated Dual Payroll Checkoff (Savings + Loans)</h3>
+                      <FileSpreadsheet className="w-4 h-4 text-amber-400" />
+                      <h3 className="text-sm sm:text-base font-bold text-white">Automated Dual Payroll Checkoff (Savings + Loans)</h3>
                     </div>
-                    <p className="text-xs text-slate-400 mb-4 font-medium">
+                    <p className="text-[11px] text-slate-400 mb-3 font-medium">
                       Upload monthly payroll deductions CSV (<code className="text-amber-300 font-mono">member_number, savings_amount, loan_amount</code>).
                     </p>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mb-3">
                       <div>
                         <label className="block text-xs font-semibold text-slate-300 mb-1">Payroll Month</label>
                         <input
@@ -3723,7 +3712,7 @@ export default function App() {
                           value={batchMonth}
                           onChange={(e) => setBatchMonth(e.target.value)}
                           placeholder="e.g. AUG-2026"
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
                         />
                       </div>
                       <div className="sm:col-span-2">
@@ -3732,49 +3721,49 @@ export default function App() {
                           type="file"
                           accept=".csv"
                           onChange={handleCSVUpload}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-300 file:mr-3 file:py-1 file:px-2.5 file:rounded-md file:border-0 file:text-xs file:bg-amber-600 file:text-white cursor-pointer"
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1 text-xs text-slate-300 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[11px] file:bg-amber-600 file:text-white cursor-pointer"
                         />
                       </div>
                     </div>
 
                     {batchPreview.length > 0 && (
-                      <div className="mt-4 border-t border-slate-800 pt-4">
-                        <div className="flex justify-between items-center mb-3">
+                      <div className="mt-3 border-t border-slate-800 pt-3">
+                        <div className="flex justify-between items-center mb-2">
                           <span className="text-xs font-bold text-slate-300">
                             Matched Rows: {batchPreview.filter((r) => r.valid).length} of {batchPreview.length}
                           </span>
                           <button
                             onClick={handleExecuteBatchCheckoff}
                             disabled={loading}
-                            className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-lg cursor-pointer"
+                            className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 shadow-lg cursor-pointer"
                           >
-                            <UploadCloud className="w-4 h-4" /> Process & Post All Checkoffs
+                            <UploadCloud className="w-3.5 h-3.5" /> Process & Post All Checkoffs
                           </button>
                         </div>
 
-                        <div className="max-h-48 overflow-y-auto border border-slate-800 rounded-2xl bg-slate-950">
+                        <div className="max-h-40 overflow-y-auto border border-slate-800 rounded-2xl bg-slate-950">
                           <table className="w-full text-left text-xs">
                             <thead className="bg-slate-900 text-slate-400 sticky top-0 font-semibold">
                               <tr>
-                                <th className="p-2.5">Member No</th>
-                                <th className="p-2.5">Matched Name</th>
-                                <th className="p-2.5 text-right">Savings Credit</th>
-                                <th className="p-2.5 text-right">Loan Deduct</th>
-                                <th className="p-2.5 text-center">Status</th>
+                                <th className="p-2">Member No</th>
+                                <th className="p-2">Matched Name</th>
+                                <th className="p-2 text-right">Savings Credit</th>
+                                <th className="p-2 text-right">Loan Deduct</th>
+                                <th className="p-2 text-center">Status</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-800/60 font-medium">
                               {batchPreview.map((row, idx) => (
                                 <tr key={idx} className={row.valid ? 'hover:bg-slate-900/40' : 'bg-rose-950/20'}>
-                                  <td className="p-2.5 font-mono">{row.member_number}</td>
-                                  <td className="p-2.5">{row.full_name}</td>
-                                  <td className="p-2.5 text-right font-bold text-emerald-400">
+                                  <td className="p-2 font-mono">{row.member_number}</td>
+                                  <td className="p-2">{row.full_name}</td>
+                                  <td className="p-2 text-right font-bold text-emerald-400">
                                     +KES {Number(row.savings_amount || 0).toLocaleString()}
                                   </td>
-                                  <td className="p-2.5 text-right font-bold text-amber-400">
+                                  <td className="p-2 text-right font-bold text-amber-400">
                                     -KES {Number(row.loan_amount || 0).toLocaleString()}
                                   </td>
-                                  <td className="p-2.5 text-center">
+                                  <td className="p-2 text-center">
                                     {row.valid ? (
                                       <span className="text-emerald-400 text-[10px] font-bold">READY</span>
                                     ) : (
@@ -3792,19 +3781,19 @@ export default function App() {
                 )}
 
                 {/* 7. SEQUENTIAL 3-SIGNATORY DESK */}
-                <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-8 shadow-xl">
+                <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
                   <div className="flex items-center gap-2 mb-2">
-                    <Clock className="w-5 h-5 text-amber-400" />
-                    <h3 className="text-lg font-bold text-white">Sequential 3-Signatory Approval Pipeline (Role-Restricted)</h3>
+                    <Clock className="w-4 h-4 text-amber-400" />
+                    <h3 className="text-sm sm:text-base font-bold text-white">Sequential 3-Signatory Approval Pipeline (Role-Restricted)</h3>
                   </div>
-                  <p className="text-xs text-slate-400 mb-4 font-medium">
-                    Strict Role Verification: You are currently signed in as <strong className="text-amber-300 uppercase">{userRole.replace('_', ' ')}</strong>. You can only execute endorsements assigned to your specific portfolio.
+                  <p className="text-[11px] text-slate-400 mb-3 font-medium">
+                    Strict Role Verification: Signed in as <strong className="text-amber-300 uppercase">{userRole.replace('_', ' ')}</strong>. You can only execute endorsements for your portfolio.
                   </p>
 
                   {allPendingLoans.length === 0 ? (
-                    <div className="text-center py-8 text-slate-500 text-sm">No loan applications awaiting signatory action.</div>
+                    <div className="text-center py-6 text-slate-500 text-xs">No loan applications awaiting signatory action.</div>
                   ) : (
-                    <div className="space-y-4">
+                    <div className="space-y-3">
                       {allPendingLoans.map((l) => {
                         const canChairSign = l.assistant_chair_approval;
                         const canTreasurerSign = l.assistant_chair_approval && l.chairman_approval;
@@ -3814,46 +3803,45 @@ export default function App() {
                         const isTreasurerUser = userRole === 'treasurer' || userRole === 'admin';
 
                         return (
-                          <div key={l.id} className="bg-slate-950 border border-slate-800 rounded-3xl p-5 space-y-4 shadow">
+                          <div key={l.id} className="bg-slate-950 border border-slate-800 rounded-2xl p-4 space-y-3 shadow">
                             <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2">
                               <div>
-                                <div className="flex items-center gap-2">
-                                  <h4 className="text-base font-bold text-white">{l.profiles?.full_name}</h4>
-                                  <span className="bg-emerald-950 text-emerald-300 text-[10px] font-bold px-2.5 py-0.5 rounded-full border border-emerald-800 uppercase">
+                                <div className="flex items-center gap-1.5">
+                                  <h4 className="text-sm font-bold text-white">{l.profiles?.full_name}</h4>
+                                  <span className="bg-emerald-950 text-emerald-300 text-[9px] font-bold px-2 py-0.5 rounded-full border border-emerald-800 uppercase">
                                     {(l.loan_product || 'main_loan').replace('_', ' ')}
                                   </span>
                                 </div>
-                                <p className="text-xs text-slate-400 font-medium">{l.profiles?.companies?.name || 'External'} • Member {l.profiles?.member_number}</p>
-                                <p className="text-sm font-black text-emerald-400 mt-1">
+                                <p className="text-[11px] text-slate-400 font-medium">{l.profiles?.companies?.name || 'External'} • Member {l.profiles?.member_number}</p>
+                                <p className="text-xs font-black text-emerald-400 mt-0.5">
                                   KES {Number(l.principal_amount).toLocaleString()} ({l.repayment_period_months} Mos Term)
                                 </p>
                               </div>
 
-                              <div className="flex flex-wrap items-center gap-2">
+                              <div className="flex flex-wrap items-center gap-1.5">
                                 {l.assistant_chair_approval ? (
                                   <button
                                     onClick={() => handleSignatoryPipeline(l.id, 'assistant_chair', 'unsign')}
                                     disabled={!isAsstChairUser}
-                                    className={`text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5 transition ${
+                                    className={`text-[11px] font-bold px-2.5 py-1.5 rounded-xl flex items-center gap-1 transition ${
                                       isAsstChairUser
                                         ? 'bg-emerald-950 hover:bg-rose-950/80 border border-emerald-800 hover:border-rose-700 text-emerald-300 hover:text-rose-200 cursor-pointer'
                                         : 'bg-emerald-950/40 border border-emerald-800/40 text-emerald-300/60 cursor-not-allowed'
                                     }`}
-                                    title={isAsstChairUser ? "Click to Unsign" : "Only Assistant Chair can modify"}
                                   >
-                                    <CheckCircle className="w-3.5 h-3.5" /> 1. Asst Chair (Signed) {isAsstChairUser && <RotateCcw className="w-3 h-3 ml-1 opacity-60" />}
+                                    <CheckCircle className="w-3 h-3" /> 1. Asst {isAsstChairUser && <RotateCcw className="w-2.5 h-2.5 ml-0.5 opacity-60" />}
                                   </button>
                                 ) : (
                                   <button
                                     onClick={() => handleSignatoryPipeline(l.id, 'assistant_chair', 'sign')}
                                     disabled={!isAsstChairUser}
-                                    className={`text-xs font-bold px-3.5 py-2 rounded-xl flex items-center gap-1.5 transition shadow ${
+                                    className={`text-[11px] font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 transition shadow ${
                                       isAsstChairUser
                                         ? 'bg-amber-600 hover:bg-amber-500 text-white cursor-pointer'
                                         : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
                                     }`}
                                   >
-                                    1. Sign: Asst Chair
+                                    1. Sign: Asst
                                   </button>
                                 )}
 
@@ -3861,27 +3849,26 @@ export default function App() {
                                   <button
                                     onClick={() => handleSignatoryPipeline(l.id, 'chairman', 'unsign')}
                                     disabled={!isChairUser}
-                                    className={`text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5 transition ${
+                                    className={`text-[11px] font-bold px-2.5 py-1.5 rounded-xl flex items-center gap-1 transition ${
                                       isChairUser
                                         ? 'bg-emerald-950 hover:bg-rose-950/80 border border-emerald-800 hover:border-rose-700 text-emerald-300 hover:text-rose-200 cursor-pointer'
                                         : 'bg-emerald-950/40 border border-emerald-800/40 text-emerald-300/60 cursor-not-allowed'
                                     }`}
-                                    title={isChairUser ? "Click to Unsign" : "Only Chairman can modify"}
                                   >
-                                    <CheckCircle className="w-3.5 h-3.5" /> 2. Chair (Signed) {isChairUser && <RotateCcw className="w-3 h-3 ml-1 opacity-60" />}
+                                    <CheckCircle className="w-3 h-3" /> 2. Chair {isChairUser && <RotateCcw className="w-2.5 h-2.5 ml-0.5 opacity-60" />}
                                   </button>
                                 ) : (
                                   <button
                                     disabled={!canChairSign || !isChairUser}
                                     onClick={() => handleSignatoryPipeline(l.id, 'chairman', 'sign')}
-                                    className={`text-xs font-bold px-3.5 py-2 rounded-xl flex items-center gap-1.5 transition shadow ${
+                                    className={`text-[11px] font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 transition shadow ${
                                       canChairSign && isChairUser
                                         ? 'bg-amber-600 hover:bg-amber-500 text-white cursor-pointer'
                                         : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
                                     }`}
                                   >
-                                    {(!canChairSign || !isChairUser) && <Lock className="w-3.5 h-3.5 text-slate-600" />}
-                                    2. Sign: Chairman
+                                    {(!canChairSign || !isChairUser) && <Lock className="w-3 h-3 text-slate-600" />}
+                                    2. Sign: Chair
                                   </button>
                                 )}
 
@@ -3889,37 +3876,36 @@ export default function App() {
                                   <button
                                     onClick={() => handleSignatoryPipeline(l.id, 'treasurer', 'unsign')}
                                     disabled={!isTreasurerUser}
-                                    className={`text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5 transition ${
+                                    className={`text-[11px] font-bold px-2.5 py-1.5 rounded-xl flex items-center gap-1 transition ${
                                       isTreasurerUser
                                         ? 'bg-emerald-950 hover:bg-rose-950/80 border border-emerald-800 hover:border-rose-700 text-emerald-300 hover:text-rose-200 cursor-pointer'
                                         : 'bg-emerald-950/40 border border-emerald-800/40 text-emerald-300/60 cursor-not-allowed'
                                     }`}
-                                    title={isTreasurerUser ? "Click to Unsign" : "Only Treasurer can modify"}
                                   >
-                                    <CheckCircle className="w-3.5 h-3.5" /> 3. Treas (Disbursed) {isTreasurerUser && <RotateCcw className="w-3 h-3 ml-1 opacity-60" />}
+                                    <CheckCircle className="w-3 h-3" /> 3. Treas {isTreasurerUser && <RotateCcw className="w-2.5 h-2.5 ml-0.5 opacity-60" />}
                                   </button>
                                 ) : (
                                   <button
                                     disabled={!canTreasurerSign || !isTreasurerUser}
                                     onClick={() => handleSignatoryPipeline(l.id, 'treasurer', 'sign')}
-                                    className={`text-xs font-bold px-3.5 py-2 rounded-xl flex items-center gap-1.5 transition shadow ${
+                                    className={`text-[11px] font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 transition shadow ${
                                       canTreasurerSign && isTreasurerUser
                                         ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white cursor-pointer'
                                         : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
                                     }`}
                                   >
-                                    {(!canTreasurerSign || !isTreasurerUser) && <Lock className="w-3.5 h-3.5 text-slate-600" />}
-                                    3. Disburse: Treasurer
+                                    {(!canTreasurerSign || !isTreasurerUser) && <Lock className="w-3 h-3 text-slate-600" />}
+                                    3. Disburse
                                   </button>
                                 )}
                               </div>
                             </div>
 
-                            <div className="bg-slate-900 p-3 rounded-2xl border border-slate-800 text-[11px] text-slate-400">
-                              <p className="font-semibold text-slate-300 mb-1">Guarantor Approvals & Pledges:</p>
-                              <div className="space-y-1">
+                            <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800 text-[10px] text-slate-400">
+                              <p className="font-semibold text-slate-300 mb-0.5">Guarantor Pledges:</p>
+                              <div className="space-y-0.5">
                                 {l.loan_guarantors?.map((g) => (
-                                  <div key={g.id} className="flex justify-between font-mono text-[11px]">
+                                  <div key={g.id} className="flex justify-between font-mono text-[10px]">
                                     <span>{g.profiles?.full_name}:</span>
                                     <span className={g.status === 'accepted' ? 'text-emerald-400 font-bold' : 'text-amber-400'}>
                                       {g.status.toUpperCase()} (KES {Number(g.amount_guaranteed).toLocaleString()})
@@ -3936,69 +3922,69 @@ export default function App() {
                 </div>
 
                 {/* 8. SUPPORT TICKETS */}
-                <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-8 shadow-xl">
+                <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
                   <div className="flex justify-between items-center mb-2">
                     <div className="flex items-center gap-2">
-                      <MessageSquare className="w-5 h-5 text-emerald-400" />
-                      <h3 className="text-lg font-bold text-white">Member Support Tickets & Formal Inquiries</h3>
+                      <MessageSquare className="w-4 h-4 text-emerald-400" />
+                      <h3 className="text-sm sm:text-base font-bold text-white">Member Support Tickets & Formal Inquiries</h3>
                     </div>
                     <button
                       onClick={fetchAdminData}
-                      className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold flex items-center gap-1 cursor-pointer transition border border-slate-700"
+                      className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold flex items-center gap-1 cursor-pointer transition border border-slate-700"
                       title="Refresh Tickets"
                     >
-                      <RotateCcw className="w-3.5 h-3.5" /> Refresh Tickets
+                      <RotateCcw className="w-3 h-3" /> Refresh
                     </button>
                   </div>
-                  <p className="text-xs text-slate-400 mb-4 font-medium">
+                  <p className="text-[11px] text-slate-400 mb-3 font-medium">
                     Review and resolve messages submitted by members directly from their portal accounts.
                   </p>
 
                   {allAdminInquiries.length === 0 ? (
-                    <div className="text-center py-8 text-slate-500 text-sm">No member inquiries awaiting response.</div>
+                    <div className="text-center py-6 text-slate-500 text-xs">No member inquiries awaiting response.</div>
                   ) : (
-                    <div className="space-y-4">
+                    <div className="space-y-3">
                       {allAdminInquiries.map((ticket) => (
-                        <div key={ticket.id} className="bg-slate-950 border border-slate-800 p-5 rounded-3xl space-y-3 text-xs shadow">
-                          <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2">
+                        <div key={ticket.id} className="bg-slate-950 border border-slate-800 p-4 rounded-2xl space-y-2.5 text-xs shadow">
+                          <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-1.5">
                             <div>
-                              <div className="flex items-center gap-2">
-                                <h5 className="font-bold text-white text-sm">{ticket.profiles?.full_name || 'Member'}</h5>
-                                <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                              <div className="flex items-center gap-1.5">
+                                <h5 className="font-bold text-white text-xs">{ticket.profiles?.full_name || 'Member'}</h5>
+                                <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded-full ${
                                   ticket.status === 'resolved' ? 'bg-emerald-950 text-emerald-300' : 'bg-amber-950 text-amber-300'
                                 }`}>
                                   {ticket.status.toUpperCase()}
                                 </span>
                               </div>
-                              <p className="text-slate-400">{ticket.profiles?.companies?.name || 'External'} • Member {ticket.profiles?.member_number} • Phone: {ticket.profiles?.phone}</p>
-                              <p className="text-emerald-400 font-bold mt-1">Category: {ticket.category.replace('_', ' ').toUpperCase()}</p>
+                              <p className="text-[10px] text-slate-400">{ticket.profiles?.companies?.name || 'External'} • Member {ticket.profiles?.member_number} • Phone: {ticket.profiles?.phone}</p>
+                              <p className="text-emerald-400 font-bold mt-0.5 text-[11px]">Category: {ticket.category.replace('_', ' ').toUpperCase()}</p>
                             </div>
-                            <span className="text-[10px] text-slate-500 font-mono">{new Date(ticket.created_at).toLocaleString()}</span>
+                            <span className="text-[9px] text-slate-500 font-mono">{new Date(ticket.created_at).toLocaleString()}</span>
                           </div>
 
-                          <div className="p-3 bg-slate-900 border border-slate-800/80 rounded-2xl space-y-1">
-                            <p className="font-bold text-slate-200">Subject: {ticket.subject}</p>
-                            <p className="text-slate-300 leading-relaxed">{ticket.message}</p>
+                          <div className="p-2.5 bg-slate-900 border border-slate-800/80 rounded-xl space-y-0.5">
+                            <p className="font-bold text-slate-200 text-xs">Subject: {ticket.subject}</p>
+                            <p className="text-slate-300 leading-relaxed text-[11px]">{ticket.message}</p>
                           </div>
 
                           {ticket.admin_response ? (
-                            <div className="p-3 bg-emerald-950/40 border border-emerald-800/40 rounded-2xl text-[11px] text-emerald-300">
+                            <div className="p-2.5 bg-emerald-950/40 border border-emerald-800/40 rounded-xl text-[11px] text-emerald-300">
                               <strong>Official Reply:</strong> {ticket.admin_response}
                             </div>
                           ) : (
-                            <div className="flex gap-2 pt-2 border-t border-slate-800">
+                            <div className="flex gap-2 pt-1.5 border-t border-slate-800">
                               <input
                                 type="text"
-                                placeholder="Type official response to member..."
+                                placeholder="Type official response..."
                                 value={adminReplyText[ticket.id] || ''}
                                 onChange={(e) => setAdminReplyText({ ...adminReplyText, [ticket.id]: e.target.value })}
-                                className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                                className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
                               />
                               <button
                                 onClick={() => handleAdminReplyInquiry(ticket.id)}
-                                className="bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-2 rounded-xl text-xs font-bold transition shadow cursor-pointer flex items-center gap-1"
+                                className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-xl text-xs font-bold transition shadow cursor-pointer flex items-center gap-1"
                               >
-                                <Send className="w-3.5 h-3.5" /> Reply & Resolve
+                                <Send className="w-3 h-3" /> Reply
                               </button>
                             </div>
                           )}
@@ -4010,14 +3996,14 @@ export default function App() {
 
                 {/* 9. POST NOTICES & AUDIT LOGS */}
                 {['admin', 'chairman'].includes(userRole) && (
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 shadow-xl">
-                      <div className="flex items-center gap-2 mb-4">
-                        <Bell className="w-5 h-5 text-amber-400" />
-                        <h4 className="text-base font-bold text-white">Post Announcement to Member Board</h4>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Bell className="w-4 h-4 text-amber-400" />
+                        <h4 className="text-sm sm:text-base font-bold text-white">Post Announcement to Member Board</h4>
                       </div>
 
-                      <form onSubmit={handlePublishNotice} className="space-y-3">
+                      <form onSubmit={handlePublishNotice} className="space-y-2.5">
                         <div>
                           <label className="block text-xs text-slate-400 mb-1">Announcement Title</label>
                           <input
@@ -4026,53 +4012,53 @@ export default function App() {
                             value={newNoticeTitle}
                             onChange={(e) => setNewNoticeTitle(e.target.value)}
                             placeholder="e.g. December Loan Applications Open"
-                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
                           />
                         </div>
                         <div>
                           <label className="block text-xs text-slate-400 mb-1">Notice Body Content</label>
                           <textarea
                             required
-                            rows="3"
+                            rows="2"
                             value={newNoticeContent}
                             onChange={(e) => setNewNoticeContent(e.target.value)}
                             placeholder="Write message to all members..."
-                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
                           />
                         </div>
                         <button
                           type="submit"
                           disabled={loading}
-                          className="w-full bg-amber-600 hover:bg-amber-500 text-white font-bold py-2.5 rounded-xl text-xs transition cursor-pointer shadow"
+                          className="w-full bg-amber-600 hover:bg-amber-500 text-white font-bold py-2 rounded-xl text-xs transition cursor-pointer shadow"
                         >
                           Publish Notice
                         </button>
                       </form>
                     </div>
 
-                    <div className="bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 shadow-xl">
-                      <div className="flex items-center gap-2 mb-3">
-                        <History className="w-5 h-5 text-amber-400" />
-                        <h4 className="text-base font-bold text-white">Immutable Audit Trail (SASRA Standard)</h4>
+                    <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
+                      <div className="flex items-center gap-2 mb-2.5">
+                        <History className="w-4 h-4 text-amber-400" />
+                        <h4 className="text-sm sm:text-base font-bold text-white">Immutable Audit Trail (SASRA Standard)</h4>
                       </div>
 
-                      <div className="max-h-56 overflow-y-auto border border-slate-800 rounded-2xl bg-slate-950">
+                      <div className="max-h-48 overflow-y-auto border border-slate-800 rounded-2xl bg-slate-950">
                         <table className="w-full text-left text-xs">
                           <thead className="bg-slate-900 text-slate-400 sticky top-0 font-semibold">
                             <tr>
-                              <th className="p-2.5">Time</th>
-                              <th className="p-2.5">User</th>
-                              <th className="p-2.5">Action</th>
-                              <th className="p-2.5">Details</th>
+                              <th className="p-2">Time</th>
+                              <th className="p-2">User</th>
+                              <th className="p-2">Action</th>
+                              <th className="p-2">Details</th>
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
+                          <tbody className="divide-y divide-slate-800/60 font-mono text-[10px]">
                             {auditLogs.map((log) => (
                               <tr key={log.id}>
-                                <td className="p-2.5 text-slate-400">{new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
-                                <td className="p-2.5 text-slate-200 font-sans font-bold">{log.user_name || 'Member'}</td>
-                                <td className="p-2.5 text-emerald-400 font-bold">{log.action}</td>
-                                <td className="p-2.5 text-slate-300">{log.details}</td>
+                                <td className="p-2 text-slate-400">{new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
+                                <td className="p-2 text-slate-200 font-sans font-bold">{log.user_name || 'Member'}</td>
+                                <td className="p-2 text-emerald-400 font-bold">{log.action}</td>
+                                <td className="p-2 text-slate-300">{log.details}</td>
                               </tr>
                             ))}
                           </tbody>

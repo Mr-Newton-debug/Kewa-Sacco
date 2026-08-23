@@ -49,7 +49,6 @@ export default function App() {
   const [announcements, setAnnouncements] = useState([]);
   const [saccoDocs, setSaccoDocs] = useState([]);
   const [welfareClaims, setWelfareClaims] = useState([]);
-  const [welfareContributions, setWelfareContributions] = useState([]);
   const [allPendingLoans, setAllPendingLoans] = useState([]);
   const [allLoansLeadership, setAllLoansLeadership] = useState([]);
   const [allPendingClaims, setAllPendingClaims] = useState([]);
@@ -1503,7 +1502,7 @@ export default function App() {
               </button>
               <button
                 onClick={() => setActiveTab('beneficiaries')}
-                className={`px-3 py-1.5 rounded-xl transition flex items-center gap-1 ${
+                className={`px-3 py-1.5 rounded-xl transition ${
                   activeTab === 'beneficiaries' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -1616,7 +1615,7 @@ export default function App() {
               activeTab === 'beneficiaries' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-slate-300 border border-slate-800/80'
             }`}
           >
-            <Settings className="w-4 h-4" /> Profile & Welfare (KES 200)
+            <Settings className="w-4 h-4" /> Profile Settings & Welfare
           </button>
 
           <button
@@ -1935,7 +1934,7 @@ export default function App() {
                     required
                     checked={odpcConsent}
                     onChange={(e) => setOdpcConsent(e.target.checked)}
-                    className="mt-0.5 accent-emerald-500 rounded"
+                    className="mt-1 accent-emerald-500 rounded"
                   />
                   <label htmlFor="odpc" className="text-[11px] text-slate-400 leading-tight">
                     I consent to KEWA SACCO processing my data under the <strong>Kenya Data Protection Act (2019)</strong>.

@@ -1210,7 +1210,7 @@ export default function App() {
     const newTotal = currentTotalAlloc + Number(nokPercent);
 
     if (newTotal > 100) {
-      setMessage({ text: `Total allocation exceeds 100%. Currently assigned: ${currentTotalAlloc}%.`, type: 'error' });
+      setMessage({ text: `Total allocation exceeds 100%. Currently assigned: ${currentTotalAlloc}%. Max remaining: ${Math.max(0, 100 - currentTotalAlloc)}%.`, type: 'error' });
       setLoading(false);
       return;
     }
@@ -2959,9 +2959,14 @@ export default function App() {
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-lg">
-                    <div className="flex items-center gap-2 mb-3">
-                      <Users className="w-4 h-4 text-emerald-400" />
-                      <h3 className="text-sm sm:text-base font-bold text-white">Nominated Beneficiaries (Next of Kin)</h3>
+                    <div className="flex justify-between items-center mb-3">
+                      <div className="flex items-center gap-2">
+                        <Users className="w-4 h-4 text-emerald-400" />
+                        <h3 className="text-sm sm:text-base font-bold text-white">Nominated Beneficiaries (Next of Kin)</h3>
+                      </div>
+                      <span className="text-[11px] font-semibold text-emerald-400 bg-emerald-950/60 px-2.5 py-0.5 rounded-full border border-emerald-800">
+                        Total Allocated: {beneficiaries.reduce((sum, b) => sum + Number(b.allocation_percentage || 0), 0)}% / 100%
+                      </span>
                     </div>
 
                     <form onSubmit={handleAddBeneficiary} className="space-y-2.5">
@@ -3002,7 +3007,7 @@ export default function App() {
                             value={nokPercent}
                             onChange={(e) => setNokPercent(e.target.value)}
                             placeholder="e.g. 50"
-                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
                           />
                         </div>
                       </div>
@@ -3034,29 +3039,33 @@ export default function App() {
                       <button
                         type="submit"
                         disabled={loading}
-                        className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded-xl text-xs transition shadow cursor-pointer"
+                        className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded-xl text-xs transition shadow cursor-pointer flex items-center justify-center gap-1.5"
                       >
-                        Save Beneficiary
+                        <Plus className="w-4 h-4" /> Add Another Beneficiary
                       </button>
                     </form>
 
-                    <div className="mt-3 pt-3 border-t border-slate-800 space-y-2">
-                      {beneficiaries.map((b) => (
-                        <div key={b.id} className="bg-slate-950 p-2.5 rounded-xl flex justify-between items-center text-xs">
-                          <div>
-                            <h5 className="font-bold text-white text-xs">{b.full_name} ({b.relationship})</h5>
-                            <p className="text-[10px] text-slate-400">Phone: {b.phone} • ID: {b.id_number || '-'}</p>
+                    <div className="mt-3 pt-3 border-t border-slate-800 space-y-2 max-h-48 overflow-y-auto">
+                      {beneficiaries.length === 0 ? (
+                        <p className="text-xs text-slate-500 text-center py-4">No beneficiaries registered yet.</p>
+                      ) : (
+                        beneficiaries.map((b) => (
+                          <div key={b.id} className="bg-slate-950 p-2.5 rounded-xl flex justify-between items-center text-xs">
+                            <div>
+                              <h5 className="font-bold text-white text-xs">{b.full_name} ({b.relationship})</h5>
+                              <p className="text-[10px] text-slate-400">Phone: {b.phone} • ID: {b.id_number || '-'}</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="bg-emerald-950 text-emerald-300 font-bold px-2 py-0.5 rounded text-[10px] border border-emerald-800">
+                                {b.allocation_percentage}%
+                              </span>
+                              <button onClick={() => handleDeleteBeneficiary(b.id)} className="text-rose-400 hover:text-rose-300 cursor-pointer">
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <span className="bg-emerald-950 text-emerald-300 font-bold px-2 py-0.5 rounded text-[10px] border border-emerald-800">
-                              {b.allocation_percentage}%
-                            </span>
-                            <button onClick={() => handleDeleteBeneficiary(b.id)} className="text-rose-400 hover:text-rose-300 cursor-pointer">
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
+                        ))
+                      )}
                     </div>
                   </div>
 

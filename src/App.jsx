@@ -89,7 +89,7 @@ export default function App() {
   const [chatInput, setChatInput] = useState('');
   const chatEndRef = useRef(null);
 
-  // Loan Application State (Reducing Balance Formula Implementation)
+  // Loan Application State
   const [loanProduct, setLoanProduct] = useState('main_loan');
   const [loanPrincipalRaw, setLoanPrincipalRaw] = useState('20,000');
   const [loanMonths, setLoanMonths] = useState(12);
@@ -763,7 +763,6 @@ export default function App() {
     setLoading(false);
   };
 
-  // --- MULTI-PRODUCT HISTORICAL DATA MIGRATION ENGINE ---
   const handleExecuteHistoricalMigration = (e) => {
     e.preventDefault();
     if (!migrationFile) {
@@ -784,10 +783,8 @@ export default function App() {
           const memberNo = (row.member_number || row.MemberNo || '').toString().trim();
           const existingSavings = parseFloat(row.total_shares || row.savings || 0);
           
-          // Support multi-product loans in CSV (e.g., columns or comma separated)
           const loan1Bal = parseFloat(row.main_loan_balance || row.loan_balance_1 || 0);
           const loan1Original = parseFloat(row.main_loan_original || row.loan_original_1 || loan1Bal);
-          const loan1Paid = parseFloat(row.main_loan_paid || 0);
 
           const loan2Bal = parseFloat(row.emergency_loan_balance || row.loan_balance_2 || 0);
           const loan2Original = parseFloat(row.emergency_loan_original || row.loan_original_2 || loan2Bal);
@@ -809,14 +806,8 @@ export default function App() {
               ]);
             }
 
-            // Helper to insert loan and compute remaining term
             const insertLegacyLoan = async (prodType, originalAmt, currentBal) => {
               if (currentBal > 0) {
-                const estMonthly = originalAmt / 12;
-                const paidSoFar = originalAmt - currentBal;
-                const monthsPaid = Math.floor(paidSoFar / (estMonthly || 1));
-                const remainingMos = Math.max(1, 12 - monthsPaid);
-
                 await supabase.from('loans').insert([
                   {
                     member_id: target.id,
@@ -868,7 +859,6 @@ export default function App() {
     .reduce((acc, l) => {
       const remainingBalance = Number(l.balance_remaining || 0);
       const rate = Number(l.interest_rate || 1.0) / 100;
-      // Reducing balance interest formula: Interest accrued is calculated on the remaining balance
       return acc + (remainingBalance * rate);
     }, 0);
 
@@ -900,13 +890,7 @@ export default function App() {
     : Math.max(totalSavings * 3, 10000);
 
   const loanPrincipalNum = parseAccountingNumber(loanPrincipalRaw);
-  
-  // --- REDUCING BALANCE LOAN CALCULATIONS ---
-  // Monthly Interest Rate (e.g., 1% = 0.01)
   const monthlyRate = interestRate / 100;
-  // Reducing Balance Formula for Equal Principal Payments or Standard Amortization:
-  // For standard declining balance, monthly interest = remaining balance * rate. 
-  // Total approximate payable over term with reducing balance:
   const calculatedTotal = loanPrincipalNum * (1 + (monthlyRate * (loanMonths + 1) / 2));
   const monthlyInstallment = calculatedTotal / loanMonths;
 
@@ -920,7 +904,6 @@ export default function App() {
     checkBlindGuarantorEligibility(index, member.id, parseAccountingNumber(updated[index].amountRaw));
   };
 
-  // --- BLIND GUARANTOR ELIGIBILITY (HIDES SPECIFIC SHARE AMOUNTS FROM APPLICANT) ---
   const checkBlindGuarantorEligibility = (index, memberId, currentPledgeAmount = 0) => {
     const updated = [...guarantorList];
 
@@ -2162,7 +2145,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 2: LOANS (REDUCING BALANCE INTEREST FORMULA) */}
+            {/* TAB 2: LOANS */}
             {activeTab === 'loans' && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-lg">
@@ -3461,15 +3444,15 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 4. HISTORICAL DATA IMPORT ENGINE (MULTI-LOAN SUPPORT) */}
+                {/* 4. HISTORICAL DATA IMPORT ENGINE */}
                 {['admin', 'chairman'].includes(userRole) && (
                   <div className="bg-slate-900/90 border border-cyan-900/50 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
                     <div className="flex items-center gap-2 mb-2">
                       <Database className="w-4 h-4 text-cyan-400" />
-                      <h3 className="text-sm sm:text-base font-bold text-white">Opening Balances & Multi-Loan Historical Migration Desk</h3>
+                      <h3 className="text-sm sm:text-base font-bold text-white">Opening Balances & Historical Data Migration Desk</h3>
                     </div>
                     <p className="text-[11px] text-slate-400 mb-3 font-medium">
-                      Upload legacy CSV file (<code className="text-cyan-300 font-mono">member_number, total_shares, main_loan_balance, emergency_loan_balance, christmas_loan_balance</code>).
+                      Upload your legacy Excel/CSV file (<code className="text-cyan-300 font-mono">member_number, total_shares, active_loan, loan_product</code>) to safely port all existing balances into KEWA SACCO.
                     </p>
 
                     <form onSubmit={handleExecuteHistoricalMigration} className="flex flex-col sm:flex-row gap-2.5">
@@ -3485,7 +3468,7 @@ export default function App() {
                         disabled={loading}
                         className="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2 px-4 rounded-xl text-xs transition shadow cursor-pointer flex items-center justify-center gap-1"
                       >
-                        <UploadCloud className="w-3.5 h-3.5" /> Import Multi-Loan Balances
+                        <UploadCloud className="w-3.5 h-3.5" /> Import Legacy Balances
                       </button>
                     </form>
                   </div>

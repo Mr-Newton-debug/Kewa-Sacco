@@ -849,7 +849,6 @@ export default function App() {
     });
   };
 
-  // Executive financial totals calculation
   const totalSocietySharesCapital = allMembers.reduce((acc, m) => acc + Number(m.totalSavings || 0), 0);
   const totalSocietyUnpaidLoans = allLoansLeadership
     .filter(l => ['approved', 'disbursed'].includes(l.status))

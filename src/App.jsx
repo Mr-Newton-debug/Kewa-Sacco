@@ -894,31 +894,6 @@ export default function App() {
   const calculatedTotal = loanPrincipalNum * (1 + (monthlyRate * (loanMonths + 1) / 2));
   const monthlyInstallment = calculatedTotal / loanMonths;
 
-  const pendingGuaranteesCount = guarantorRequests.filter((g) => g.status === 'pending').length;
-
-  const chairmanOfficial = allMembers.find((m) => m.role === 'chairman') || { full_name: 'Chairman', phone: '0712345678' };
-  const treasurerOfficial = allMembers.find((m) => m.role === 'treasurer') || { full_name: 'Treasurer', phone: '0712345679' };
-  const asstChairOfficial = allMembers.find((m) => m.role === 'assistant_chair') || { full_name: 'Assistant Chair', phone: '0712345670' };
-
-  const formatKenyanWhatsAppNumber = (rawPhone) => {
-    if (!rawPhone) return '254700000000';
-    let clean = rawPhone.toString().replace(/[^0-9]/g, '');
-    if (clean.startsWith('0')) {
-      clean = '254' + clean.substring(1);
-    } else if (clean.startsWith('7') || clean.startsWith('1')) {
-      clean = '254' + clean;
-    }
-    return clean;
-  };
-
-  const getWhatsAppLink = (phoneNum, roleName) => {
-    const formattedPhone = formatKenyanWhatsAppNumber(phoneNum);
-    const textMsg = encodeURIComponent(
-      `Hello ${roleName}, I am ${profile?.full_name || 'a member'} (Member No: ${profile?.member_number || 'N/A'}). I have an inquiry regarding my KEWA SACCO account.`
-    );
-    return `https://wa.me/${formattedPhone}?text=${textMsg}`;
-  };
-
   const selectGuarantorFromSearch = (index, member) => {
     const updated = [...guarantorList];
     updated[index].guarantorId = member.id;
@@ -1171,48 +1146,6 @@ export default function App() {
     fetchAdminData();
     fetchUserData(session.user.id);
   };
-
-  const performanceRankedLoans = [...allLoansLeadership]
-    .filter((l) => ['approved', 'disbursed', 'completed'].includes(l.status))
-    .map((l) => {
-      const totalPayable = Number(l.total_payable || 1);
-      const balanceRemaining = Number(l.balance_remaining || 0);
-      const totalPaid = Math.max(0, totalPayable - balanceRemaining);
-      const progressPercent = Math.min(100, Math.max(0, (totalPaid / totalPayable) * 100));
-
-      return {
-        ...l,
-        totalPaid,
-        progressPercent,
-      };
-    })
-    .sort((a, b) => a.progressPercent - b.progressPercent);
-
-  const filteredMemberDirectory = allMembers.filter((m) => {
-    const matchesSearch =
-      (m.full_name?.toLowerCase() || '').includes(memberDirectorySearch.toLowerCase()) ||
-      (m.member_number?.toLowerCase() || '').includes(memberDirectorySearch.toLowerCase()) ||
-      (m.id_number?.toLowerCase() || '').includes(memberDirectorySearch.toLowerCase()) ||
-      (m.phone?.toLowerCase() || '').includes(memberDirectorySearch.toLowerCase());
-
-    const matchesCompany =
-      memberDirectoryCompanyFilter === 'all' ||
-      (m.companies?.name?.toLowerCase() || '').includes(memberDirectoryCompanyFilter.toLowerCase());
-
-    return matchesSearch && matchesCompany;
-  });
-
-  const filteredGuarantorInspectionList = allSystemGuarantors.filter((g) => {
-    const guarantorName = g.profiles?.full_name?.toLowerCase() || '';
-    const guarantorNo = g.profiles?.member_number?.toLowerCase() || '';
-    const borrowerName = g.loans?.profiles?.full_name?.toLowerCase() || '';
-    const borrowerNo = g.loans?.profiles?.member_number?.toLowerCase() || '';
-    const search = guarantorTrackerSearch.toLowerCase();
-
-    return guarantorName.includes(search) || guarantorNo.includes(search) || borrowerName.includes(search) || borrowerNo.includes(search);
-  });
-
-  const userRole = profile?.role || 'member';
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-20 sm:pb-12 selection:bg-emerald-500 selection:text-white">

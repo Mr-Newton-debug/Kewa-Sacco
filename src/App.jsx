@@ -248,7 +248,9 @@ export default function App() {
       fetchMemberInquiries(session.user.id);
     } else if (activeTab === 'admin' && session) {
       fetchAdminData();
-    } else if (activeTab === 'profile' && session) {
+    } else if (activeTab === 'guarantors' && session) {
+      fetchGuarantorData(session.user.id);
+    } else if (activeTab === 'beneficiaries' && session) {
       fetchBeneficiaries(session.user.id);
       fetchWelfareClaims(session.user.id);
     }
@@ -431,13 +433,25 @@ export default function App() {
     }
   };
 
+  // --- RELIABLE GUARANTOR DATA QUERY WITH BORROWER PROFILES ---
   const fetchGuarantorData = async (userId) => {
-    const { data: requests } = await supabase
+    const { data: requests, error } = await supabase
       .from('loan_guarantors')
-      .select('*, loans(*, profiles:member_id(full_name, member_number, companies(name)))')
+      .select('*, loans(*, profiles!loans_member_id_fkey(full_name, member_number, companies(name)))')
       .eq('guarantor_id', userId)
       .order('created_at', { ascending: false });
-    if (requests) setGuarantorRequests(requests);
+
+    if (!error && requests) {
+      setGuarantorRequests(requests);
+    } else {
+      // Fallback query if specific foreign key naming differs in schema
+      const { data: fallbackRequests } = await supabase
+        .from('loan_guarantors')
+        .select('*, loans(*, profiles(full_name, member_number, companies(name)))')
+        .eq('guarantor_id', userId)
+        .order('created_at', { ascending: false });
+      if (fallbackRequests) setGuarantorRequests(fallbackRequests);
+    }
 
     const { data: activeGuarantees } = await supabase
       .from('loan_guarantors')
@@ -831,7 +845,7 @@ export default function App() {
         return;
       }
 
-      // STRICT CHECK: Sum of all guarantor pledges must match or exceed the loan principal!
+      // Sum of all guarantor pledges must match or exceed the loan principal
       const totalGuaranteedSum = validGuarantors.reduce((acc, g) => acc + parseAccountingNumber(g.amountRaw), 0);
       if (totalGuaranteedSum < loanPrincipalNum) {
         setMessage({ 
@@ -1433,7 +1447,6 @@ export default function App() {
     setMessage({ text: 'Announcement published to Member Board!', type: 'success' });
   };
 
-  // --- UNIFIED PROGRESSIVE PDF STATEMENT (CONTRIBUTIONS + LOAN STATEMENT + SUMMATIONS & DIFFERENCE) ---
   const generatePDFStatement = (loan = null) => {
     try {
       const doc = new jsPDF();
@@ -1459,7 +1472,6 @@ export default function App() {
       doc.text(`Active Loan Debt: KES ${activeLoanBalance.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`, 120, 66);
       doc.text(`Free Shares Available: KES ${freeSharesAvailable.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`, 120, 72);
 
-      // 1. COMBINED PROGRESSIVE FINANCIAL STATEMENT TABLE
       doc.setFontSize(11);
       doc.setTextColor(6, 78, 59);
       doc.text('1. Progressive Member Financial Activity Ledger (Contributions (+) & Loan Movements (-))', 14, 82);
@@ -1506,7 +1518,6 @@ export default function App() {
         headStyles: { fillColor: [6, 78, 59] },
       });
 
-      // 2. FINANCIAL SUMMATIONS & DIFFERENCE BLOCK
       const sumY = doc.lastAutoTable.finalY + 10;
       doc.setFontSize(11);
       doc.setTextColor(180, 83, 9);
@@ -1660,7 +1671,7 @@ export default function App() {
               </button>
               <button
                 onClick={() => setActiveTab('beneficiaries')}
-                className={`px-3 py-1.5 rounded-xl transition ${
+                className={`px-3 py-1.5 rounded-xl transition flex items-center gap-1 ${
                   activeTab === 'beneficiaries' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -1797,7 +1808,7 @@ export default function App() {
           {['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(userRole) && (
             <button
               onClick={() => { setActiveTab('admin'); setMobileMenuOpen(false); }}
-              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition ${
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold transition ${
                 activeTab === 'admin' ? 'bg-gradient-to-r from-amber-600 to-orange-600 text-white shadow-lg' : 'bg-slate-900/80 text-amber-300 border border-slate-800/80'
               }`}
             >
@@ -2304,7 +2315,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 2: LOANS (WITH EXPLICIT LOAN LIMITS DISPLAY) */}
+            {/* TAB 2: LOANS */}
             {activeTab === 'loans' && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-lg">
@@ -2600,7 +2611,7 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 3: GUARANTORS */}
+            {/* TAB 3: GUARANTORS (WITH REAL BORROWER IDENTITIES) */}
             {activeTab === 'guarantors' && (
               <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 space-y-4 shadow-lg">
                 <div>
@@ -2618,40 +2629,47 @@ export default function App() {
                   <div className="text-center py-10 text-slate-500 text-xs">You have no pending guarantor requests.</div>
                 ) : (
                   <div className="space-y-2.5">
-                    {guarantorRequests.map((g) => (
-                      <div key={g.id} className="bg-slate-950 border border-slate-800 rounded-2xl p-3.5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                        <div>
-                          <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full ${
-                            g.status === 'accepted' ? 'bg-emerald-950 border border-emerald-800 text-emerald-300' :
-                            g.status === 'pending' ? 'bg-amber-950 border border-amber-800 text-amber-300' : 'bg-rose-950 border border-rose-800 text-rose-300'
-                          }`}>
-                            Guarantee: {g.status}
-                          </span>
-                          <h4 className="text-sm font-bold text-white mt-1">{g.loans?.profiles?.full_name}</h4>
-                          <p className="text-[11px] text-slate-400">{g.loans?.profiles?.companies?.name || 'External'} • Member {g.loans?.profiles?.member_number}</p>
-                          <p className="text-[11px] text-emerald-400 mt-0.5 font-medium">
-                            Pledged: KES {Number(g.amount_guaranteed).toLocaleString()} (Product: {(g.loans?.loan_product || 'main_loan').replace('_', ' ').toUpperCase()})
-                          </p>
-                        </div>
+                    {guarantorRequests.map((g) => {
+                      const borrower = g.loans?.profiles || {};
+                      const borrowerName = borrower.full_name || 'Cooperative Member';
+                      const borrowerMemberNo = borrower.member_number || 'N/A';
+                      const borrowerCompany = borrower.companies?.name || 'KEWA Branch';
 
-                        {g.status === 'pending' && (
-                          <div className="flex gap-2 w-full sm:w-auto">
-                            <button
-                              onClick={() => handleRespondGuarantor(g.id, 'accepted', g.amount_guaranteed)}
-                              className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold px-3 py-1.5 rounded-xl flex items-center justify-center gap-1 transition cursor-pointer"
-                            >
-                              <CheckCircle className="w-3.5 h-3.5" /> Accept
-                            </button>
-                            <button
-                              onClick={() => handleRespondGuarantor(g.id, 'rejected', g.amount_guaranteed)}
-                              className="flex-1 sm:flex-none bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-bold px-3 py-1.5 rounded-xl flex items-center justify-center gap-1 transition cursor-pointer"
-                            >
-                              <XCircle className="w-3.5 h-3.5" /> Decline
-                            </button>
+                      return (
+                        <div key={g.id} className="bg-slate-950 border border-slate-800 rounded-2xl p-3.5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                          <div>
+                            <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full ${
+                              g.status === 'accepted' ? 'bg-emerald-950 border border-emerald-800 text-emerald-300' :
+                              g.status === 'pending' ? 'bg-amber-950 border border-amber-800 text-amber-300' : 'bg-rose-950 border border-rose-800 text-rose-300'
+                            }`}>
+                              Guarantee: {g.status}
+                            </span>
+                            <h4 className="text-sm font-bold text-white mt-1">{borrowerName}</h4>
+                            <p className="text-[11px] text-slate-400">{borrowerCompany} • Member {borrowerMemberNo}</p>
+                            <p className="text-[11px] text-emerald-400 mt-0.5 font-medium">
+                              Pledged: KES {Number(g.amount_guaranteed).toLocaleString()} (Product: {(g.loans?.loan_product || 'main_loan').replace('_', ' ').toUpperCase()})
+                            </p>
                           </div>
-                        )}
-                      </div>
-                    ))}
+
+                          {g.status === 'pending' && (
+                            <div className="flex gap-2 w-full sm:w-auto">
+                              <button
+                                onClick={() => handleRespondGuarantor(g.id, 'accepted', g.amount_guaranteed)}
+                                className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold px-3 py-1.5 rounded-xl flex items-center justify-center gap-1 transition cursor-pointer"
+                              >
+                                <CheckCircle className="w-3.5 h-3.5" /> Accept
+                              </button>
+                              <button
+                                onClick={() => handleRespondGuarantor(g.id, 'rejected', g.amount_guaranteed)}
+                                className="flex-1 sm:flex-none bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-bold px-3 py-1.5 rounded-xl flex items-center justify-center gap-1 transition cursor-pointer"
+                              >
+                                <XCircle className="w-3.5 h-3.5" /> Decline
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -2947,7 +2965,7 @@ export default function App() {
                       </div>
                       <div>
                         <label className="block text-xs text-slate-400 mb-1 flex items-center gap-1 font-medium">
-                          <Paperclip className="w-3 h-3 text-amber-400" /> Upload Evidence Document (PDF/Photo)
+                          <Paperclip className="w-3.5 h-3.5 text-amber-400" /> Upload Evidence Document (PDF/Photo)
                         </label>
                         <input
                           type="file"
@@ -2990,7 +3008,7 @@ export default function App() {
                               rel="noreferrer"
                               className="inline-flex items-center gap-1 text-[10px] text-amber-400 hover:underline"
                             >
-                              <FileCheck className="w-3 h-3" /> View Uploaded Evidence Document
+                              <FileCheck className="w-3.5 h-3.5" /> View Uploaded Evidence Document
                             </a>
                           )}
 
@@ -3402,7 +3420,7 @@ export default function App() {
                                         : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
                                     }`}
                                   >
-                                    {(!canChairSign || !isChairUser) && <Lock className="w-3 h-3 text-slate-600" />}
+                                    {(!canChairSign || !isChairUser) && <Lock className="w-3.5 h-3.5 text-slate-600" />}
                                     2. Sign: Chair
                                   </button>
                                 )}
@@ -3429,7 +3447,7 @@ export default function App() {
                                         : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
                                     }`}
                                   >
-                                    {(!canTreasurerSign || !isTreasurerUser) && <Lock className="w-3 h-3 text-slate-600" />}
+                                    {(!canTreasurerSign || !isTreasurerUser) && <Lock className="w-3.5 h-3.5 text-slate-600" />}
                                     3. Disburse
                                   </button>
                                 )}
@@ -3470,7 +3488,7 @@ export default function App() {
 
                     <button
                       onClick={fetchAdminData}
-                      className="self-start sm:self-auto p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold flex items-center gap-1 cursor-pointer transition border border-slate-700"
+                      className="self-start sm:self-auto p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold flex items-center gap-1 transition border border-slate-700"
                     >
                       <RotateCcw className="w-3 h-3" /> Refresh
                     </button>
@@ -3832,7 +3850,7 @@ export default function App() {
                           type="file"
                           accept=".csv"
                           onChange={handleCSVUpload}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1 text-xs text-slate-300 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[11px] file:bg-amber-600 file:text-white cursor-pointer"
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-300 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[11px] file:bg-amber-600 file:text-white cursor-pointer"
                         />
                       </div>
                     </div>
@@ -3980,7 +3998,7 @@ export default function App() {
                                         : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
                                     }`}
                                   >
-                                    {(!canChairSign || !isChairUser) && <Lock className="w-3 h-3 text-slate-600" />}
+                                    {(!canChairSign || !isChairUser) && <Lock className="w-3.5 h-3.5 text-slate-600" />}
                                     2. Sign: Chair
                                   </button>
                                 )}
@@ -3996,7 +4014,7 @@ export default function App() {
                                     }`}
                                     title={isTreasurerUser ? "Click to Unsign" : "Only Treasurer can modify"}
                                   >
-                                    <CheckCircle className="w-3 h-3" /> 3. Treas {isTreasurerUser && <RotateCcw className="w-2.5 h-2.5 ml-0.5 opacity-60" />}
+                                    <CheckCircle className="w-3.5 h-3.5" /> 3. Treas {isTreasurerUser && <RotateCcw className="w-2.5 h-2.5 ml-0.5 opacity-60" />}
                                   </button>
                                 ) : (
                                   <button
@@ -4008,7 +4026,7 @@ export default function App() {
                                         : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
                                     }`}
                                   >
-                                    {(!canTreasurerSign || !isTreasurerUser) && <Lock className="w-3 h-3 text-slate-600" />}
+                                    {(!canTreasurerSign || !isTreasurerUser) && <Lock className="w-3.5 h-3.5 text-slate-600" />}
                                     3. Disburse
                                   </button>
                                 )}

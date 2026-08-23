@@ -654,21 +654,6 @@ export default function App() {
       } else {
         setMessage({ text: error.message, type: 'error' });
       }
-    } else if (manualAdjustmentType === 'welfare_monthly_200') {
-      await supabase.from('welfare_contributions').insert([
-        {
-          member_id: manualTargetMemberId,
-          amount: parsedAmount,
-          period_month: new Date().toLocaleString('default', { month: 'short', year: 'numeric' }).toUpperCase(),
-          payment_method: 'direct_cash',
-          reference_code: refCode,
-        },
-      ]);
-
-      logAuditAction('WELFARE_BENEVOLENT_CREDIT', `Posted KES ${parsedAmount.toLocaleString()} Welfare Fund to ${targetMember?.full_name}`);
-      setMessage({ text: `Success! KES ${parsedAmount.toLocaleString()} credited to ${targetMember?.full_name}'s Welfare Benevolent Account.`, type: 'success' });
-      setManualAmountRaw('');
-      setManualRefCode('');
     } else if (manualAdjustmentType === 'loan_repayment') {
       const { data: memberActiveLoans } = await supabase
         .from('loans')
@@ -1934,7 +1919,7 @@ export default function App() {
                     required
                     checked={odpcConsent}
                     onChange={(e) => setOdpcConsent(e.target.checked)}
-                    className="mt-1 accent-emerald-500 rounded"
+                    className="mt-0.5 accent-emerald-500 rounded"
                   />
                   <label htmlFor="odpc" className="text-[11px] text-slate-400 leading-tight">
                     I consent to KEWA SACCO processing my data under the <strong>Kenya Data Protection Act (2019)</strong>.

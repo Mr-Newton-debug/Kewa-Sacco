@@ -122,6 +122,8 @@ export default function App() {
   const [claimType, setClaimType] = useState('hospitalization');
   const [claimAmountRaw, setClaimAmountRaw] = useState('');
   const [claimDesc, setClaimDesc] = useState('');
+  const [claimDisbursementMethod, setClaimDisbursementMethod] = useState('mpesa');
+  const [claimDisbursementDetails, setClaimDisbursementDetails] = useState('');
   const [claimDocument, setClaimDocument] = useState(null);
 
   // M-Pesa State
@@ -337,59 +339,51 @@ export default function App() {
 
   const fetchUserData = async (userId) => {
     setLoading(true);
-    const { data: profileData } = await supabase
-      .from('profiles')
-      .select('*, companies(name)')
-      .eq('id', userId)
-      .single();
+    try {
+      const [
+        { data: profileData },
+        { data: savingsData },
+        { data: loanData },
+        { data: repaymentData }
+      ] = await Promise.all([
+        supabase.from('profiles').select('*, companies(name)').eq('id', userId).single(),
+        supabase.from('savings_ledger').select('*').eq('member_id', userId).order('created_at', { ascending: false }),
+        supabase.from('loans').select('*').eq('member_id', userId).order('created_at', { ascending: false }),
+        supabase.from('loan_repayments').select('*').eq('member_id', userId).order('created_at', { ascending: false })
+      ]);
 
-    if (profileData) {
-      setProfile(profileData);
-      setEditFullName(profileData.full_name || '');
-      setEditPhone(profileData.phone || '');
-      setEditIdNumber(profileData.id_number || '');
-      setEditCompanyId(profileData.company_id || '');
-      setEditTransactionPin(profileData.transaction_pin || '1234');
+      if (profileData) {
+        setProfile(profileData);
+        setEditFullName(profileData.full_name || '');
+        setEditPhone(profileData.phone || '');
+        setEditIdNumber(profileData.id_number || '');
+        setEditCompanyId(profileData.company_id || '');
+        setEditTransactionPin(profileData.transaction_pin || '1234');
+      }
 
-      fetchAllMembers();
+      if (savingsData) setSavings(savingsData);
+      if (loanData) setLoans(loanData);
+      if (repaymentData) setRepayments(repaymentData);
+
+      await fetchAllMembers();
       fetchGuarantorData(userId);
       fetchBeneficiaries(userId);
       fetchWelfareClaims(userId);
       fetchMemberInquiries(userId);
-      if (['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(profileData.role)) {
+
+      if (['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(profileData?.role)) {
         fetchAdminData();
       }
+    } catch (err) {
+      console.error('Error fetching user data:', err);
     }
-
-    const { data: savingsData } = await supabase
-      .from('savings_ledger')
-      .select('*')
-      .eq('member_id', userId)
-      .order('created_at', { ascending: false });
-    if (savingsData) setSavings(savingsData);
-
-    const { data: loanData } = await supabase
-      .from('loans')
-      .select('*')
-      .eq('member_id', userId)
-      .order('created_at', { ascending: false });
-    if (loanData) setLoans(loanData);
-
-    const { data: repaymentData } = await supabase
-      .from('loan_repayments')
-      .select('*, loans(principal_amount, loan_product)')
-      .eq('member_id', userId)
-      .order('created_at', { ascending: false });
-    if (repaymentData) setRepayments(repaymentData);
-
     setLoading(false);
   };
 
-  // Resilient Member Fetcher with In-Memory Joins
   const fetchAllMembers = async () => {
     try {
       const [
-        { data: membersData, error: memErr },
+        { data: membersData },
         { data: savingsData },
         { data: loansData }
       ] = await Promise.all([
@@ -397,11 +391,6 @@ export default function App() {
         supabase.from('savings_ledger').select('member_id, amount'),
         supabase.from('loans').select('id, member_id, balance_remaining, status')
       ]);
-
-      if (memErr) {
-        console.error('Error fetching members:', memErr);
-        return;
-      }
 
       if (membersData) {
         const formatted = membersData.map((m) => {
@@ -433,7 +422,6 @@ export default function App() {
     }
   };
 
-  // Resilient Guarantor Request Fetcher
   const fetchGuarantorData = async (userId) => {
     try {
       const [
@@ -496,10 +484,8 @@ export default function App() {
     if (data) setWelfareClaims(data);
   };
 
-  // Resilient Admin Data Loader
   const fetchAdminData = async () => {
     await fetchAllMembers();
-
     try {
       const [
         { data: loansRaw },
@@ -932,10 +918,11 @@ export default function App() {
 
   const netSocietyLiquidity = (totalSocietySharesCapital + totalSocietyRepaymentsCollected) - totalSocietyDisbursedPrincipal;
 
-  const totalSavings = savings.reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
+  const userMemberObj = allMembers.find(m => m.id === (session?.user?.id || profile?.id));
+  const totalSavings = savings.reduce((acc, curr) => acc + Number(curr.amount || 0), 0) || Number(userMemberObj?.totalSavings || 0);
   const activeLoanBalance = loans
     .filter((l) => (l.status === 'approved' || l.status === 'disbursed') && Number(l.balance_remaining || 0) > 0)
-    .reduce((acc, curr) => acc + Number(curr.balance_remaining || 0), 0);
+    .reduce((acc, curr) => acc + Number(curr.balance_remaining || 0), 0) || Number(userMemberObj?.totalActiveDebt || 0);
 
   const totalGuaranteesCommittedAmount = myGuaranteesCommitted.reduce(
     (acc, curr) => acc + Number(curr.amount_guaranteed || 0),
@@ -1267,6 +1254,8 @@ export default function App() {
         amount_requested: claimAmtNum,
         description: claimDesc,
         evidence_url: documentUrl,
+        disbursement_method: claimDisbursementMethod,
+        disbursement_details: claimDisbursementDetails,
         status: 'pending',
         assistant_chair_approval: false,
         chairman_approval: false,
@@ -1280,6 +1269,7 @@ export default function App() {
       setMessage({ text: 'Welfare claim submitted for Sequential 3-Signatory review.', type: 'success' });
       setClaimAmountRaw('');
       setClaimDesc('');
+      setClaimDisbursementDetails('');
       setClaimDocument(null);
       fetchWelfareClaims(session.user.id);
     }
@@ -1656,7 +1646,6 @@ export default function App() {
     setMessage({ text: 'Announcement published to Member Board!', type: 'success' });
   };
 
-  // Unified Progressive PDF Statement
   const generatePDFStatement = (loan = null) => {
     try {
       const doc = new jsPDF();
@@ -1765,9 +1754,9 @@ export default function App() {
 
   const pendingGuaranteesCount = guarantorRequests.filter((g) => g.status === 'pending').length;
 
-  const chairmanOfficial = allMembers.find((m) => m.role === 'chairman') || { full_name: 'Chairman', phone: '0712345678' };
-  const treasurerOfficial = allMembers.find((m) => m.role === 'treasurer') || { full_name: 'Treasurer', phone: '0712345679' };
-  const asstChairOfficial = allMembers.find((m) => m.role === 'assistant_chair') || { full_name: 'Assistant Chair', phone: '0712345670' };
+  const chairmanOfficial = allMembers.find((m) => m.role === 'chairman') || { full_name: 'Philip Karish (Chairman)', phone: '0793608000' };
+  const treasurerOfficial = allMembers.find((m) => m.role === 'treasurer') || { full_name: 'Moses Opere (Treasurer)', phone: '0785202416' };
+  const asstChairOfficial = allMembers.find((m) => m.role === 'assistant_chair') || { full_name: 'Fred Songoni (Assistant Chair)', phone: '0719732399' };
 
   const formatKenyanWhatsAppNumber = (rawPhone) => {
     if (!rawPhone) return '254700000000';
@@ -1942,7 +1931,7 @@ export default function App() {
         )}
       </header>
 
-      {/* Fixed Full-Screen Mobile Drawer */}
+      {/* Mobile Drawer */}
       {session && authMode !== 'reset' && mobileMenuOpen && (
         <div className="lg:hidden fixed inset-0 top-[52px] bg-slate-950/98 backdrop-blur-2xl z-[100] px-4 py-5 space-y-2.5 overflow-y-auto border-t border-slate-800 animate-fadeIn">
           <div className="p-3 bg-slate-900/90 border border-slate-800 rounded-2xl mb-3 flex items-center justify-between">
@@ -2077,10 +2066,85 @@ export default function App() {
               </h2>
             </div>
 
+            {authMode === 'forgot' && (
+              <form onSubmit={handleForgotPassword} className="space-y-3.5" autoComplete="off">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Registered Email Address</label>
+                  <input
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="name@domain.com"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white focus:border-emerald-500 transition"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3 rounded-xl text-xs sm:text-sm transition shadow-lg cursor-pointer"
+                >
+                  {loading ? 'Sending link...' : 'Send Password Reset Link'}
+                </button>
+                <div className="text-center mt-3">
+                  <button
+                    type="button"
+                    onClick={() => setAuthMode('login')}
+                    className="text-xs text-slate-400 hover:text-white font-medium"
+                  >
+                    Back to Sign In
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {authMode === 'reset' && (
+              <form onSubmit={handleUpdatePassword} className="space-y-3.5" autoComplete="off">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Enter New Password</label>
+                  <div className="relative">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      required
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-3.5 pr-10 py-2.5 text-xs sm:text-sm text-white focus:border-emerald-500 transition"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3 rounded-xl text-xs sm:text-sm transition shadow-lg cursor-pointer"
+                >
+                  {loading ? 'Saving...' : 'Save New Password & Sign In'}
+                </button>
+              </form>
+            )}
+
             {authMode === 'login' && (
               <form onSubmit={handleLogin} className="space-y-3.5" autoComplete="off">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Email Address</label>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-xs font-semibold text-slate-300">Email Address</label>
+                    {savedEmailChip && !email && (
+                      <button
+                        type="button"
+                        onClick={() => setEmail(savedEmailChip)}
+                        className="text-[10px] text-emerald-400 hover:text-emerald-300 font-semibold flex items-center gap-1 bg-emerald-950/60 border border-emerald-800/80 px-2 py-0.5 rounded-full transition cursor-pointer"
+                      >
+                        <AtSign className="w-3 h-3" /> Use: {savedEmailChip}
+                      </button>
+                    )}
+                  </div>
                   <input
                     type="email"
                     required
@@ -2091,20 +2155,39 @@ export default function App() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Password</label>
-                  <input
-                    type="password"
-                    required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white"
-                  />
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-xs font-semibold text-slate-300">Password</label>
+                    <button
+                      type="button"
+                      onClick={() => setAuthMode('forgot')}
+                      className="text-[11px] text-emerald-400 hover:underline cursor-pointer font-medium"
+                    >
+                      Forgot password?
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      required
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-3.5 pr-10 py-2.5 text-xs sm:text-sm text-white"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
+
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3 rounded-xl text-xs sm:text-sm transition shadow-lg cursor-pointer"
+                  className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3 rounded-xl text-xs sm:text-sm transition mt-1 shadow-lg cursor-pointer"
                 >
                   {loading ? 'Processing...' : 'Sign In to Portal'}
                 </button>
@@ -2112,7 +2195,7 @@ export default function App() {
             )}
 
             {authMode === 'register' && (
-              <form onSubmit={handleRegister} className="space-y-3" autoComplete="off">
+              <form onSubmit={handleRegister} className="space-y-3.5" autoComplete="off">
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">Full Name</label>
                   <input
@@ -2121,10 +2204,24 @@ export default function App() {
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
                     placeholder="John Doe"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white"
                   />
                 </div>
-                <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Affiliation / Branch</label>
+                  <select
+                    value={companyId}
+                    onChange={(e) => setCompanyId(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white"
+                  >
+                    {companies.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="grid grid-cols-2 gap-2.5">
                   <div>
                     <label className="block text-xs font-semibold text-slate-300 mb-1">Member No.</label>
                     <input
@@ -2133,7 +2230,7 @@ export default function App() {
                       value={memberNumber}
                       onChange={(e) => setMemberNumber(e.target.value)}
                       placeholder="KW-001"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs sm:text-sm text-white font-mono"
                     />
                   </div>
                   <div>
@@ -2144,7 +2241,7 @@ export default function App() {
                       value={idNumber}
                       onChange={(e) => setIdNumber(e.target.value)}
                       placeholder="12345678"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs sm:text-sm text-white font-mono"
                     />
                   </div>
                 </div>
@@ -2154,11 +2251,10 @@ export default function App() {
                     type="password"
                     maxLength={4}
                     required
-                    autoComplete="off"
                     value={transactionPin}
                     onChange={(e) => setTransactionPin(e.target.value.replace(/[^0-9]/g, ''))}
                     placeholder="1234"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white font-mono text-center tracking-widest"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white font-mono text-center tracking-widest"
                   />
                 </div>
                 <div>
@@ -2169,7 +2265,7 @@ export default function App() {
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     placeholder="0712345678"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white font-mono"
                   />
                 </div>
                 <div>
@@ -2180,20 +2276,30 @@ export default function App() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="name@domain.com"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white"
                   />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">Password</label>
-                  <input
-                    type="password"
-                    required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      required
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-3.5 pr-10 py-2.5 text-xs sm:text-sm text-white"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
+
                 <div className="flex items-start gap-2 pt-1">
                   <input
                     type="checkbox"
@@ -2207,10 +2313,11 @@ export default function App() {
                     I consent to KEWA SACCO processing my data under the <strong>Kenya Data Protection Act (2019)</strong>.
                   </label>
                 </div>
+
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-2.5 rounded-xl text-xs sm:text-sm transition mt-1 shadow-lg cursor-pointer"
+                  className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3 rounded-xl text-xs sm:text-sm transition mt-1 shadow-lg cursor-pointer"
                 >
                   {loading ? 'Processing...' : 'Complete Registration'}
                 </button>
@@ -2879,10 +2986,6 @@ export default function App() {
                     <Settings className="w-4 h-4 text-emerald-400" />
                     <h3 className="text-sm sm:text-base font-bold text-white">Profile Settings & Contact Information</h3>
                   </div>
-                  <p className="text-[11px] text-slate-400 mb-3 font-medium">
-                    Update your registered personal details, phone number, and branch affiliation.
-                  </p>
-
                   <form onSubmit={handleUpdateProfileDetails} className="space-y-3">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
@@ -2926,18 +3029,6 @@ export default function App() {
                             <option key={c.id} value={c.id}>{c.name}</option>
                           ))}
                         </select>
-                      </div>
-                      <div>
-                        <label className="block text-xs text-amber-300 font-semibold mb-1">4-Digit Security PIN</label>
-                        <input
-                          type="password"
-                          maxLength={4}
-                          required
-                          value={editTransactionPin}
-                          onChange={(e) => setEditTransactionPin(e.target.value.replace(/[^0-9]/g, ''))}
-                          placeholder="1234"
-                          className="w-full bg-slate-950 border border-amber-500/50 rounded-xl px-3 py-2 text-xs text-white font-mono"
-                        />
                       </div>
                     </div>
                     <button
@@ -3092,6 +3183,32 @@ export default function App() {
                           className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
                         />
                       </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-xs text-slate-400 mb-1">Disbursement Channel</label>
+                          <select
+                            value={claimDisbursementMethod}
+                            onChange={(e) => setClaimDisbursementMethod(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
+                          >
+                            <option value="mpesa">M-Pesa Mobile Money</option>
+                            <option value="bank">Direct Bank Transfer</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs text-slate-400 mb-1">Payout Destination Details</label>
+                          <input
+                            type="text"
+                            required
+                            value={claimDisbursementDetails}
+                            onChange={(e) => setClaimDisbursementDetails(e.target.value)}
+                            placeholder={claimDisbursementMethod === 'mpesa' ? '07xxxxxxxx' : 'Bank, Acc No'}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
+                          />
+                        </div>
+                      </div>
+
                       <div>
                         <label className="block text-xs text-slate-400 mb-1">Details & Justification</label>
                         <textarea
@@ -3103,6 +3220,7 @@ export default function App() {
                           className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
                         />
                       </div>
+
                       <div>
                         <label className="block text-xs text-slate-400 mb-1 flex items-center gap-1 font-medium">
                           <Paperclip className="w-3.5 h-3.5 text-amber-400" /> Upload Evidence Document (PDF/Photo)
@@ -3114,6 +3232,7 @@ export default function App() {
                           className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1 text-xs text-slate-300 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[11px] file:bg-rose-900/60 file:text-rose-200 cursor-pointer"
                         />
                       </div>
+
                       <button
                         type="submit"
                         disabled={loading}
@@ -3263,11 +3382,11 @@ export default function App() {
                         <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800 uppercase">
                           Executive Chairperson
                         </span>
-                        <h4 className="text-sm font-bold text-white mt-1">{chairmanOfficial.full_name}</h4>
+                        <h4 className="text-sm font-bold text-white mt-1">{chairmanOfficial?.full_name}</h4>
                         <p className="text-[11px] text-slate-400">Governance & General Appeals</p>
                       </div>
                       <a
-                        href={getWhatsAppLink(chairmanOfficial.phone, 'Chairman')}
+                        href={getWhatsAppLink(chairmanOfficial?.phone, 'Chairman')}
                         target="_blank"
                         rel="noreferrer"
                         className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-1.5 rounded-xl text-xs flex items-center justify-center gap-1.5 transition shadow"
@@ -3281,11 +3400,11 @@ export default function App() {
                         <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800 uppercase">
                           Treasurer & Finance
                         </span>
-                        <h4 className="text-sm font-bold text-white mt-1">{treasurerOfficial.full_name}</h4>
+                        <h4 className="text-sm font-bold text-white mt-1">{treasurerOfficial?.full_name}</h4>
                         <p className="text-[11px] text-slate-400">Disbursements & Checkoffs</p>
                       </div>
                       <a
-                        href={getWhatsAppLink(treasurerOfficial.phone, 'Treasurer')}
+                        href={getWhatsAppLink(treasurerOfficial?.phone, 'Treasurer')}
                         target="_blank"
                         rel="noreferrer"
                         className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-1.5 rounded-xl text-xs flex items-center justify-center gap-1.5 transition shadow"
@@ -3299,11 +3418,11 @@ export default function App() {
                         <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800 uppercase">
                           Assistant Chairperson
                         </span>
-                        <h4 className="text-sm font-bold text-white mt-1">{asstChairOfficial.full_name}</h4>
+                        <h4 className="text-sm font-bold text-white mt-1">{asstChairOfficial?.full_name}</h4>
                         <p className="text-[11px] text-slate-400">Guarantors & Welfare</p>
                       </div>
                       <a
-                        href={getWhatsAppLink(asstChairOfficial.phone, 'Assistant Chair')}
+                        href={getWhatsAppLink(asstChairOfficial?.phone, 'Assistant Chair')}
                         target="_blank"
                         rel="noreferrer"
                         className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-1.5 rounded-xl text-xs flex items-center justify-center gap-1.5 transition shadow"
@@ -3447,7 +3566,6 @@ export default function App() {
             {/* TAB 8: LEADERSHIP HUB */}
             {activeTab === 'admin' && ['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(userRole) && (
               <div className="space-y-4">
-                
                 <div className="bg-gradient-to-r from-amber-950/80 to-slate-900 border border-amber-800/60 rounded-2xl sm:rounded-3xl p-4 sm:p-5 flex justify-between items-center shadow-lg">
                   <div>
                     <span className="text-[9px] sm:text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-900 text-amber-200 uppercase tracking-wide">
@@ -3462,7 +3580,7 @@ export default function App() {
                   <span className="text-xs text-amber-300/80 font-mono hidden sm:inline">KEWA SACCO Governance Framework</span>
                 </div>
 
-                {/* 1. EXECUTIVE FINANCIAL OVERSIGHT METRICS */}
+                {/* 1. FINANCIAL OVERSIGHT METRICS */}
                 {['admin', 'chairman'].includes(userRole) && (
                   <div className="bg-slate-900/90 border border-emerald-900/50 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl space-y-3">
                     <div className="flex items-center gap-2 mb-1">
@@ -3506,7 +3624,7 @@ export default function App() {
                   </div>
                 )}
 
-                {/* 2. GUARANTOR LIABILITY TRACKER MATRIX */}
+                {/* 2. GUARANTOR TRACKER MATRIX */}
                 {['admin', 'chairman'].includes(userRole) && (
                   <div className="bg-slate-900/90 border border-purple-900/50 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
                     <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2.5 mb-3">
@@ -3644,7 +3762,7 @@ export default function App() {
                                 </div>
                                 <p className="text-[11px] text-slate-400 font-medium">{claim.profiles?.companies?.name || 'External'} • Member {claim.profiles?.member_number}</p>
                                 <p className="text-xs font-black text-rose-400 mt-0.5">
-                                  KES {Number(claim.amount_requested).toLocaleString()}
+                                  KES {Number(claim.amount_requested).toLocaleString()} • Payout: <strong className="uppercase text-white">{claim.disbursement_method || 'mpesa'}</strong> ({claim.disbursement_details || 'N/A'})
                                 </p>
                                 <p className="text-[11px] text-slate-300 mt-0.5">{claim.description}</p>
                               </div>
@@ -3854,25 +3972,15 @@ export default function App() {
                                 <div className="font-bold text-white">{m.full_name}</div>
                                 <div className="text-[10px] text-emerald-400 font-mono">{m.member_number}</div>
                               </td>
-                              <td className="p-2.5 font-sans text-slate-300">
-                                {m.companies?.name || 'External'}
-                              </td>
-                              <td className="p-2.5 text-slate-300">
-                                {m.id_number || '-'}
-                              </td>
-                              <td className="p-2.5 text-slate-300">
-                                {m.phone || '-'}
-                              </td>
-                              <td className="p-2.5 text-right font-bold text-emerald-400">
-                                KES {Number(m.totalSavings || 0).toLocaleString()}
-                              </td>
-                              <td className="p-2.5 text-right font-bold text-amber-400">
-                                KES {Number(m.totalActiveDebt || 0).toLocaleString()}
-                              </td>
+                              <td className="p-2.5 font-sans text-slate-300">{m.companies?.name || 'External'}</td>
+                              <td className="p-2.5 text-slate-300">{m.id_number || '-'}</td>
+                              <td className="p-2.5 text-slate-300">{m.phone || '-'}</td>
+                              <td className="p-2.5 text-right font-bold text-emerald-400">KES {Number(m.totalSavings || 0).toLocaleString()}</td>
+                              <td className="p-2.5 text-right font-bold text-amber-400">KES {Number(m.totalActiveDebt || 0).toLocaleString()}</td>
                               <td className="p-2.5 text-center font-sans">
                                 <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${
-                                  m.role === 'admin' || m.role === 'chairman' ? 'bg-purple-950 text-purple-300 border border-purple-800' :
-                                  m.role === 'treasurer' || m.role === 'assistant_chair' ? 'bg-amber-950 text-amber-300 border border-amber-800' :
+                                  m.role === 'admin' ? 'bg-purple-950 text-purple-300 border border-purple-800' :
+                                  m.role === 'chairman' || m.role === 'treasurer' || m.role === 'assistant_chair' ? 'bg-amber-950 text-amber-300 border border-amber-800' :
                                   'bg-slate-900 text-slate-400 border border-slate-800'
                                 }`}>
                                   {m.role ? m.role.replace('_', ' ') : 'Member'}
@@ -4435,7 +4543,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 12. POST NOTICES & AUDIT LOGS (UPDATED WITH DATE & TIME) */}
+                {/* 12. POST NOTICES & AUDIT LOGS */}
                 {['admin', 'chairman'].includes(userRole) && (
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">

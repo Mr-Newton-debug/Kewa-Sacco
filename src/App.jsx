@@ -12,7 +12,8 @@ import {
   Award, ShieldAlert, FileText, Send, History, CheckSquare, Paperclip, FileCheck, HelpCircle,
   Eye, EyeOff, FolderDown, FileArchive, Shield, Lock, RotateCcw, AlertTriangle, Sparkles, Search,
   MessageSquare, MessageCircle, Bot, Mail, CornerDownRight, Check, UserCheck, AlertOctagon,
-  Contact2, Filter, AtSign, Megaphone, Settings, ArrowRight, Database, Coins, Layers, CheckCircle2
+  Contact2, Filter, AtSign, Megaphone, Settings, ArrowRight, Database, Coins, Layers, CheckCircle2,
+  Key
 } from 'lucide-react';
 
 export default function App() {
@@ -32,6 +33,7 @@ export default function App() {
   const [idNumber, setIdNumber] = useState('');
   const [phone, setPhone] = useState('');
   const [companyId, setCompanyId] = useState('');
+  const [transactionPin, setTransactionPin] = useState('1234');
   const [odpcConsent, setOdpcConsent] = useState(false);
   const [savedEmailChip, setSavedEmailChip] = useState(() => localStorage.getItem('kewa_remembered_email') || '');
 
@@ -61,6 +63,7 @@ export default function App() {
   const [editPhone, setEditPhone] = useState('');
   const [editIdNumber, setEditIdNumber] = useState('');
   const [editCompanyId, setEditCompanyId] = useState('');
+  const [editTransactionPin, setEditTransactionPin] = useState('');
 
   // Directory Search State
   const [memberDirectorySearch, setMemberDirectorySearch] = useState('');
@@ -96,6 +99,7 @@ export default function App() {
   const [interestRate, setInterestRate] = useState(1.0);
   const [disbursementMethod, setDisbursementMethod] = useState('mpesa');
   const [disbursementDetails, setDisbursementDetails] = useState('');
+  const [enteredLoanPin, setEnteredLoanPin] = useState('');
   const [guarantorList, setGuarantorList] = useState([
     { guarantorId: '', searchTerm: '', amountRaw: '', eligible: true, note: '', dropdownOpen: false }
   ]);
@@ -347,6 +351,7 @@ export default function App() {
       setEditPhone(profileData.phone || '');
       setEditIdNumber(profileData.id_number || '');
       setEditCompanyId(profileData.company_id || '');
+      setEditTransactionPin(profileData.transaction_pin || '1234');
 
       fetchAllMembers(userId);
       fetchGuarantorData(userId);
@@ -393,6 +398,7 @@ export default function App() {
         phone: editPhone,
         id_number: editIdNumber,
         company_id: editCompanyId,
+        transaction_pin: editTransactionPin || '1234'
       })
       .eq('id', session.user.id);
 
@@ -400,7 +406,7 @@ export default function App() {
       setMessage({ text: error.message, type: 'error' });
     } else {
       logAuditAction('PROFILE_UPDATED', `Member updated personal details and contact info`);
-      setMessage({ text: 'Profile details updated successfully!', type: 'success' });
+      setMessage({ text: 'Profile details and security PIN updated successfully!', type: 'success' });
       fetchUserData(session.user.id);
     }
     setLoading(false);
@@ -615,6 +621,7 @@ export default function App() {
           phone: phone,
           email: email,
           role: 'member',
+          transaction_pin: transactionPin || '1234'
         },
       ]);
 
@@ -984,12 +991,19 @@ export default function App() {
     }
 
     setTermsAgreed(false);
+    setEnteredLoanPin('');
     setShowTermsModal(true);
   };
 
   const handleConfirmLoanSubmission = async () => {
     if (!termsAgreed) {
       alert('Please check the box agreeing to the KEWA SACCO Loan Terms & Conditions.');
+      return;
+    }
+
+    const memberActivePin = profile?.transaction_pin || '1234';
+    if (enteredLoanPin !== memberActivePin) {
+      alert('Security Verification Failed: The 4-digit Transaction PIN you entered is incorrect.');
       return;
     }
 
@@ -1032,11 +1046,12 @@ export default function App() {
       await supabase.from('loan_guarantors').insert(guarantorsToInsert);
     }
 
-    logAuditAction('LOAN_APPLICATION_SUBMITTED', `${loanProduct.toUpperCase()} applied: KES ${loanPrincipalNum.toLocaleString()} (Disbursement: ${disbursementMethod.toUpperCase()})`);
+    logAuditAction('LOAN_APPLICATION_SUBMITTED', `${loanProduct.toUpperCase()} applied: KES ${loanPrincipalNum.toLocaleString()} (PIN Verified, Dest: ${disbursementMethod.toUpperCase()})`);
 
     setMessage({ text: `Loan submitted! Pipeline: Assistant Chair -> Chairman -> Treasurer.`, type: 'success' });
     setGuarantorList([{ guarantorId: '', searchTerm: '', amountRaw: '', eligible: true, note: '', dropdownOpen: false }]);
     setDisbursementDetails('');
+    setEnteredLoanPin('');
     fetchUserData(session.user.id);
     setLoading(false);
   };
@@ -2979,6 +2994,18 @@ export default function App() {
                           ))}
                         </select>
                       </div>
+                      <div>
+                        <label className="block text-xs text-amber-300 font-semibold mb-1">4-Digit Transaction Security PIN</label>
+                        <input
+                          type="password"
+                          maxLength={4}
+                          required
+                          value={editTransactionPin}
+                          onChange={(e) => setEditTransactionPin(e.target.value.replace(/[^0-9]/g, ''))}
+                          placeholder="1234"
+                          className="w-full bg-slate-950 border border-amber-500/50 rounded-xl px-3 py-2 text-xs text-white font-mono"
+                        />
+                      </div>
                     </div>
                     <button
                       type="submit"
@@ -4562,28 +4589,23 @@ export default function App() {
         )}
       </main>
 
-      {/* LOAN TERMS MODAL */}
+      {/* LOAN TERMS & TRANSACTION PIN VERIFICATION MODAL */}
       {showTermsModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
           <div className="bg-slate-950 border border-emerald-900/60 rounded-3xl max-w-lg w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
             <div className="p-5 border-b border-slate-800 flex justify-between items-center bg-slate-900/90">
               <div className="flex items-center gap-2">
                 <Shield className="w-5 h-5 text-emerald-400" />
-                <h3 className="font-bold text-white text-base">KEWA SACCO Loan Terms & Conditions</h3>
+                <h3 className="font-bold text-white text-base">Authorize Loan Facility</h3>
               </div>
-              <button 
-                onClick={() => setShowTermsModal(false)} 
-                className="text-slate-400 hover:text-white p-1"
-              >
+              <button onClick={() => setShowTermsModal(false)} className="text-slate-400 hover:text-white p-1">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <div className="p-6 overflow-y-auto space-y-3.5 text-xs text-slate-300 leading-relaxed">
               <div className="p-4 bg-emerald-950/40 border border-emerald-800/40 rounded-2xl space-y-1">
-                <p className="font-bold text-emerald-300 text-sm capitalize">
-                  Application Summary: {loanProduct.replace('_', ' ').toUpperCase()}
-                </p>
+                <p className="font-bold text-emerald-300 text-sm capitalize">Facility: {loanProduct.replace('_', ' ').toUpperCase()}</p>
                 <div className="flex justify-between text-slate-300 font-medium">
                   <span>Principal: <strong>KES {loanPrincipalNum.toLocaleString()}</strong></span>
                   <span>Duration: <strong>{loanMonths} Month(s)</strong></span>
@@ -4592,6 +4614,23 @@ export default function App() {
                 <p className="text-[11px] text-emerald-400 pt-1">
                   Disbursement Destination: <strong className="uppercase">{disbursementMethod}</strong> ({disbursementDetails || 'Not specified'})
                 </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-amber-300 mb-1">Enter 4-Digit Transaction Security PIN</label>
+                <div className="relative">
+                  <input
+                    type="password"
+                    maxLength={4}
+                    required
+                    value={enteredLoanPin}
+                    onChange={(e) => setEnteredLoanPin(e.target.value.replace(/[^0-9]/g, ''))}
+                    placeholder="••••"
+                    className="w-full bg-slate-900 border border-amber-500/60 rounded-xl py-2 px-3 text-center text-base tracking-widest text-white font-mono"
+                  />
+                  <Key className="w-4 h-4 text-amber-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">Default PIN is <code className="text-emerald-400 font-mono">1234</code>. You can change this in Profile Settings.</p>
               </div>
 
               <h4 className="font-bold text-white text-xs uppercase tracking-wide">1. Payroll Deduction Authorization</h4>
@@ -4618,10 +4657,8 @@ export default function App() {
                 <ArrowRight className="w-3.5 h-3.5 text-emerald-400" />
                 <span className="bg-slate-900 px-2 py-0.5 rounded text-emerald-300 font-bold border border-slate-800">3. Treasurer</span>.
               </p>
-            </div>
 
-            <div className="p-5 border-t border-slate-800 bg-slate-900/80 space-y-3">
-              <div className="flex items-start gap-2">
+              <div className="flex items-start gap-2 pt-2 border-t border-slate-800">
                 <input
                   type="checkbox"
                   id="agreeTerms"
@@ -4633,24 +4670,24 @@ export default function App() {
                   I have read, understood, and accept all loan terms and recovery policies.
                 </label>
               </div>
+            </div>
 
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowTermsModal(false)}
-                  className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-2.5 rounded-xl text-xs transition cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  disabled={!termsAgreed || loading}
-                  onClick={handleConfirmLoanSubmission}
-                  className="flex-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-40 text-white font-bold py-2.5 rounded-xl text-xs transition cursor-pointer shadow flex items-center justify-center gap-1.5"
-                >
-                  <CheckCircle className="w-4 h-4" /> Confirm & Submit Loan
-                </button>
-              </div>
+            <div className="p-5 border-t border-slate-800 bg-slate-900/80 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setShowTermsModal(false)}
+                className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-2.5 rounded-xl text-xs transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!termsAgreed || enteredLoanPin.length !== 4 || loading}
+                onClick={handleConfirmLoanSubmission}
+                className="flex-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-40 text-white font-bold py-2.5 rounded-xl text-xs transition cursor-pointer shadow flex items-center justify-center gap-1.5"
+              >
+                <CheckCircle className="w-4 h-4" /> Verify PIN & Submit
+              </button>
             </div>
           </div>
         </div>

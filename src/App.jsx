@@ -138,7 +138,6 @@ export default function App() {
   const [newNoticeContent, setNewNoticeContent] = useState('');
   const [newNoticeCategory, setNewNoticeCategory] = useState('general');
 
-  // Accounting Formatter Helper
   const formatAccountingNumber = (val) => {
     if (!val) return '';
     const cleanNum = val.toString().replace(/[^0-9]/g, '');
@@ -406,7 +405,7 @@ export default function App() {
       setMessage({ text: error.message, type: 'error' });
     } else {
       logAuditAction('PROFILE_UPDATED', `Member updated personal details and contact info`);
-      setMessage({ text: 'Profile details and PIN updated successfully!', type: 'success' });
+      setMessage({ text: 'Profile details updated successfully!', type: 'success' });
       fetchUserData(session.user.id);
     }
     setLoading(false);
@@ -451,10 +450,11 @@ export default function App() {
     }
   };
 
+  // Direct Join on Loans + Profiles for 100% accurate Borrower Names
   const fetchGuarantorData = async (userId) => {
     const { data: requests } = await supabase
       .from('loan_guarantors')
-      .select('*, loans(*)')
+      .select('*, loans(*, profiles:member_id(full_name, member_number, companies(name)))')
       .eq('guarantor_id', userId)
       .order('created_at', { ascending: false });
 
@@ -2828,11 +2828,10 @@ export default function App() {
                 ) : (
                   <div className="space-y-2.5">
                     {guarantorRequests.map((g) => {
-                      const borrowerId = g.loans?.member_id;
-                      const borrower = allMembers.find(m => m.id === borrowerId) || {};
-                      const borrowerName = borrower.full_name || 'Cooperative Member';
-                      const borrowerMemberNo = borrower.member_number || 'N/A';
-                      const borrowerCompany = borrower.companies?.name || 'KEWA Sacco';
+                      // Reads from direct joined relationship on loans
+                      const borrowerName = g.loans?.profiles?.full_name || 'Cooperative Member';
+                      const borrowerMemberNo = g.loans?.profiles?.member_number || 'N/A';
+                      const borrowerCompany = g.loans?.profiles?.companies?.name || 'KEWA Sacco';
 
                       return (
                         <div key={g.id} className="bg-slate-950 border border-slate-800 rounded-2xl p-3.5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">

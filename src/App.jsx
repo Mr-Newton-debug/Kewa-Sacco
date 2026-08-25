@@ -51,7 +51,6 @@ export default function App() {
   const [announcements, setAnnouncements] = useState([]);
   const [saccoDocs, setSaccoDocs] = useState([]);
   const [welfareClaims, setWelfareClaims] = useState([]);
-  const [welfareContributions, setWelfareContributions] = useState([]);
   const [allPendingLoans, setAllPendingLoans] = useState([]);
   const [allLoansLeadership, setAllLoansLeadership] = useState([]);
   const [allPendingClaims, setAllPendingClaims] = useState([]);
@@ -352,7 +351,7 @@ export default function App() {
       setEditCompanyId(profileData.company_id || '');
       setEditTransactionPin(profileData.transaction_pin || '1234');
 
-      fetchAllMembers(userId);
+      fetchAllMembers();
       fetchGuarantorData(userId);
       fetchBeneficiaries(userId);
       fetchWelfareClaims(userId);
@@ -371,7 +370,7 @@ export default function App() {
 
     const { data: loanData } = await supabase
       .from('loans')
-      .select('*, loan_guarantors(*, profiles:guarantor_id(full_name, member_number))')
+      .select('*')
       .eq('member_id', userId)
       .order('created_at', { ascending: false });
     if (loanData) setLoans(loanData);
@@ -386,93 +385,96 @@ export default function App() {
     setLoading(false);
   };
 
-  const handleUpdateProfileDetails = async (e) => {
-    e.preventDefault();
-    setLoading(true);
+  // Resilient Member Fetcher with In-Memory Joins
+  const fetchAllMembers = async () => {
+    try {
+      const [
+        { data: membersData, error: memErr },
+        { data: savingsData },
+        { data: loansData }
+      ] = await Promise.all([
+        supabase.from('profiles').select('*, companies(id, name)').order('full_name', { ascending: true }),
+        supabase.from('savings_ledger').select('member_id, amount'),
+        supabase.from('loans').select('id, member_id, balance_remaining, status')
+      ]);
 
-    const { error } = await supabase
-      .from('profiles')
-      .update({
-        full_name: editFullName,
-        phone: editPhone,
-        id_number: editIdNumber,
-        company_id: editCompanyId,
-        transaction_pin: editTransactionPin || '1234'
-      })
-      .eq('id', session.user.id);
-
-    if (error) {
-      setMessage({ text: error.message, type: 'error' });
-    } else {
-      logAuditAction('PROFILE_UPDATED', `Member updated personal details and contact info`);
-      setMessage({ text: 'Profile details updated successfully!', type: 'success' });
-      fetchUserData(session.user.id);
-    }
-    setLoading(false);
-  };
-
-  const fetchMemberInquiries = async (userId) => {
-    const { data } = await supabase
-      .from('member_inquiries')
-      .select('*')
-      .eq('member_id', userId)
-      .order('created_at', { ascending: false });
-    if (data) setInquiries(data);
-  };
-
-  const fetchAllMembers = async (currentUserId) => {
-    const { data } = await supabase
-      .from('profiles')
-      .select('id, full_name, member_number, id_number, phone, email, role, created_at, companies(id, name), savings_ledger(amount), loans(balance_remaining, status)')
-      .order('full_name', { ascending: true });
-    
-    if (data) {
-      const formatted = data.map((m) => {
-        const totalMemberSavings = (m.savings_ledger || []).reduce((acc, s) => acc + Number(s.amount || 0), 0);
-        const totalMemberLoans = (m.loans || [])
-          .filter((l) => ['approved', 'disbursed'].includes(l.status))
-          .reduce((acc, l) => acc + Number(l.balance_remaining || 0), 0);
-        
-        const unencumbered = Math.max(0, totalMemberSavings - totalMemberLoans);
-
-        return {
-          ...m,
-          totalSavings: totalMemberSavings,
-          totalActiveDebt: totalMemberLoans,
-          unencumberedShares: unencumbered,
-        };
-      });
-
-      setAllMembers(formatted);
-      if (!manualTargetMemberId && formatted.length > 0) {
-        setManualTargetMemberId(formatted[0].id);
+      if (memErr) {
+        console.error('Error fetching members:', memErr);
+        return;
       }
+
+      if (membersData) {
+        const formatted = membersData.map((m) => {
+          const totalMemberSavings = (savingsData || [])
+            .filter((s) => s.member_id === m.id)
+            .reduce((acc, s) => acc + Number(s.amount || 0), 0);
+
+          const totalMemberLoans = (loansData || [])
+            .filter((l) => l.member_id === m.id && ['approved', 'disbursed'].includes(l.status))
+            .reduce((acc, l) => acc + Number(l.balance_remaining || 0), 0);
+
+          const unencumbered = Math.max(0, totalMemberSavings - totalMemberLoans);
+
+          return {
+            ...m,
+            totalSavings: totalMemberSavings,
+            totalActiveDebt: totalMemberLoans,
+            unencumberedShares: unencumbered,
+          };
+        });
+
+        setAllMembers(formatted);
+        if (formatted.length > 0) {
+          setManualTargetMemberId((prev) => prev || formatted[0].id);
+        }
+      }
+    } catch (err) {
+      console.error('Failed in fetchAllMembers:', err);
     }
   };
 
-  // Direct Join on Loans + Profiles for 100% accurate Borrower Names
+  // Resilient Guarantor Request Fetcher
   const fetchGuarantorData = async (userId) => {
-    const { data: requests } = await supabase
-      .from('loan_guarantors')
-      .select('*, loans(*, profiles:member_id(full_name, member_number, companies(name)))')
-      .eq('guarantor_id', userId)
-      .order('created_at', { ascending: false });
+    try {
+      const [
+        { data: requestsRaw },
+        { data: allLoansRaw },
+        { data: allProfilesRaw }
+      ] = await Promise.all([
+        supabase.from('loan_guarantors').select('*').eq('guarantor_id', userId).order('created_at', { ascending: false }),
+        supabase.from('loans').select('*'),
+        supabase.from('profiles').select('*, companies(name)')
+      ]);
 
-    if (requests) {
-      setGuarantorRequests(requests);
-    }
+      if (requestsRaw) {
+        const hydratedRequests = requestsRaw.map((req) => {
+          const matchedLoan = (allLoansRaw || []).find((l) => l.id === req.loan_id) || {};
+          const matchedBorrower = (allProfilesRaw || []).find((p) => p.id === matchedLoan.member_id) || {};
+          return {
+            ...req,
+            loans: {
+              ...matchedLoan,
+              profiles: matchedBorrower
+            }
+          };
+        });
+        setGuarantorRequests(hydratedRequests);
+      }
 
-    const { data: activeGuarantees } = await supabase
-      .from('loan_guarantors')
-      .select('*, loans(status, balance_remaining)')
-      .eq('guarantor_id', userId)
-      .eq('status', 'accepted');
-    
-    if (activeGuarantees) {
-      const activeRunning = activeGuarantees.filter(
-        (g) => (g.loans?.status === 'approved' || g.loans?.status === 'disbursed') && Number(g.loans?.balance_remaining || 0) > 0
-      );
-      setMyGuaranteesCommitted(activeRunning);
+      const { data: activeGuarantees } = await supabase
+        .from('loan_guarantors')
+        .select('*, loans(status, balance_remaining)')
+        .eq('guarantor_id', userId)
+        .eq('status', 'accepted');
+      
+      if (activeGuarantees) {
+        const activeRunning = activeGuarantees.filter(
+          (g) => (g.loans?.status === 'approved' || g.loans?.status === 'disbursed') && Number(g.loans?.balance_remaining || 0) > 0
+        );
+        setMyGuaranteesCommitted(activeRunning);
+      }
+    } catch (e) {
+      console.error('Guarantor fetch error:', e);
     }
   };
 
@@ -494,47 +496,108 @@ export default function App() {
     if (data) setWelfareClaims(data);
   };
 
+  // Resilient Admin Data Loader
   const fetchAdminData = async () => {
-    fetchAllMembers(session?.user?.id);
+    await fetchAllMembers();
 
-    const { data: pendingLoans } = await supabase
-      .from('loans')
-      .select('*, profiles(full_name, member_number, companies(name)), loan_guarantors(*, profiles:guarantor_id(full_name, member_number))')
-      .in('status', ['pending', 'guaranteed']);
-    if (pendingLoans) setAllPendingLoans(pendingLoans);
+    try {
+      const [
+        { data: loansRaw },
+        { data: profilesRaw },
+        { data: repaymentsRaw },
+        { data: guarantorsRaw },
+        { data: claimsRaw },
+        { data: ticketsRaw },
+        { data: logsRaw }
+      ] = await Promise.all([
+        supabase.from('loans').select('*').order('created_at', { ascending: false }),
+        supabase.from('profiles').select('*, companies(name)'),
+        supabase.from('loan_repayments').select('*'),
+        supabase.from('loan_guarantors').select('*'),
+        supabase.from('welfare_claims').select('*'),
+        supabase.from('member_inquiries').select('*').order('created_at', { ascending: false }),
+        supabase.from('audit_logs').select('*').order('created_at', { ascending: false }).limit(30)
+      ]);
 
-    const { data: allLeadershipLoans } = await supabase
-      .from('loans')
-      .select('*, profiles(full_name, member_number, phone, companies(name)), loan_repayments(amount)')
-      .order('created_at', { ascending: false });
-    if (allLeadershipLoans) setAllLoansLeadership(allLeadershipLoans);
+      if (loansRaw && profilesRaw) {
+        const fullLoans = loansRaw.map((l) => {
+          const mem = profilesRaw.find((p) => p.id === l.member_id) || {};
+          const reps = (repaymentsRaw || []).filter((r) => r.loan_id === l.id);
+          const guars = (guarantorsRaw || []).filter((g) => g.loan_id === l.id).map((g) => {
+            const guarProfile = profilesRaw.find((p) => p.id === g.guarantor_id) || {};
+            return { ...g, profiles: guarProfile };
+          });
 
-    const { data: allGuarantors } = await supabase
-      .from('loan_guarantors')
-      .select('*, profiles:guarantor_id(full_name, member_number, phone), loans(*, profiles:member_id(full_name, member_number, companies(name)))')
-      .order('created_at', { ascending: false });
-    if (allGuarantors) setAllSystemGuarantors(allGuarantors);
+          return {
+            ...l,
+            profiles: mem,
+            loan_repayments: reps,
+            loan_guarantors: guars
+          };
+        });
 
-    const { data: claims } = await supabase
-      .from('welfare_claims')
-      .select('*, profiles(full_name, member_number, companies(name))');
-    if (claims) {
-      const activePendingClaims = claims.filter(c => c.status === 'pending' || !c.treasurer_approval);
-      setAllPendingClaims(activePendingClaims);
+        setAllLoansLeadership(fullLoans);
+        setAllPendingLoans(fullLoans.filter((l) => ['pending', 'guaranteed'].includes(l.status)));
+
+        if (guarantorsRaw) {
+          const fullGuarantors = guarantorsRaw.map((g) => {
+            const guarProfile = profilesRaw.find((p) => p.id === g.guarantor_id) || {};
+            const loanObj = fullLoans.find((l) => l.id === g.loan_id) || {};
+            return {
+              ...g,
+              profiles: guarProfile,
+              loans: loanObj
+            };
+          });
+          setAllSystemGuarantors(fullGuarantors);
+        }
+      }
+
+      if (claimsRaw && profilesRaw) {
+        const fullClaims = claimsRaw.map((c) => ({
+          ...c,
+          profiles: profilesRaw.find((p) => p.id === c.member_id) || {}
+        }));
+        setAllPendingClaims(fullClaims.filter((c) => c.status === 'pending' || !c.treasurer_approval));
+      }
+
+      if (ticketsRaw && profilesRaw) {
+        const fullTickets = ticketsRaw.map((t) => ({
+          ...t,
+          profiles: profilesRaw.find((p) => p.id === t.member_id) || {}
+        }));
+        setAllAdminInquiries(fullTickets);
+      }
+
+      if (logsRaw) setAuditLogs(logsRaw);
+    } catch (e) {
+      console.error('Error fetching admin data:', e);
     }
+  };
 
-    const { data: allTickets } = await supabase
-      .from('member_inquiries')
-      .select('*, profiles:member_id(full_name, member_number, phone, companies(name))')
-      .order('created_at', { ascending: false });
-    if (allTickets) setAllAdminInquiries(allTickets);
+  const handleUpdateProfileDetails = async (e) => {
+    e.preventDefault();
+    setLoading(true);
 
-    const { data: logs } = await supabase
-      .from('audit_logs')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(30);
-    if (logs) setAuditLogs(logs);
+    const { error } = await supabase
+      .from('profiles')
+      .update({
+        full_name: editFullName,
+        phone: editPhone,
+        id_number: editIdNumber,
+        company_id: editCompanyId,
+        transaction_pin: editTransactionPin || '1234'
+      })
+      .eq('id', session.user.id);
+
+    if (error) {
+      setMessage({ text: error.message, type: 'error' });
+    } else {
+      logAuditAction('PROFILE_UPDATED', `Member updated personal details and contact info`);
+      setMessage({ text: 'Profile details and PIN updated successfully!', type: 'success' });
+      fetchUserData(session.user.id);
+    }
+    setLoading(false);
   };
 
   const handleLogin = async (e) => {
@@ -2012,100 +2075,15 @@ export default function App() {
                 {authMode === 'forgot' && 'Reset Password'}
                 {authMode === 'reset' && 'Set New Password'}
               </h2>
-              <p className="text-xs text-slate-400 mt-1 font-medium">
-                {authMode === 'login' && 'Access your digital cooperative portal'}
-                {authMode === 'register' && 'Register as internal staff or external member'}
-                {authMode === 'forgot' && 'Receive an email link to regain access'}
-                {authMode === 'reset' && 'Enter your replacement account password'}
-              </p>
             </div>
-
-            {authMode === 'forgot' && (
-              <form onSubmit={handleForgotPassword} className="space-y-3.5" autoComplete="off">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Registered Email Address</label>
-                  <input
-                    type="email"
-                    required
-                    autoComplete="off"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="name@domain.com"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white focus:border-emerald-500 transition"
-                  />
-                </div>
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3 rounded-xl text-xs sm:text-sm transition shadow-lg cursor-pointer"
-                >
-                  {loading ? 'Sending link...' : 'Send Password Reset Link'}
-                </button>
-                <div className="text-center mt-3">
-                  <button
-                    type="button"
-                    onClick={() => setAuthMode('login')}
-                    className="text-xs text-slate-400 hover:text-white font-medium"
-                  >
-                    Back to Sign In
-                  </button>
-                </div>
-              </form>
-            )}
-
-            {authMode === 'reset' && (
-              <form onSubmit={handleUpdatePassword} className="space-y-3.5" autoComplete="off">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Enter New Password</label>
-                  <div className="relative">
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      required
-                      autoComplete="new-password"
-                      value={newPassword}
-                      onChange={(e) => setNewPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-3.5 pr-10 py-2.5 text-xs sm:text-sm text-white focus:border-emerald-500 transition"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
-                    >
-                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-                </div>
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3 rounded-xl text-xs sm:text-sm transition shadow-lg cursor-pointer"
-                >
-                  {loading ? 'Saving...' : 'Save New Password & Sign In'}
-                </button>
-              </form>
-            )}
 
             {authMode === 'login' && (
               <form onSubmit={handleLogin} className="space-y-3.5" autoComplete="off">
                 <div>
-                  <div className="flex justify-between items-center mb-1">
-                    <label className="block text-xs font-semibold text-slate-300">Email Address</label>
-                    {savedEmailChip && !email && (
-                      <button
-                        type="button"
-                        onClick={() => setEmail(savedEmailChip)}
-                        className="text-[10px] text-emerald-400 hover:text-emerald-300 font-semibold flex items-center gap-1 bg-emerald-950/60 border border-emerald-800/80 px-2 py-0.5 rounded-full transition cursor-pointer"
-                        title="Click to auto-fill your last used email"
-                      >
-                        <AtSign className="w-3 h-3" /> Use: {savedEmailChip}
-                      </button>
-                    )}
-                  </div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Email Address</label>
                   <input
                     type="email"
                     required
-                    autoComplete="off"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="name@domain.com"
@@ -2113,40 +2091,20 @@ export default function App() {
                   />
                 </div>
                 <div>
-                  <div className="flex justify-between items-center mb-1">
-                    <label className="block text-xs font-semibold text-slate-300">Password</label>
-                    <button
-                      type="button"
-                      onClick={() => setAuthMode('forgot')}
-                      className="text-[11px] text-emerald-400 hover:underline cursor-pointer font-medium"
-                    >
-                      Forgot password?
-                    </button>
-                  </div>
-                  <div className="relative">
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      required
-                      autoComplete="new-password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-3.5 pr-10 py-2.5 text-xs sm:text-sm text-white"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
-                    >
-                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Password</label>
+                  <input
+                    type="password"
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white"
+                  />
                 </div>
-
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3 rounded-xl text-xs sm:text-sm transition mt-1 shadow-lg cursor-pointer"
+                  className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3 rounded-xl text-xs sm:text-sm transition shadow-lg cursor-pointer"
                 >
                   {loading ? 'Processing...' : 'Sign In to Portal'}
                 </button>
@@ -2154,44 +2112,28 @@ export default function App() {
             )}
 
             {authMode === 'register' && (
-              <form onSubmit={handleRegister} className="space-y-3.5" autoComplete="off">
+              <form onSubmit={handleRegister} className="space-y-3" autoComplete="off">
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">Full Name</label>
                   <input
                     type="text"
                     required
-                    autoComplete="off"
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
                     placeholder="John Doe"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
                   />
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Affiliation / Branch</label>
-                  <select
-                    value={companyId}
-                    onChange={(e) => setCompanyId(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white"
-                  >
-                    {companies.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="grid grid-cols-2 gap-2.5">
+                <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="block text-xs font-semibold text-slate-300 mb-1">Member No.</label>
                     <input
                       type="text"
                       required
-                      autoComplete="off"
                       value={memberNumber}
                       onChange={(e) => setMemberNumber(e.target.value)}
                       placeholder="KW-001"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs sm:text-sm text-white font-mono"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
                     />
                   </div>
                   <div>
@@ -2199,11 +2141,10 @@ export default function App() {
                     <input
                       type="text"
                       required
-                      autoComplete="off"
                       value={idNumber}
                       onChange={(e) => setIdNumber(e.target.value)}
                       placeholder="12345678"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs sm:text-sm text-white font-mono"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
                     />
                   </div>
                 </div>
@@ -2217,7 +2158,7 @@ export default function App() {
                     value={transactionPin}
                     onChange={(e) => setTransactionPin(e.target.value.replace(/[^0-9]/g, ''))}
                     placeholder="1234"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white font-mono text-center tracking-widest"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white font-mono text-center tracking-widest"
                   />
                 </div>
                 <div>
@@ -2225,11 +2166,10 @@ export default function App() {
                   <input
                     type="tel"
                     required
-                    autoComplete="off"
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     placeholder="0712345678"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white font-mono"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
                   />
                 </div>
                 <div>
@@ -2237,35 +2177,23 @@ export default function App() {
                   <input
                     type="email"
                     required
-                    autoComplete="off"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="name@domain.com"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white"
                   />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">Password</label>
-                  <div className="relative">
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      required
-                      autoComplete="new-password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-3.5 pr-10 py-2.5 text-xs sm:text-sm text-white"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
-                    >
-                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
+                  <input
+                    type="password"
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                  />
                 </div>
-
                 <div className="flex items-start gap-2 pt-1">
                   <input
                     type="checkbox"
@@ -2279,11 +2207,10 @@ export default function App() {
                     I consent to KEWA SACCO processing my data under the <strong>Kenya Data Protection Act (2019)</strong>.
                   </label>
                 </div>
-
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3 rounded-xl text-xs sm:text-sm transition mt-1 shadow-lg cursor-pointer"
+                  className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-2.5 rounded-xl text-xs sm:text-sm transition mt-1 shadow-lg cursor-pointer"
                 >
                   {loading ? 'Processing...' : 'Complete Registration'}
                 </button>
@@ -2298,18 +2225,14 @@ export default function App() {
                     Register Account
                   </button>
                 </>
-              ) : authMode === 'register' ? (
+              ) : (
                 <>
                   Already registered?{' '}
                   <button onClick={() => setAuthMode('login')} className="text-emerald-400 hover:underline font-bold cursor-pointer">
                     Sign In
                   </button>
                 </>
-              ) : authMode === 'forgot' ? (
-                <button onClick={() => setAuthMode('login')} className="text-emerald-400 hover:underline font-bold cursor-pointer">
-                  Back to Sign In
-                </button>
-              ) : null}
+              )}
             </div>
           </div>
         ) : (
@@ -2630,7 +2553,7 @@ export default function App() {
 
                         {guarantorList.map((g, index) => {
                           const filteredColleagues = allMembers.filter((m) =>
-                            m.id !== session.user.id && (
+                            m.id !== session?.user?.id && (
                               (m.full_name?.toLowerCase() || '').includes((g.searchTerm || '').toLowerCase()) ||
                               (m.member_number?.toLowerCase() || '').includes((g.searchTerm || '').toLowerCase()) ||
                               (m.companies?.name?.toLowerCase() || '').includes((g.searchTerm || '').toLowerCase())
@@ -2828,7 +2751,6 @@ export default function App() {
                 ) : (
                   <div className="space-y-2.5">
                     {guarantorRequests.map((g) => {
-                      // Reads from direct joined relationship on loans
                       const borrowerName = g.loans?.profiles?.full_name || 'Cooperative Member';
                       const borrowerMemberNo = g.loans?.profiles?.member_number || 'N/A';
                       const borrowerCompany = g.loans?.profiles?.companies?.name || 'KEWA Sacco';
@@ -2952,7 +2874,6 @@ export default function App() {
             {/* TAB 5: PROFILE SETTINGS & WELFARE */}
             {activeTab === 'beneficiaries' && (
               <div className="space-y-6">
-                {/* Profile Settings Card */}
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
                   <div className="flex items-center gap-2 mb-3">
                     <Settings className="w-4 h-4 text-emerald-400" />

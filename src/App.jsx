@@ -406,7 +406,7 @@ export default function App() {
       setMessage({ text: error.message, type: 'error' });
     } else {
       logAuditAction('PROFILE_UPDATED', `Member updated personal details and contact info`);
-      setMessage({ text: 'Profile details and security PIN updated successfully!', type: 'success' });
+      setMessage({ text: 'Profile details and PIN updated successfully!', type: 'success' });
       fetchUserData(session.user.id);
     }
     setLoading(false);
@@ -2208,6 +2208,19 @@ export default function App() {
                   </div>
                 </div>
                 <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">4-Digit Security PIN</label>
+                  <input
+                    type="password"
+                    maxLength={4}
+                    required
+                    autoComplete="off"
+                    value={transactionPin}
+                    onChange={(e) => setTransactionPin(e.target.value.replace(/[^0-9]/g, ''))}
+                    placeholder="1234"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white font-mono text-center tracking-widest"
+                  />
+                </div>
+                <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">Phone Number</label>
                   <input
                     type="tel"
@@ -2995,7 +3008,7 @@ export default function App() {
                         </select>
                       </div>
                       <div>
-                        <label className="block text-xs text-amber-300 font-semibold mb-1">4-Digit Transaction Security PIN</label>
+                        <label className="block text-xs text-amber-300 font-semibold mb-1">4-Digit Security PIN</label>
                         <input
                           type="password"
                           maxLength={4}
@@ -4630,7 +4643,7 @@ export default function App() {
                   />
                   <Key className="w-4 h-4 text-amber-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 </div>
-                <p className="text-[10px] text-slate-400 mt-1">Default PIN is <code className="text-emerald-400 font-mono">1234</code>. You can change this in Profile Settings.</p>
+                <p className="text-[10px] text-slate-400 mt-1">Default PIN is <code className="text-emerald-400 font-mono">1234</code>. You can update this in Profile Settings.</p>
               </div>
 
               <h4 className="font-bold text-white text-xs uppercase tracking-wide">1. Payroll Deduction Authorization</h4>
@@ -4686,7 +4699,7 @@ export default function App() {
                 onClick={handleConfirmLoanSubmission}
                 className="flex-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-40 text-white font-bold py-2.5 rounded-xl text-xs transition cursor-pointer shadow flex items-center justify-center gap-1.5"
               >
-                <CheckCircle className="w-4 h-4" /> Verify PIN & Submit
+                <CheckCircle className="w-4 h-4" /> Verify PIN & Submit Loan
               </button>
             </div>
           </div>

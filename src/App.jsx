@@ -13,18 +13,17 @@ import {
   Eye, EyeOff, FolderDown, FileArchive, Shield, Lock, RotateCcw, AlertTriangle, Sparkles, Search,
   MessageSquare, MessageCircle, Bot, Mail, CornerDownRight, Check, UserCheck, AlertOctagon,
   Contact2, Filter, AtSign, Megaphone, Settings, ArrowRight, Database, Coins, Layers, CheckCircle2,
-  Key, CreditCard
+  Key
 } from 'lucide-react';
 
 export default function App() {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(false);
   const [authMode, setAuthMode] = useState('login');
-  const [showPassword, setShowPassword] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Auth & Profile State
+  // Auth State
   const [email, setEmail] = useState(() => localStorage.getItem('kewa_remembered_email') || '');
   const [password, setPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -33,9 +32,8 @@ export default function App() {
   const [idNumber, setIdNumber] = useState('');
   const [phone, setPhone] = useState('');
   const [companyId, setCompanyId] = useState('');
-  const [transactionPin, setTransactionPin] = useState('1234');
+  const [registrationPin, setRegistrationPin] = useState('1234');
   const [odpcConsent, setOdpcConsent] = useState(false);
-  const [savedEmailChip, setSavedEmailChip] = useState(() => localStorage.getItem('kewa_remembered_email') || '');
 
   // Core Data State
   const [companies, setCompanies] = useState([]);
@@ -62,7 +60,7 @@ export default function App() {
   const [editPhone, setEditPhone] = useState('');
   const [editIdNumber, setEditIdNumber] = useState('');
   const [editCompanyId, setEditCompanyId] = useState('');
-  const [showPinChangeModal, setShowPinChangeModal] = useState(false);
+  const [showPinModal, setShowPinModal] = useState(false);
   const [currentPinInput, setCurrentPinInput] = useState('');
   const [newPinInput, setNewPinInput] = useState('');
   const [confirmNewPinInput, setConfirmNewPinInput] = useState('');
@@ -166,18 +164,17 @@ export default function App() {
     setAuditLogs([]);
     setInquiries([]);
     setMobileMenuOpen(false);
-    
+
     if (email) {
       localStorage.setItem('kewa_remembered_email', email);
-      setSavedEmailChip(email);
     }
-    setEmail(''); 
+    setEmail('');
 
     await supabase.auth.signOut();
 
     if (timeoutReason) {
       setMessage({
-        text: 'You were signed out automatically due to 5 minutes of inactivity for your account security.',
+        text: 'You were signed out automatically due to 5 minutes of inactivity for your security.',
         type: 'error'
       });
     }
@@ -317,7 +314,7 @@ export default function App() {
   };
 
   const fetchCompanies = async () => {
-    const { data } = await supabase.from('companies').select('*');
+    const { data } = await supabase.from('companies').select('id, name');
     if (data && data.length > 0) {
       setCompanies(data);
       setCompanyId(data[0].id);
@@ -342,22 +339,23 @@ export default function App() {
 
   const fetchMemberInquiries = async (userId) => {
     try {
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from('member_inquiries')
         .select('*')
         .eq('member_id', userId)
         .order('created_at', { ascending: false });
-      if (!error && data) setInquiries(data);
+      if (data) setInquiries(data);
     } catch (err) {
-      console.error('Error in fetchMemberInquiries:', err);
+      console.error('Inquiries fetch error:', err);
     }
   };
 
   const fetchUserData = async (userId) => {
     setLoading(true);
+    // Explicit selection excluding all credential columns
     const { data: profileData } = await supabase
       .from('profiles')
-      .select('*, companies(name)')
+      .select('id, full_name, member_number, id_number, phone, email, role, company_id, created_at, companies(id, name)')
       .eq('id', userId)
       .single();
 
@@ -402,6 +400,7 @@ export default function App() {
     setLoading(false);
   };
 
+  // Resilient Member Fetcher Computing Exact Free Shares (Savings - Active Debt - Running Pledges [Pending + Accepted])
   const fetchAllMembers = async () => {
     try {
       const [
@@ -410,10 +409,10 @@ export default function App() {
         { data: loansData },
         { data: guarantorsData }
       ] = await Promise.all([
-        supabase.from('profiles').select('*, companies(id, name)').order('full_name', { ascending: true }),
+        supabase.from('profiles').select('id, full_name, member_number, id_number, phone, email, role, company_id, companies(id, name)').order('full_name', { ascending: true }),
         supabase.from('savings_ledger').select('member_id, amount'),
         supabase.from('loans').select('id, member_id, balance_remaining, status'),
-        supabase.from('loan_guarantors').select('guarantor_id, amount_guaranteed, status, loan_id')
+        supabase.from('loan_guarantors').select('id, loan_id, guarantor_id, amount_guaranteed, status')
       ]);
 
       if (memErr) {
@@ -431,6 +430,7 @@ export default function App() {
             .filter((l) => l.member_id === m.id && ['approved', 'disbursed'].includes(l.status))
             .reduce((acc, l) => acc + Number(l.balance_remaining || 0), 0);
 
+          // Pledges considered: Both 'accepted' and 'pending' on active / un-cleared loans
           const runningPledges = (guarantorsData || [])
             .filter((g) => {
               if (g.guarantor_id !== m.id) return false;
@@ -466,11 +466,13 @@ export default function App() {
       const [
         { data: requestsRaw },
         { data: allLoansRaw },
-        { data: allProfilesRaw }
+        { data: allProfilesRaw },
+        { data: allGuarantorsRaw }
       ] = await Promise.all([
         supabase.from('loan_guarantors').select('*').eq('guarantor_id', userId).order('created_at', { ascending: false }),
         supabase.from('loans').select('*'),
-        supabase.from('profiles').select('*, companies(name)')
+        supabase.from('profiles').select('id, full_name, member_number, phone, company_id, companies(name)'),
+        supabase.from('loan_guarantors').select('*').eq('guarantor_id', userId).in('status', ['accepted', 'pending'])
       ]);
 
       if (requestsRaw) {
@@ -488,16 +490,11 @@ export default function App() {
         setGuarantorRequests(hydratedRequests);
       }
 
-      const { data: activeGuarantees } = await supabase
-        .from('loan_guarantors')
-        .select('*, loans(status, balance_remaining)')
-        .eq('guarantor_id', userId)
-        .in('status', ['accepted', 'pending']);
-      
-      if (activeGuarantees) {
-        const activeRunning = activeGuarantees.filter(
-          (g) => (g.loans?.status === 'approved' || g.loans?.status === 'disbursed' || g.loans?.status === 'pending') && Number(g.loans?.balance_remaining || 1) > 0
-        );
+      if (allGuarantorsRaw) {
+        const activeRunning = allGuarantorsRaw.filter((g) => {
+          const matchedLoan = (allLoansRaw || []).find((l) => l.id === g.loan_id);
+          return matchedLoan && !['completed', 'rejected'].includes(matchedLoan.status) && Number(matchedLoan.balance_remaining || 1) > 0;
+        });
         setMyGuaranteesCommitted(activeRunning);
       }
     } catch (e) {
@@ -537,7 +534,7 @@ export default function App() {
         { data: logsRaw }
       ] = await Promise.all([
         supabase.from('loans').select('*').order('created_at', { ascending: false }),
-        supabase.from('profiles').select('*, companies(name)'),
+        supabase.from('profiles').select('id, full_name, member_number, id_number, phone, email, role, company_id, companies(name)'),
         supabase.from('loan_repayments').select('*'),
         supabase.from('loan_guarantors').select('*'),
         supabase.from('welfare_claims').select('*').order('created_at', { ascending: false }),
@@ -627,40 +624,30 @@ export default function App() {
 
   const handleChangeSecurityPin = async (e) => {
     e.preventDefault();
-    setMessage({ text: '', type: '' });
-
-    const activePin = profile?.transaction_pin || '1234';
-    if (currentPinInput !== activePin) {
-      alert('Security Verification Failed: Current PIN is incorrect.');
-      return;
-    }
-
     if (newPinInput.length !== 4 || !/^\d{4}$/.test(newPinInput)) {
-      alert('Invalid PIN: New PIN must be exactly 4 digits.');
+      alert('Security Error: New PIN must be exactly 4 numeric digits.');
       return;
     }
-
     if (newPinInput !== confirmNewPinInput) {
       alert('Mismatch: New PIN and Confirmation PIN do not match.');
       return;
     }
 
     setLoading(true);
-    const { error } = await supabase
-      .from('profiles')
-      .update({ transaction_pin: newPinInput })
-      .eq('id', session.user.id);
+    const { data: rpcRes, error: rpcErr } = await supabase.rpc('update_transaction_pin', {
+      p_old_pin: currentPinInput,
+      p_new_pin: newPinInput
+    });
 
-    if (error) {
-      setMessage({ text: error.message, type: 'error' });
+    if (rpcErr || !rpcRes?.success) {
+      alert(rpcRes?.message || rpcErr?.message || 'Failed to update PIN. Please verify your current PIN.');
     } else {
-      logAuditAction('SECURITY_PIN_CHANGED', 'Member successfully changed their 4-digit transaction security PIN');
+      logAuditAction('SECURITY_PIN_CHANGED', 'Member successfully updated their 4-digit transaction security PIN');
       setMessage({ text: '4-Digit Transaction Security PIN changed successfully!', type: 'success' });
-      setShowPinChangeModal(false);
+      setShowPinModal(false);
       setCurrentPinInput('');
       setNewPinInput('');
       setConfirmNewPinInput('');
-      fetchUserData(session.user.id);
     }
     setLoading(false);
   };
@@ -672,7 +659,6 @@ export default function App() {
 
     if (email) {
       localStorage.setItem('kewa_remembered_email', email);
-      setSavedEmailChip(email);
     }
 
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
@@ -722,9 +708,8 @@ export default function App() {
       setMessage({ text: 'Please accept the Data Protection Act (ODPC) privacy terms.', type: 'error' });
       return;
     }
-
-    if (transactionPin.length !== 4) {
-      setMessage({ text: 'Please choose an exact 4-digit Security PIN.', type: 'error' });
+    if (registrationPin.length !== 4 || !/^\d{4}$/.test(registrationPin)) {
+      setMessage({ text: 'Security PIN must be exactly 4 numeric digits.', type: 'error' });
       return;
     }
 
@@ -741,7 +726,6 @@ export default function App() {
     if (authData?.user) {
       if (email) {
         localStorage.setItem('kewa_remembered_email', email);
-        setSavedEmailChip(email);
       }
 
       const { error: profileError } = await supabase.from('profiles').insert([
@@ -754,14 +738,14 @@ export default function App() {
           phone: phone,
           email: email,
           role: 'member',
-          transaction_pin: transactionPin || '1234'
+          transaction_pin_hash: registrationPin // Auto-hashed by trigger or verified via RPC
         },
       ]);
 
       if (profileError) setMessage({ text: profileError.message, type: 'error' });
       else {
         logAuditAction('REGISTER_ACCOUNT', `New member profile: ${fullName} (${memberNumber})`, authData.user.id, fullName);
-        setMessage({ text: 'Account created successfully! Welcome to KEWA SACCO.', type: 'success' });
+        setMessage({ text: 'Account registered successfully! Welcome to KEWA SACCO.', type: 'success' });
       }
     }
     setLoading(false);
@@ -977,7 +961,7 @@ export default function App() {
     });
   };
 
-  // FINANCIAL & ACCOUNTING FORMULAS
+  // EXACT ACCOUNTING SPECIFICATION FORMULAS
   const totalSocietySharesCapital = allMembers.reduce((acc, m) => acc + Number(m.totalSavings || 0), 0);
   
   const totalSocietyUnpaidLoans = allLoansLeadership
@@ -993,6 +977,7 @@ export default function App() {
       return acc + (principal * rate * months);
     }, 0);
 
+  // Net Liquid Capital = (Total Member Shares - Total Unpaid Loans) + Total Accrued Interest
   const netSocietyLiquidCapital = (totalSocietySharesCapital - totalSocietyUnpaidLoans) + totalSocietyInterestAccrued;
 
   const totalSavings = savings.reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
@@ -1099,7 +1084,7 @@ export default function App() {
       const totalGuaranteedSum = validGuarantors.reduce((acc, g) => acc + parseAccountingNumber(g.amountRaw), 0);
       if (totalGuaranteedSum < loanPrincipalNum) {
         setMessage({ 
-          text: `Guarantor Validation Error: Total pledged guarantees (KES ${totalGuaranteedSum.toLocaleString()}) do not match or cover the requested loan principal (KES ${loanPrincipalNum.toLocaleString()}).`, 
+          text: `Guarantor Validation Error: Total pledged guarantees (KES ${totalGuaranteedSum.toLocaleString()}) do not cover the requested loan principal (KES ${loanPrincipalNum.toLocaleString()}).`, 
           type: 'error' 
         });
         return;
@@ -1127,14 +1112,19 @@ export default function App() {
       return;
     }
 
-    const memberActivePin = profile?.transaction_pin || '1234';
-    if (enteredLoanPin !== memberActivePin) {
+    setLoading(true);
+    // Secure Server-Side PIN Verification via RPC
+    const { data: isPinValid, error: pinErr } = await supabase.rpc('verify_transaction_pin', {
+      p_pin: enteredLoanPin
+    });
+
+    if (pinErr || !isPinValid) {
       alert('Security Verification Failed: The 4-digit Transaction Security PIN you entered is incorrect.');
+      setLoading(false);
       return;
     }
 
     setShowTermsModal(false);
-    setLoading(true);
 
     const validGuarantors = guarantorList.filter((g) => g.guarantorId && parseAccountingNumber(g.amountRaw) > 0);
 
@@ -1219,7 +1209,12 @@ export default function App() {
       updatePayload.status = isSign ? 'approved' : 'pending';
     }
 
-    await supabase.from('loans').update(updatePayload).eq('id', loanId);
+    const { error } = await supabase.from('loans').update(updatePayload).eq('id', loanId);
+    if (error) {
+      alert(`Signatory Error: ${error.message}`);
+      return;
+    }
+
     logAuditAction(
       isSign ? 'SIGNATORY_SIGNED' : 'SIGNATORY_REVOKED',
       `${targetRole.replace('_', ' ').toUpperCase()} ${isSign ? 'endorsed' : 'revoked sign-off for'} Loan #${loanId.slice(0, 8)}`
@@ -1270,7 +1265,12 @@ export default function App() {
       updatePayload.status = isSign ? 'approved' : 'pending';
     }
 
-    await supabase.from('welfare_claims').update(updatePayload).eq('id', claimId);
+    const { error } = await supabase.from('welfare_claims').update(updatePayload).eq('id', claimId);
+    if (error) {
+      alert(`Welfare Workflow Error: ${error.message}`);
+      return;
+    }
+
     logAuditAction(
       isSign ? 'WELFARE_SIGNED' : 'WELFARE_REVOKED',
       `Benevolence ${isSign ? 'endorsed' : 'revoked'} by ${targetRole.replace('_', ' ').toUpperCase()} for Claim #${claimId.slice(0, 8)}`
@@ -1278,6 +1278,10 @@ export default function App() {
 
     fetchAdminData();
     fetchUserData(session.user.id);
+    setMessage({
+      text: `Welfare Claim: ${targetRole.replace('_', ' ').toUpperCase()} ${isSign ? 'endorsed successfully.' : 'signature revoked.'}`,
+      type: 'success'
+    });
   };
 
   const handleRespondGuarantor = async (guaranteeId, status, pledgeAmount) => {
@@ -1830,6 +1834,7 @@ export default function App() {
 
   const pendingGuaranteesCount = guarantorRequests.filter((g) => g.status === 'pending').length;
 
+  // Defensive Fallback Objects for Officials (Prevent Help & Chat White Screen Crashes)
   const chairmanOfficial = allMembers.find((m) => m.role === 'chairman') || { full_name: 'Executive Chairperson', phone: '0700000001' };
   const treasurerOfficial = allMembers.find((m) => m.role === 'treasurer') || { full_name: 'Treasurer & Finance', phone: '0700000002' };
   const asstChairOfficial = allMembers.find((m) => m.role === 'assistant_chair') || { full_name: 'Assistant Chairperson', phone: '0700000003' };
@@ -2112,7 +2117,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Main View Area */}
+      {/* Main Container */}
       <main className="max-w-6xl mx-auto p-3 sm:p-8 space-y-4 sm:space-y-6">
         {message.text && (
           <div
@@ -2222,8 +2227,8 @@ export default function App() {
                     data-lpignore="true"
                     autoComplete="new-password"
                     required
-                    value={transactionPin}
-                    onChange={(e) => setTransactionPin(e.target.value.replace(/[^0-9]/g, ''))}
+                    value={registrationPin}
+                    onChange={(e) => setRegistrationPin(e.target.value.replace(/[^0-9]/g, ''))}
                     placeholder="••••"
                     className="w-full bg-slate-950 border border-amber-500/60 rounded-xl px-3.5 py-2 text-xs text-white font-mono text-center tracking-widest"
                   />
@@ -2947,7 +2952,7 @@ export default function App() {
                     </div>
                     <button
                       type="button"
-                      onClick={() => setShowPinChangeModal(true)}
+                      onClick={() => setShowPinModal(true)}
                       className="bg-amber-950/70 hover:bg-amber-900 border border-amber-800 text-amber-300 px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
                     >
                       <KeyRound className="w-3.5 h-3.5" /> Change Security PIN
@@ -3121,6 +3126,7 @@ export default function App() {
                     </div>
                   </div>
 
+                  {/* Welfare & Benevolent Claims Module */}
                   <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-lg">
                     <div className="flex items-center gap-2 mb-3">
                       <HeartHandshake className="w-4 h-4 text-rose-400" />
@@ -3687,7 +3693,7 @@ export default function App() {
                   </div>
                 )}
 
-                {/* 3. WELFARE CLAIMS APPROVAL QUEUE */}
+                {/* 3. WELFARE CLAIMS APPROVAL QUEUE WITH DESTINATION DETAILS */}
                 <div className="bg-slate-900/90 border border-rose-900/50 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
                   <div className="flex justify-between items-center mb-2">
                     <div className="flex items-center gap-2">
@@ -4604,8 +4610,8 @@ export default function App() {
         )}
       </main>
 
-      {/* CHANGE SECURITY PIN MODAL */}
-      {showPinChangeModal && (
+      {/* DEDICATED CHANGE SECURITY PIN MODAL */}
+      {showPinModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
           <div className="bg-slate-950 border border-amber-800/80 rounded-3xl max-w-sm w-full p-5 sm:p-6 shadow-2xl space-y-4">
             <div className="flex justify-between items-center pb-2 border-b border-slate-800">
@@ -4613,7 +4619,7 @@ export default function App() {
                 <KeyRound className="w-5 h-5 text-amber-400" />
                 <h3 className="font-bold text-white text-sm sm:text-base">Change Transaction PIN</h3>
               </div>
-              <button onClick={() => setShowPinChangeModal(false)} className="text-slate-400 hover:text-white p-1 cursor-pointer">
+              <button onClick={() => setShowPinModal(false)} className="text-slate-400 hover:text-white p-1 cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -4673,7 +4679,7 @@ export default function App() {
               <div className="flex gap-2 pt-2 border-t border-slate-800">
                 <button
                   type="button"
-                  onClick={() => setShowPinChangeModal(false)}
+                  onClick={() => setShowPinModal(false)}
                   className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-2 rounded-xl text-xs transition cursor-pointer"
                 >
                   Cancel
@@ -4700,7 +4706,7 @@ export default function App() {
                 <Shield className="w-5 h-5 text-emerald-400" />
                 <h3 className="font-bold text-white text-base">Authorize Loan Facility</h3>
               </div>
-              <button onClick={() => setShowTermsModal(false)} className="text-slate-400 hover:text-white p-1">
+              <button onClick={() => setShowTermsModal(false)} className="text-slate-400 hover:text-white p-1 cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -4741,7 +4747,7 @@ export default function App() {
 
               <h4 className="font-bold text-white text-xs uppercase tracking-wide">1. Payroll Deduction Authorization</h4>
               <p>
-                By submitting this loan request, I authorize my employer or checkoff unit to deduct <strong>KES {monthlyInstallment.toFixed(2)}</strong> monthly until settled.
+                By submitting this loan request, I authorize my employer or checkoff unit to deduct <strong>KES {monthlyInstallment.toFixed(2)}</strong> monthly until settled in full.
               </p>
 
               <h4 className="font-bold text-white text-xs uppercase tracking-wide">2. Interest Rate & Repayment</h4>

@@ -55,7 +55,7 @@ export default function App() {
   const [auditLogs, setAuditLogs] = useState([]);
   const [message, setMessage] = useState({ text: '', type: '' });
 
-  // Profile Settings & PIN Change Modal State
+  // Profile Settings & PIN Modal State
   const [editFullName, setEditFullName] = useState('');
   const [editPhone, setEditPhone] = useState('');
   const [editIdNumber, setEditIdNumber] = useState('');
@@ -355,10 +355,9 @@ export default function App() {
 
   const fetchUserData = async (userId) => {
     setLoading(true);
-    // Explicit selection excluding all credential columns
     const { data: profileData } = await supabase
       .from('profiles')
-      .select('id, full_name, member_number, id_number, phone, email, role, company_id, created_at, companies(id, name)')
+      .select('id, full_name, member_number, id_number, phone, email, role, company_id, transaction_pin, created_at, companies(id, name)')
       .eq('id', userId)
       .single();
 
@@ -403,7 +402,6 @@ export default function App() {
     setLoading(false);
   };
 
-  // Resilient Member Fetcher Computing Exact Free Shares (Savings - Active Debt - Running Pledges [Pending + Accepted])
   const fetchAllMembers = async () => {
     try {
       const [
@@ -433,7 +431,6 @@ export default function App() {
             .filter((l) => l.member_id === m.id && ['approved', 'disbursed'].includes(l.status))
             .reduce((acc, l) => acc + Number(l.balance_remaining || 0), 0);
 
-          // Pledges considered: Both 'accepted' and 'pending' on active / un-cleared loans
           const runningPledges = (guarantorsData || [])
             .filter((g) => {
               if (g.guarantor_id !== m.id) return false;
@@ -464,24 +461,48 @@ export default function App() {
     }
   };
 
-  useEffect(() => {
-    fetchAnnouncements();
-    if (!session?.user?.id) return;
+  const fetchGuarantorData = async (userId) => {
+    if (!userId) return;
+    try {
+      const [
+        { data: requestsRaw },
+        { data: allLoansRaw },
+        { data: allProfilesRaw }
+      ] = await Promise.all([
+        supabase.from('loan_guarantors').select('*').eq('guarantor_id', userId).order('created_at', { ascending: false }),
+        supabase.from('loans').select('*'),
+        supabase.from('profiles').select('id, full_name, member_number, phone, company_id, companies(name)')
+      ]);
 
-    if (activeTab === 'overview' || activeTab === 'guarantors' || activeTab === 'loans') {
-      fetchGuarantorData(session.user.id);
+      if (requestsRaw) {
+        const hydratedRequests = requestsRaw.map((req) => {
+          const matchedLoan = (allLoansRaw || []).find((l) => l.id === req.loan_id) || {};
+          const matchedBorrower = (allProfilesRaw || []).find((p) => p.id === matchedLoan.member_id) || {};
+          return {
+            ...req,
+            loans: {
+              ...matchedLoan,
+              profiles: matchedBorrower
+            }
+          };
+        });
+        setGuarantorRequests(hydratedRequests);
+
+        const activeRunning = hydratedRequests.filter((g) => {
+          const status = (g.status || '').toLowerCase().trim();
+          const isPledged = ['accepted', 'pending'].includes(status);
+          const loanStatus = (g.loans?.status || '').toLowerCase().trim();
+          const isLoanActive = loanStatus ? !['completed', 'rejected'].includes(loanStatus) : true;
+          const hasBalance = g.loans?.balance_remaining !== undefined ? Number(g.loans.balance_remaining) > 0 : true;
+          return isPledged && isLoanActive && hasBalance;
+        });
+
+        setMyGuaranteesCommitted(activeRunning);
+      }
+    } catch (e) {
+      console.error('Guarantor fetch error:', e);
     }
-    if (activeTab === 'documents') {
-      fetchSaccoDocuments();
-    } else if (activeTab === 'support') {
-      fetchMemberInquiries(session.user.id);
-    } else if (activeTab === 'admin') {
-      fetchAdminData();
-    } else if (activeTab === 'beneficiaries') {
-      fetchBeneficiaries(session.user.id);
-      fetchWelfareClaims(session.user.id);
-    }
-  }, [activeTab, session]);
+  };
 
   const fetchBeneficiaries = async (userId) => {
     const { data } = await supabase
@@ -631,8 +652,13 @@ export default function App() {
 
   const handleChangeSecurityPin = async (e) => {
     e.preventDefault();
+    const activePin = profile?.transaction_pin || '1234';
+    if (currentPinInput !== activePin) {
+      alert('Security Verification Failed: Current PIN is incorrect.');
+      return;
+    }
     if (newPinInput.length !== 4 || !/^\d{4}$/.test(newPinInput)) {
-      alert('Security Error: New PIN must be exactly 4 numeric digits.');
+      alert('Invalid PIN: New PIN must be exactly 4 numeric digits.');
       return;
     }
     if (newPinInput !== confirmNewPinInput) {
@@ -641,20 +667,21 @@ export default function App() {
     }
 
     setLoading(true);
-    const { data: rpcRes, error: rpcErr } = await supabase.rpc('update_transaction_pin', {
-      p_old_pin: currentPinInput,
-      p_new_pin: newPinInput
-    });
+    const { error } = await supabase
+      .from('profiles')
+      .update({ transaction_pin: newPinInput })
+      .eq('id', session.user.id);
 
-    if (rpcErr || !rpcRes?.success) {
-      alert(rpcRes?.message || rpcErr?.message || 'Failed to update PIN. Please verify your current PIN.');
+    if (error) {
+      alert(`PIN Update Error: ${error.message}`);
     } else {
-      logAuditAction('SECURITY_PIN_CHANGED', 'Member successfully updated their 4-digit transaction security PIN');
+      logAuditAction('SECURITY_PIN_CHANGED', 'Member successfully changed their 4-digit transaction security PIN');
       setMessage({ text: '4-Digit Transaction Security PIN changed successfully!', type: 'success' });
       setShowPinModal(false);
       setCurrentPinInput('');
       setNewPinInput('');
       setConfirmNewPinInput('');
+      fetchUserData(session.user.id);
     }
     setLoading(false);
   };
@@ -745,7 +772,7 @@ export default function App() {
           phone: phone,
           email: email,
           role: 'member',
-          transaction_pin_hash: registrationPin // Auto-hashed by trigger or verified via RPC
+          transaction_pin: registrationPin
         },
       ]);
 
@@ -968,7 +995,7 @@ export default function App() {
     });
   };
 
-  // EXACT ACCOUNTING SPECIFICATION FORMULAS
+  // FINANCIAL & ACCOUNTING FORMULAS
   const totalSocietySharesCapital = allMembers.reduce((acc, m) => acc + Number(m.totalSavings || 0), 0);
   
   const totalSocietyUnpaidLoans = allLoansLeadership
@@ -1119,19 +1146,14 @@ export default function App() {
       return;
     }
 
-    setLoading(true);
-    // Secure Server-Side PIN Verification via RPC
-    const { data: isPinValid, error: pinErr } = await supabase.rpc('verify_transaction_pin', {
-      p_pin: enteredLoanPin
-    });
-
-    if (pinErr || !isPinValid) {
+    const memberActivePin = profile?.transaction_pin || '1234';
+    if (enteredLoanPin !== memberActivePin) {
       alert('Security Verification Failed: The 4-digit Transaction Security PIN you entered is incorrect.');
-      setLoading(false);
       return;
     }
 
     setShowTermsModal(false);
+    setLoading(true);
 
     const validGuarantors = guarantorList.filter((g) => g.guarantorId && parseAccountingNumber(g.amountRaw) > 0);
 
@@ -1841,7 +1863,6 @@ export default function App() {
 
   const pendingGuaranteesCount = guarantorRequests.filter((g) => g.status === 'pending').length;
 
-  // Defensive Fallback Objects for Officials (Prevent Help & Chat White Screen Crashes)
   const chairmanOfficial = allMembers.find((m) => m.role === 'chairman') || { full_name: 'Executive Chairperson', phone: '0700000001' };
   const treasurerOfficial = allMembers.find((m) => m.role === 'treasurer') || { full_name: 'Treasurer & Finance', phone: '0700000002' };
   const asstChairOfficial = allMembers.find((m) => m.role === 'assistant_chair') || { full_name: 'Assistant Chairperson', phone: '0700000003' };
@@ -3700,7 +3721,7 @@ export default function App() {
                   </div>
                 )}
 
-                {/* 3. WELFARE CLAIMS APPROVAL QUEUE WITH DESTINATION DETAILS */}
+                {/* 3. WELFARE CLAIMS APPROVAL QUEUE */}
                 <div className="bg-slate-900/90 border border-rose-900/50 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
                   <div className="flex justify-between items-center mb-2">
                     <div className="flex items-center gap-2">

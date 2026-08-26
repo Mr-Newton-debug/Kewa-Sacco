@@ -67,6 +67,7 @@ export default function App() {
   const [allLoansLeadership, setAllLoansLeadership] = useState([]);
   const [allPendingClaims, setAllPendingClaims] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
+  const pendingGuaranteesCount = guarantorRequests.filter((g) => g.status === 'pending').length;
   const [message, setMessage] = useState({ text: '', type: '' });
 
   // Profile Settings & PIN Modal State

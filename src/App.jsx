@@ -540,6 +540,32 @@ export default function App() {
     await supabase.from('next_of_kin').delete().eq('id', id);
     fetchBeneficiaries(session.user.id);
   };
+  const handleCreateInquiry = async (e) => {
+    e.preventDefault();
+    if (!inquirySubject || !inquiryMessage) return;
+
+    setLoading(true);
+    const { error } = await supabase.from('member_inquiries').insert([
+      {
+        member_id: session.user.id,
+        subject: inquirySubject,
+        category: inquiryCategory,
+        message: inquiryMessage,
+        status: 'pending',
+      },
+    ]);
+
+    if (error) {
+      setMessage({ text: error.message, type: 'error' });
+    } else {
+      logAuditAction('SUPPORT_INQUIRY_CREATED', `Ticket submitted: "${inquirySubject}"`);
+      setMessage({ text: 'Inquiry submitted! SACCO Leadership has been notified.', type: 'success' });
+      setInquirySubject('');
+      setInquiryMessage('');
+      fetchMemberInquiries(session.user.id);
+    }
+    setLoading(false);
+  };
 
   const chairmanOfficial = allMembers.find((m) => m.role === 'chairman') || { full_name: 'Executive Chairperson', phone: '0700000001' };
   const treasurerOfficial = allMembers.find((m) => m.role === 'treasurer') || { full_name: 'Treasurer & Finance', phone: '0700000002' };

@@ -590,6 +590,23 @@ export default function App() {
     }
     setLoading(false);
   };
+  const handleUpdatePassword = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setMessage({ text: '', type: '' });
+
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) {
+      setMessage({ text: error.message, type: 'error' });
+    } else {
+      logAuditAction('PASSWORD_UPDATED', `User successfully reset account password`);
+      setMessage({ text: 'Password updated successfully! Please sign in with your new password.', type: 'success' });
+      await supabase.auth.signOut();
+      setAuthMode('login');
+      setNewPassword('');
+    }
+    setLoading(false);
+  };
 
   const handleInitiateLoan = (e) => {
     e.preventDefault();

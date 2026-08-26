@@ -1,33 +1,36 @@
+import React from 'react';
+import { Building2 } from 'lucide-react';
+
 export default function AuthCard({
-    authMode,
-    setAuthMode,
-    email,
-    setEmail,
-    password,
-    setPassword,
-    newPassword,
-    setNewPassword,
-    fullName,
-    setFullName,
-    memberNumber,
-    setMemberNumber,
-    idNumber,
-    setIdNumber,
-    phone,
-    setPhone,
-    registrationPin,
-    setRegistrationPin,
-    odpcConsent,
-    setOdpcConsent,
-    companies,        // <-- Add this
-    companyId,        // <-- Add this
-    setCompanyId,     // <-- Add this
-    onLogin,
-    onRegister,
-    onForgotPassword,
-    onUpdatePassword,
-    loading
-  }) {
+  authMode,
+  setAuthMode,
+  email,
+  setEmail,
+  password,
+  setPassword,
+  newPassword,
+  setNewPassword,
+  fullName,
+  setFullName,
+  memberNumber,
+  setMemberNumber,
+  idNumber,
+  setIdNumber,
+  phone,
+  setPhone,
+  registrationPin,
+  setRegistrationPin,
+  odpcConsent,
+  setOdpcConsent,
+  companies,
+  companyId,
+  setCompanyId,
+  onLogin,
+  onRegister,
+  onForgotPassword,
+  onUpdatePassword,
+  loading
+}) {
   return (
     <div className="max-w-md mx-auto mt-6 sm:mt-12 bg-slate-900/90 border border-slate-800/90 rounded-3xl p-5 sm:p-10 shadow-2xl backdrop-blur-xl">
       <div className="text-center mb-5">
@@ -54,18 +57,6 @@ export default function AuthCard({
               placeholder="name@domain.com"
               className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white focus:border-emerald-500 transition"
             />
-            <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1">Branch / Company</label>
-            <select
-              value={companyId}
-              onChange={(e) => setCompanyId(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white"
-            >
-              {companies.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
-          </div>
           </div>
           <div>
             <div className="flex justify-between items-center mb-1">
@@ -73,7 +64,7 @@ export default function AuthCard({
               <button
                 type="button"
                 onClick={() => setAuthMode('forgot')}
-                className="text-[11px] text-emerald-400 hover:underline"
+                className="text-[11px] text-emerald-400 hover:underline cursor-pointer"
               >
                 Forgot?
               </button>
@@ -151,6 +142,18 @@ export default function AuthCard({
             />
           </div>
           <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1">Branch / Company</label>
+            <select
+              value={companyId}
+              onChange={(e) => setCompanyId(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white"
+            >
+              {(companies || []).map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1">Phone Number</label>
             <input
               type="tel"
@@ -169,7 +172,7 @@ export default function AuthCard({
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="name@domain.com"
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white"
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
             />
           </div>
           <div>

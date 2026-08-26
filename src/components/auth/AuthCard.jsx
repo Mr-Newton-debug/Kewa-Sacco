@@ -1,33 +1,33 @@
-import React from 'react';
-import { Building2 } from 'lucide-react';
-
 export default function AuthCard({
-  authMode,
-  setAuthMode,
-  email,
-  setEmail,
-  password,
-  setPassword,
-  newPassword,
-  setNewPassword,
-  fullName,
-  setFullName,
-  memberNumber,
-  setMemberNumber,
-  idNumber,
-  setIdNumber,
-  phone,
-  setPhone,
-  registrationPin,
-  setRegistrationPin,
-  odpcConsent,
-  setOdpcConsent,
-  onLogin,
-  onRegister,
-  onForgotPassword,
-  onUpdatePassword,
-  loading
-}) {
+    authMode,
+    setAuthMode,
+    email,
+    setEmail,
+    password,
+    setPassword,
+    newPassword,
+    setNewPassword,
+    fullName,
+    setFullName,
+    memberNumber,
+    setMemberNumber,
+    idNumber,
+    setIdNumber,
+    phone,
+    setPhone,
+    registrationPin,
+    setRegistrationPin,
+    odpcConsent,
+    setOdpcConsent,
+    companies,        // <-- Add this
+    companyId,        // <-- Add this
+    setCompanyId,     // <-- Add this
+    onLogin,
+    onRegister,
+    onForgotPassword,
+    onUpdatePassword,
+    loading
+  }) {
   return (
     <div className="max-w-md mx-auto mt-6 sm:mt-12 bg-slate-900/90 border border-slate-800/90 rounded-3xl p-5 sm:p-10 shadow-2xl backdrop-blur-xl">
       <div className="text-center mb-5">

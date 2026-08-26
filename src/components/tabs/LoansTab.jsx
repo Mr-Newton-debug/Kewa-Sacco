@@ -145,25 +145,61 @@ export default function LoansTab({
               <label className="block text-xs font-semibold text-slate-300 mb-1">Disbursement Channel</label>
               <select
                 value={disbursementMethod}
-                onChange={(e) => setDisbursementMethod(e.target.value)}
+                onChange={(e) => {
+                  setDisbursementMethod(e.target.value);
+                  if (e.target.value === 'mpesa') {
+                    setDisbursementDetails(profilePhone || '');
+                  } else {
+                    setDisbursementDetails('');
+                  }
+                }}
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
               >
                 <option value="mpesa">M-Pesa Mobile Money</option>
                 <option value="bank">Direct Bank Account Transfer</option>
               </select>
             </div>
+
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1">
-                {disbursementMethod === 'mpesa' ? 'M-Pesa Phone Number' : 'Bank Account Details'}
+                {disbursementMethod === 'mpesa' ? 'M-Pesa Payout Destination' : 'Bank Account Details'}
               </label>
-              <input
-                type="text"
-                required
-                value={disbursementDetails}
-                onChange={(e) => setDisbursementDetails(e.target.value)}
-                placeholder={disbursementMethod === 'mpesa' ? '0712345678' : 'Bank Name, Acc No, Branch'}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
-              />
+
+              {disbursementMethod === 'mpesa' ? (
+                <div className="space-y-1.5">
+                  <select
+                    onChange={(e) => {
+                      if (e.target.value === 'my_number') {
+                        setDisbursementDetails(profilePhone || '');
+                      } else {
+                        setDisbursementDetails('');
+                      }
+                    }}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white mb-1"
+                  >
+                    <option value="my_number">Use My Registered Number ({profilePhone || 'N/A'})</option>
+                    <option value="other_number">Use Another Phone Number</option>
+                  </select>
+
+                  <input
+                    type="text"
+                    required
+                    value={disbursementDetails}
+                    onChange={(e) => setDisbursementDetails(e.target.value)}
+                    placeholder="0712345678"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
+                  />
+                </div>
+              ) : (
+                <input
+                  type="text"
+                  required
+                  value={disbursementDetails}
+                  onChange={(e) => setDisbursementDetails(e.target.value)}
+                  placeholder="Bank Name, Acc No, Branch"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
+                />
+              )}
             </div>
           </div>
 

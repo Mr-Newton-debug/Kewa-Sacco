@@ -186,6 +186,26 @@ export default function AuthCard({
               className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
             />
           </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1">Security Question</label>
+            <select
+              value={securityQuestion}
+              onChange={(e) => setSecurityQuestion(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white mb-2"
+            >
+              <option value="What is your mother's maiden name?">What is your mother's maiden name?</option>
+              <option value="What was the name of your first pet?">What was the name of your first pet?</option>
+              <option value="What city were you born in?">What city were you born in?</option>
+            </select>
+            <input
+              type="text"
+              required
+              value={securityAnswer}
+              onChange={(e) => setSecurityAnswer(e.target.value)}
+              placeholder="Your secret answer (case-insensitive)"
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
+            />
+          </div>
           <div className="flex items-start gap-2 pt-1">
             <input
               type="checkbox"

@@ -254,15 +254,18 @@ export default function App() {
 
   useEffect(() => {
     fetchAnnouncements();
+    if (!session?.user?.id) return;
+
+    if (activeTab === 'overview' || activeTab === 'guarantors' || activeTab === 'loans') {
+      fetchGuarantorData(session.user.id);
+    }
     if (activeTab === 'documents') {
       fetchSaccoDocuments();
-    } else if (activeTab === 'support' && session?.user?.id) {
+    } else if (activeTab === 'support') {
       fetchMemberInquiries(session.user.id);
-    } else if (activeTab === 'admin' && session?.user?.id) {
+    } else if (activeTab === 'admin') {
       fetchAdminData();
-    } else if (activeTab === 'guarantors' && session?.user?.id) {
-      fetchGuarantorData(session.user.id);
-    } else if (activeTab === 'beneficiaries' && session?.user?.id) {
+    } else if (activeTab === 'beneficiaries') {
       fetchBeneficiaries(session.user.id);
       fetchWelfareClaims(session.user.id);
     }
@@ -461,46 +464,24 @@ export default function App() {
     }
   };
 
-  const fetchGuarantorData = async (userId) => {
-    try {
-      const [
-        { data: requestsRaw },
-        { data: allLoansRaw },
-        { data: allProfilesRaw },
-        { data: allGuarantorsRaw }
-      ] = await Promise.all([
-        supabase.from('loan_guarantors').select('*').eq('guarantor_id', userId).order('created_at', { ascending: false }),
-        supabase.from('loans').select('*'),
-        supabase.from('profiles').select('id, full_name, member_number, phone, company_id, companies(name)'),
-        supabase.from('loan_guarantors').select('*').eq('guarantor_id', userId).in('status', ['accepted', 'pending'])
-      ]);
+  useEffect(() => {
+    fetchAnnouncements();
+    if (!session?.user?.id) return;
 
-      if (requestsRaw) {
-        const hydratedRequests = requestsRaw.map((req) => {
-          const matchedLoan = (allLoansRaw || []).find((l) => l.id === req.loan_id) || {};
-          const matchedBorrower = (allProfilesRaw || []).find((p) => p.id === matchedLoan.member_id) || {};
-          return {
-            ...req,
-            loans: {
-              ...matchedLoan,
-              profiles: matchedBorrower
-            }
-          };
-        });
-        setGuarantorRequests(hydratedRequests);
-      }
-
-      if (allGuarantorsRaw) {
-        const activeRunning = allGuarantorsRaw.filter((g) => {
-          const matchedLoan = (allLoansRaw || []).find((l) => l.id === g.loan_id);
-          return matchedLoan && !['completed', 'rejected'].includes(matchedLoan.status) && Number(matchedLoan.balance_remaining || 1) > 0;
-        });
-        setMyGuaranteesCommitted(activeRunning);
-      }
-    } catch (e) {
-      console.error('Guarantor fetch error:', e);
+    if (activeTab === 'overview' || activeTab === 'guarantors' || activeTab === 'loans') {
+      fetchGuarantorData(session.user.id);
     }
-  };
+    if (activeTab === 'documents') {
+      fetchSaccoDocuments();
+    } else if (activeTab === 'support') {
+      fetchMemberInquiries(session.user.id);
+    } else if (activeTab === 'admin') {
+      fetchAdminData();
+    } else if (activeTab === 'beneficiaries') {
+      fetchBeneficiaries(session.user.id);
+      fetchWelfareClaims(session.user.id);
+    }
+  }, [activeTab, session]);
 
   const fetchBeneficiaries = async (userId) => {
     const { data } = await supabase
@@ -573,6 +554,32 @@ export default function App() {
             };
           });
           setAllSystemGuarantors(fullGuarantors);
+
+          if (session?.user?.id) {
+            const myGuarantorRecords = guarantorsRaw.filter((g) => g.guarantor_id === session.user.id);
+            const hydratedMyRequests = myGuarantorRecords.map((req) => {
+              const matchedLoan = fullLoans.find((l) => l.id === req.loan_id) || {};
+              const matchedBorrower = (profilesRaw || []).find((p) => p.id === matchedLoan.member_id) || {};
+              return {
+                ...req,
+                loans: {
+                  ...matchedLoan,
+                  profiles: matchedBorrower
+                }
+              };
+            });
+            setGuarantorRequests(hydratedMyRequests);
+
+            const activeRunning = hydratedMyRequests.filter((g) => {
+              const status = (g.status || '').toLowerCase().trim();
+              const isPledged = ['accepted', 'pending'].includes(status);
+              const loanStatus = (g.loans?.status || '').toLowerCase().trim();
+              const isLoanActive = loanStatus ? !['completed', 'rejected'].includes(loanStatus) : true;
+              const hasBal = g.loans?.balance_remaining !== undefined ? Number(g.loans.balance_remaining) > 0 : true;
+              return isPledged && isLoanActive && hasBal;
+            });
+            setMyGuaranteesCommitted(activeRunning);
+          }
         }
       }
 

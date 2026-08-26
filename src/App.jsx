@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
-import Papa from 'papaparse';
-import { Download, Building2 } from 'lucide-react';
+import { Download } from 'lucide-react';
 
 // Utilities & Calculations
 import { formatAccountingNumber, parseAccountingNumber } from './utils/formatters';
@@ -67,7 +66,6 @@ export default function App() {
   const [allLoansLeadership, setAllLoansLeadership] = useState([]);
   const [allPendingClaims, setAllPendingClaims] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
-  const pendingGuaranteesCount = guarantorRequests.filter((g) => g.status === 'pending').length;
   const [message, setMessage] = useState({ text: '', type: '' });
 
   // Profile Settings & PIN Modal State
@@ -148,6 +146,8 @@ export default function App() {
   const [batchMonth, setBatchMonth] = useState('AUG-2026');
   const [newNoticeTitle, setNewNoticeTitle] = useState('');
   const [newNoticeContent, setNewNoticeContent] = useState('');
+
+  const pendingGuaranteesCount = guarantorRequests.filter((g) => g.status === 'pending').length;
 
   const handlePerformSignOut = async (timeoutReason = false) => {
     setPassword('');
@@ -498,6 +498,53 @@ export default function App() {
     }
   };
 
+  // Missing Handlers Restored
+  const handleLoanProductChange = (prod) => {
+    setLoanProduct(prod);
+    if (prod === 'main_loan') {
+      setLoanMonths(12);
+      setInterestRate(1.0);
+      setLoanPrincipalRaw('30,000');
+    } else if (prod === 'emergency_loan') {
+      setLoanMonths(6);
+      setInterestRate(1.0);
+      setLoanPrincipalRaw('15,000');
+    } else if (prod === 'christmas_loan') {
+      setLoanMonths(4);
+      setInterestRate(1.0);
+      setLoanPrincipalRaw('10,000');
+    } else if (prod === 'monthly_shylock') {
+      setLoanMonths(1);
+      setInterestRate(5.0);
+      setLoanPrincipalRaw('5,000');
+    }
+  };
+
+  const handleRespondGuarantor = async (guaranteeId, status, pledgeAmount) => {
+    if (status === 'accepted' && Number(pledgeAmount) > freeSharesAvailable) {
+      setMessage({ text: 'Pledged amount exceeds your available free shares.', type: 'error' });
+      return;
+    }
+    await supabase.from('loan_guarantors').update({ status }).eq('id', guaranteeId);
+    setMessage({ text: `Guarantor response recorded: ${status}`, type: 'success' });
+    fetchGuarantorData(session.user.id);
+  };
+
+  const handleDeleteSaccoDocument = async (id, title) => {
+    await supabase.from('sacco_documents').delete().eq('id', id);
+    logAuditAction('SACCO_DOCUMENT_DELETED', `Deleted document: ${title}`);
+    fetchSaccoDocuments();
+  };
+
+  const handleDeleteBeneficiary = async (id) => {
+    await supabase.from('next_of_kin').delete().eq('id', id);
+    fetchBeneficiaries(session.user.id);
+  };
+
+  const chairmanOfficial = allMembers.find((m) => m.role === 'chairman') || { full_name: 'Executive Chairperson', phone: '0700000001' };
+  const treasurerOfficial = allMembers.find((m) => m.role === 'treasurer') || { full_name: 'Treasurer & Finance', phone: '0700000002' };
+  const asstChairOfficial = allMembers.find((m) => m.role === 'assistant_chair') || { full_name: 'Assistant Chairperson', phone: '0700000003' };
+
   // Calculations
   const totalSocietySharesCapital = allMembers.reduce((acc, m) => acc + Number(m.totalSavings || 0), 0);
   const totalSocietyUnpaidLoans = allLoansLeadership.filter(l => ['approved', 'disbursed'].includes(l.status)).reduce((acc, l) => acc + Number(l.balance_remaining || 0), 0);
@@ -590,16 +637,16 @@ export default function App() {
     }
     setLoading(false);
   };
+
   const handleUpdatePassword = async (e) => {
     e.preventDefault();
     setLoading(true);
     setMessage({ text: '', type: '' });
-
     const { error } = await supabase.auth.updateUser({ password: newPassword });
     if (error) {
       setMessage({ text: error.message, type: 'error' });
     } else {
-      logAuditAction('PASSWORD_UPDATED', `User successfully reset account password`);
+      logAuditAction('PASSWORD_UPDATED', 'User successfully reset account password');
       setMessage({ text: 'Password updated successfully! Please sign in with your new password.', type: 'success' });
       await supabase.auth.signOut();
       setAuthMode('login');
@@ -842,6 +889,9 @@ export default function App() {
             setRegistrationPin={setRegistrationPin}
             odpcConsent={odpcConsent}
             setOdpcConsent={setOdpcConsent}
+            companies={companies}
+            companyId={companyId}
+            setCompanyId={setCompanyId}
             onLogin={handleLogin}
             onRegister={handleRegister}
             onForgotPassword={async (e) => { e.preventDefault(); await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin }); setMessage({ text: 'Reset link sent.', type: 'success' }); }}
@@ -1035,8 +1085,7 @@ export default function App() {
                 setMigrationFile={setMigrationFile}
                 filteredMemberDirectory={filteredMemberDirectory}
                 memberDirectorySearch={memberDirectorySearch}
-                setMemberDirectorySearch={setMemberDirectorySearch}
-                memberDirectoryCompanyFilter={memberDirectoryCompanyFilter}
+                memberDirectoryCommunityFilter={memberDirectoryCompanyFilter}
                 setMemberDirectoryCompanyFilter={setMemberDirectoryCompanyFilter}
                 allMembers={allMembers}
                 manualTargetMemberId={manualTargetMemberId}

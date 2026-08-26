@@ -54,6 +54,18 @@ export default function AuthCard({
               placeholder="name@domain.com"
               className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white focus:border-emerald-500 transition"
             />
+            <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1">Branch / Company</label>
+            <select
+              value={companyId}
+              onChange={(e) => setCompanyId(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white"
+            >
+              {companies.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
           </div>
           <div>
             <div className="flex justify-between items-center mb-1">

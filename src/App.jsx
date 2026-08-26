@@ -46,6 +46,8 @@ export default function App() {
   const [phone, setPhone] = useState('');
   const [companyId, setCompanyId] = useState('');
   const [registrationPin, setRegistrationPin] = useState('1234');
+  const [securityQuestion, setSecurityQuestion] = useState("What is your mother's maiden name?");
+  const [securityAnswer, setSecurityAnswer] = useState('');
   const [odpcConsent, setOdpcConsent] = useState(false);
 
   // Core Data State
@@ -293,7 +295,6 @@ export default function App() {
   const fetchUserData = async (userId) => {
     setLoading(true);
     try {
-      // 1. Fetch profile cleanly without crashing on foreign key relations
       const { data: profileData, error: profErr } = await supabase
         .from('profiles')
         .select('*')
@@ -303,7 +304,6 @@ export default function App() {
       if (profErr) throw profErr;
 
       if (profileData) {
-        // 2. Fetch company name separately if company_id exists
         let companyData = { name: 'KEWA SACCO' };
         if (profileData.company_id) {
           const { data: comp } = await supabase
@@ -527,7 +527,7 @@ export default function App() {
     }
   };
 
-  // Missing Handlers Restored
+  // Handlers
   const handleLoanProductChange = (prod) => {
     setLoanProduct(prod);
     if (prod === 'main_loan') {
@@ -569,6 +569,7 @@ export default function App() {
     await supabase.from('next_of_kin').delete().eq('id', id);
     fetchBeneficiaries(session.user.id);
   };
+
   const handleCreateInquiry = async (e) => {
     e.preventDefault();
     if (!inquirySubject || !inquiryMessage) return;
@@ -685,7 +686,9 @@ export default function App() {
         phone: phone,
         email: email,
         role: 'member',
-        transaction_pin: registrationPin
+        transaction_pin: registrationPin,
+        security_question: securityQuestion,
+        security_answer_hash: securityAnswer.trim().toLowerCase()
       }]);
       logAuditAction('REGISTER_ACCOUNT', `New member profile: ${fullName}`, authData.user.id, fullName);
       setMessage({ text: 'Account registered successfully!', type: 'success' });
@@ -942,6 +945,10 @@ export default function App() {
             setPhone={setPhone}
             registrationPin={registrationPin}
             setRegistrationPin={setRegistrationPin}
+            securityQuestion={securityQuestion}
+            setSecurityQuestion={setSecurityQuestion}
+            securityAnswer={securityAnswer}
+            setSecurityAnswer={setSecurityAnswer}
             odpcConsent={odpcConsent}
             setOdpcConsent={setOdpcConsent}
             companies={companies}
@@ -1005,6 +1012,7 @@ export default function App() {
                 setDisbursementMethod={setDisbursementMethod}
                 disbursementDetails={disbursementDetails}
                 setDisbursementDetails={setDisbursementDetails}
+                profilePhone={profile?.phone}
                 guarantorList={guarantorList}
                 allMembers={allMembers}
                 currentUserId={session.user.id}
@@ -1140,7 +1148,8 @@ export default function App() {
                 setMigrationFile={setMigrationFile}
                 filteredMemberDirectory={filteredMemberDirectory}
                 memberDirectorySearch={memberDirectorySearch}
-                memberDirectoryCommunityFilter={memberDirectoryCompanyFilter}
+                setMemberDirectorySearch={setMemberDirectorySearch}
+                memberDirectoryCompanyFilter={memberDirectoryCompanyFilter}
                 setMemberDirectoryCompanyFilter={setMemberDirectoryCompanyFilter}
                 allMembers={allMembers}
                 manualTargetMemberId={manualTargetMemberId}

@@ -13,7 +13,7 @@ import {
   Eye, EyeOff, FolderDown, FileArchive, Shield, Lock, RotateCcw, AlertTriangle, Sparkles, Search,
   MessageSquare, MessageCircle, Bot, Mail, CornerDownRight, Check, UserCheck, AlertOctagon,
   Contact2, Filter, AtSign, Megaphone, Settings, ArrowRight, Database, Coins, Layers, CheckCircle2,
-  Key
+  Key, CreditCard
 } from 'lucide-react';
 
 export default function App() {
@@ -24,7 +24,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('overview');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Auth State
+  // Auth & Profile State
   const [email, setEmail] = useState(() => localStorage.getItem('kewa_remembered_email') || '');
   const [password, setPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -57,15 +57,15 @@ export default function App() {
   const [auditLogs, setAuditLogs] = useState([]);
   const [message, setMessage] = useState({ text: '', type: '' });
 
-  // Profile Settings & PIN Modal State
+  // Profile Settings & PIN Change Modal State
   const [editFullName, setEditFullName] = useState('');
   const [editPhone, setEditPhone] = useState('');
   const [editIdNumber, setEditIdNumber] = useState('');
   const [editCompanyId, setEditCompanyId] = useState('');
-  const [showPinResetModal, setShowPinResetModal] = useState(false);
+  const [showPinChangeModal, setShowPinChangeModal] = useState(false);
   const [currentPinInput, setCurrentPinInput] = useState('');
   const [newPinInput, setNewPinInput] = useState('');
-  const [confirmPinInput, setConfirmPinInput] = useState('');
+  const [confirmNewPinInput, setConfirmNewPinInput] = useState('');
 
   // Directory Search State
   const [memberDirectorySearch, setMemberDirectorySearch] = useState('');
@@ -145,7 +145,8 @@ export default function App() {
   const formatAccountingNumber = (val) => {
     if (!val) return '';
     const cleanNum = val.toString().replace(/[^0-9]/g, '');
-    return cleanNum ? Number(cleanNum).toLocaleString('en-KE') : '';
+    if (!cleanNum) return '';
+    return Number(cleanNum).toLocaleString('en-KE');
   };
 
   const parseAccountingNumber = (val) => {
@@ -176,7 +177,7 @@ export default function App() {
 
     if (timeoutReason) {
       setMessage({
-        text: 'Security Timeout: You were signed out automatically due to 5 minutes of inactivity.',
+        text: 'You were signed out automatically due to 5 minutes of inactivity for your account security.',
         type: 'error'
       });
     }
@@ -184,19 +185,21 @@ export default function App() {
 
   useEffect(() => {
     if (!session || authMode === 'reset') return;
+
     let timeoutId;
     const INACTIVITY_LIMIT_MS = 5 * 60 * 1000;
 
     const resetInactivityTimer = () => {
       if (timeoutId) clearTimeout(timeoutId);
       timeoutId = setTimeout(async () => {
-        logAuditAction('AUTO_TIMEOUT_LOGOUT', 'User session expired after 5 mins inactivity');
+        logAuditAction('AUTO_TIMEOUT_LOGOUT', 'User logged out automatically due to 5 minutes of inactivity');
         await handlePerformSignOut(true);
       }, INACTIVITY_LIMIT_MS);
     };
 
     const activityEvents = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'click'];
     activityEvents.forEach((evt) => window.addEventListener(evt, resetInactivityTimer));
+
     resetInactivityTimer();
 
     return () => {
@@ -216,7 +219,7 @@ export default function App() {
         setAuthMode('reset');
       } else {
         setSession(session);
-        if (session) fetchUserData(session.user.id);
+        if (session?.user?.id) fetchUserData(session.user.id);
       }
     });
 
@@ -224,9 +227,25 @@ export default function App() {
       if (event === 'PASSWORD_RECOVERY') {
         setAuthMode('reset');
         setSession(null);
-      } else if (authMode !== 'reset') {
-        setSession(session);
-        if (session) fetchUserData(session.user.id);
+      } else {
+        if (authMode !== 'reset') {
+          setSession(session);
+          if (session?.user?.id) {
+            fetchUserData(session.user.id);
+          }
+        }
+      }
+
+      if (!session && event !== 'PASSWORD_RECOVERY') {
+        setPassword('');
+        setNewPassword('');
+        setProfile(null);
+        setSavings([]);
+        setLoans([]);
+        setRepayments([]);
+        setBeneficiaries([]);
+        setAuditLogs([]);
+        setInquiries([]);
       }
     });
 
@@ -238,11 +257,15 @@ export default function App() {
 
   useEffect(() => {
     fetchAnnouncements();
-    if (activeTab === 'documents') fetchSaccoDocuments();
-    else if (activeTab === 'support' && session) fetchMemberInquiries(session.user.id);
-    else if (activeTab === 'admin' && session) fetchAdminData();
-    else if (activeTab === 'guarantors' && session) fetchGuarantorData(session.user.id);
-    else if (activeTab === 'beneficiaries' && session) {
+    if (activeTab === 'documents') {
+      fetchSaccoDocuments();
+    } else if (activeTab === 'support' && session?.user?.id) {
+      fetchMemberInquiries(session.user.id);
+    } else if (activeTab === 'admin' && session?.user?.id) {
+      fetchAdminData();
+    } else if (activeTab === 'guarantors' && session?.user?.id) {
+      fetchGuarantorData(session.user.id);
+    } else if (activeTab === 'beneficiaries' && session?.user?.id) {
       fetchBeneficiaries(session.user.id);
       fetchWelfareClaims(session.user.id);
     }
@@ -277,17 +300,19 @@ export default function App() {
     try {
       const activeName = userName || profile?.full_name || email || 'Member';
       const activeMemberNo = profile?.member_number ? ` (No: ${profile.member_number})` : '';
+      const formattedName = `${activeName}${activeMemberNo}`;
+
       await supabase.from('audit_logs').insert([
         {
           user_id: userId || session?.user?.id || null,
-          user_name: `${activeName}${activeMemberNo}`,
+          user_name: formattedName,
           action,
           details,
         },
       ]);
       if (session && activeTab === 'admin') fetchAdminData();
     } catch (e) {
-      console.warn('Audit log write skipped:', e);
+      console.warn('Audit write skipped:', e);
     }
   };
 
@@ -300,70 +325,101 @@ export default function App() {
   };
 
   const fetchAnnouncements = async () => {
-    const { data } = await supabase.from('announcements').select('*').order('created_at', { ascending: false });
+    const { data } = await supabase
+      .from('announcements')
+      .select('*')
+      .order('created_at', { ascending: false });
     if (data) setAnnouncements(data);
   };
 
   const fetchSaccoDocuments = async () => {
-    const { data } = await supabase.from('sacco_documents').select('*').order('created_at', { ascending: false });
+    const { data } = await supabase
+      .from('sacco_documents')
+      .select('*')
+      .order('created_at', { ascending: false });
     if (data) setSaccoDocs(data);
+  };
+
+  const fetchMemberInquiries = async (userId) => {
+    try {
+      const { data, error } = await supabase
+        .from('member_inquiries')
+        .select('*')
+        .eq('member_id', userId)
+        .order('created_at', { ascending: false });
+      if (!error && data) setInquiries(data);
+    } catch (err) {
+      console.error('Error in fetchMemberInquiries:', err);
+    }
   };
 
   const fetchUserData = async (userId) => {
     setLoading(true);
-    try {
-      const [
-        { data: profileData },
-        { data: savingsData },
-        { data: loanData },
-        { data: repaymentData }
-      ] = await Promise.all([
-        supabase.from('profiles').select('*, companies(name)').eq('id', userId).single(),
-        supabase.from('savings_ledger').select('*').eq('member_id', userId).order('created_at', { ascending: false }),
-        supabase.from('loans').select('*').eq('member_id', userId).order('created_at', { ascending: false }),
-        supabase.from('loan_repayments').select('*').eq('member_id', userId).order('created_at', { ascending: false })
-      ]);
+    const { data: profileData } = await supabase
+      .from('profiles')
+      .select('*, companies(name)')
+      .eq('id', userId)
+      .single();
 
-      if (profileData) {
-        setProfile(profileData);
-        setEditFullName(profileData.full_name || '');
-        setEditPhone(profileData.phone || '');
-        setEditIdNumber(profileData.id_number || '');
-        setEditCompanyId(profileData.company_id || '');
-      }
+    if (profileData) {
+      setProfile(profileData);
+      setEditFullName(profileData.full_name || '');
+      setEditPhone(profileData.phone || '');
+      setEditIdNumber(profileData.id_number || '');
+      setEditCompanyId(profileData.company_id || '');
 
-      if (savingsData) setSavings(savingsData);
-      if (loanData) setLoans(loanData);
-      if (repaymentData) setRepayments(repaymentData);
-
-      await fetchAllMembers();
+      fetchAllMembers();
       fetchGuarantorData(userId);
       fetchBeneficiaries(userId);
       fetchWelfareClaims(userId);
       fetchMemberInquiries(userId);
-
-      if (['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(profileData?.role)) {
+      if (['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(profileData.role)) {
         fetchAdminData();
       }
-    } catch (err) {
-      console.error('Error fetching user data:', err);
     }
+
+    const { data: savingsData } = await supabase
+      .from('savings_ledger')
+      .select('*')
+      .eq('member_id', userId)
+      .order('created_at', { ascending: false });
+    if (savingsData) setSavings(savingsData);
+
+    const { data: loanData } = await supabase
+      .from('loans')
+      .select('*')
+      .eq('member_id', userId)
+      .order('created_at', { ascending: false });
+    if (loanData) setLoans(loanData);
+
+    const { data: repaymentData } = await supabase
+      .from('loan_repayments')
+      .select('*, loans(principal_amount, loan_product)')
+      .eq('member_id', userId)
+      .order('created_at', { ascending: false });
+    if (repaymentData) setRepayments(repaymentData);
+
     setLoading(false);
   };
 
   const fetchAllMembers = async () => {
     try {
       const [
-        { data: membersData },
+        { data: membersData, error: memErr },
         { data: savingsData },
         { data: loansData },
-        { data: allGuarantorsData }
+        { data: guarantorsData }
       ] = await Promise.all([
         supabase.from('profiles').select('*, companies(id, name)').order('full_name', { ascending: true }),
         supabase.from('savings_ledger').select('member_id, amount'),
         supabase.from('loans').select('id, member_id, balance_remaining, status'),
         supabase.from('loan_guarantors').select('guarantor_id, amount_guaranteed, status, loan_id')
       ]);
+
+      if (memErr) {
+        console.error('Error fetching members:', memErr);
+        return;
+      }
 
       if (membersData) {
         const formatted = membersData.map((m) => {
@@ -375,17 +431,22 @@ export default function App() {
             .filter((l) => l.member_id === m.id && ['approved', 'disbursed'].includes(l.status))
             .reduce((acc, l) => acc + Number(l.balance_remaining || 0), 0);
 
-          const totalMemberGuarantees = (allGuarantorsData || [])
-            .filter((g) => g.guarantor_id === m.id && ['accepted', 'pending'].includes(g.status))
+          const runningPledges = (guarantorsData || [])
+            .filter((g) => {
+              if (g.guarantor_id !== m.id) return false;
+              if (!['accepted', 'pending'].includes(g.status)) return false;
+              const matchedLoan = (loansData || []).find((l) => l.id === g.loan_id);
+              return matchedLoan && !['completed', 'rejected'].includes(matchedLoan.status);
+            })
             .reduce((acc, g) => acc + Number(g.amount_guaranteed || 0), 0);
 
-          const unencumbered = Math.max(0, totalMemberSavings - totalMemberLoans - totalMemberGuarantees);
+          const unencumbered = Math.max(0, totalMemberSavings - totalMemberLoans - runningPledges);
 
           return {
             ...m,
             totalSavings: totalMemberSavings,
             totalActiveDebt: totalMemberLoans,
-            totalGuaranteesCommitted: totalMemberGuarantees,
+            runningGuaranteedPledges: runningPledges,
             unencumberedShares: unencumbered,
           };
         });
@@ -434,7 +495,10 @@ export default function App() {
         .in('status', ['accepted', 'pending']);
       
       if (activeGuarantees) {
-        setMyGuaranteesCommitted(activeGuarantees);
+        const activeRunning = activeGuarantees.filter(
+          (g) => (g.loans?.status === 'approved' || g.loans?.status === 'disbursed' || g.loans?.status === 'pending') && Number(g.loans?.balance_remaining || 1) > 0
+        );
+        setMyGuaranteesCommitted(activeRunning);
       }
     } catch (e) {
       console.error('Guarantor fetch error:', e);
@@ -442,17 +506,26 @@ export default function App() {
   };
 
   const fetchBeneficiaries = async (userId) => {
-    const { data } = await supabase.from('next_of_kin').select('*').eq('member_id', userId).order('created_at', { ascending: false });
+    const { data } = await supabase
+      .from('next_of_kin')
+      .select('*')
+      .eq('member_id', userId)
+      .order('created_at', { ascending: false });
     if (data) setBeneficiaries(data);
   };
 
   const fetchWelfareClaims = async (userId) => {
-    const { data } = await supabase.from('welfare_claims').select('*').eq('member_id', userId).order('created_at', { ascending: false });
+    const { data } = await supabase
+      .from('welfare_claims')
+      .select('*')
+      .eq('member_id', userId)
+      .order('created_at', { ascending: false });
     if (data) setWelfareClaims(data);
   };
 
   const fetchAdminData = async () => {
     await fetchAllMembers();
+
     try {
       const [
         { data: loansRaw },
@@ -467,9 +540,9 @@ export default function App() {
         supabase.from('profiles').select('*, companies(name)'),
         supabase.from('loan_repayments').select('*'),
         supabase.from('loan_guarantors').select('*'),
-        supabase.from('welfare_claims').select('*'),
+        supabase.from('welfare_claims').select('*').order('created_at', { ascending: false }),
         supabase.from('member_inquiries').select('*').order('created_at', { ascending: false }),
-        supabase.from('audit_logs').select('*').order('created_at', { ascending: false }).limit(30)
+        supabase.from('audit_logs').select('*').order('created_at', { ascending: false }).limit(35)
       ]);
 
       if (loansRaw && profilesRaw) {
@@ -545,29 +618,30 @@ export default function App() {
     if (error) {
       setMessage({ text: error.message, type: 'error' });
     } else {
-      logAuditAction('PROFILE_UPDATED', `Member updated personal details and contact info`);
+      logAuditAction('PROFILE_UPDATED', `Member updated personal contact details`);
       setMessage({ text: 'Profile details updated successfully!', type: 'success' });
       fetchUserData(session.user.id);
     }
     setLoading(false);
   };
 
-  const handleResetTransactionPin = async (e) => {
+  const handleChangeSecurityPin = async (e) => {
     e.preventDefault();
-    const activeCurrentPin = profile?.transaction_pin || '1234';
+    setMessage({ text: '', type: '' });
 
-    if (currentPinInput !== activeCurrentPin && profile?.role !== 'admin') {
-      alert('Verification Failed: Current 4-digit PIN is incorrect.');
+    const activePin = profile?.transaction_pin || '1234';
+    if (currentPinInput !== activePin) {
+      alert('Security Verification Failed: Current PIN is incorrect.');
       return;
     }
 
-    if (newPinInput.length !== 4 || confirmPinInput.length !== 4) {
-      alert('PIN Error: New PIN must be exactly 4 numeric digits.');
+    if (newPinInput.length !== 4 || !/^\d{4}$/.test(newPinInput)) {
+      alert('Invalid PIN: New PIN must be exactly 4 digits.');
       return;
     }
 
-    if (newPinInput !== confirmPinInput) {
-      alert('PIN Error: New PIN and Confirmation PIN do not match.');
+    if (newPinInput !== confirmNewPinInput) {
+      alert('Mismatch: New PIN and Confirmation PIN do not match.');
       return;
     }
 
@@ -577,16 +651,16 @@ export default function App() {
       .update({ transaction_pin: newPinInput })
       .eq('id', session.user.id);
 
-    if (!error) {
-      logAuditAction('PIN_RESET', 'Member changed 4-digit security PIN');
-      setMessage({ text: 'Security PIN changed successfully!', type: 'success' });
-      setShowPinResetModal(false);
+    if (error) {
+      setMessage({ text: error.message, type: 'error' });
+    } else {
+      logAuditAction('SECURITY_PIN_CHANGED', 'Member successfully changed their 4-digit transaction security PIN');
+      setMessage({ text: '4-Digit Transaction Security PIN changed successfully!', type: 'success' });
+      setShowPinChangeModal(false);
       setCurrentPinInput('');
       setNewPinInput('');
-      setConfirmPinInput('');
+      setConfirmNewPinInput('');
       fetchUserData(session.user.id);
-    } else {
-      setMessage({ text: error.message, type: 'error' });
     }
     setLoading(false);
   };
@@ -633,8 +707,8 @@ export default function App() {
     if (error) {
       setMessage({ text: error.message, type: 'error' });
     } else {
-      logAuditAction('PASSWORD_UPDATED', `User reset account password`);
-      setMessage({ text: 'Password updated successfully! Please sign in.', type: 'success' });
+      logAuditAction('PASSWORD_UPDATED', `User successfully reset account password`);
+      setMessage({ text: 'Password updated successfully! Please sign in with your new password.', type: 'success' });
       await supabase.auth.signOut();
       setAuthMode('login');
       setNewPassword('');
@@ -646,6 +720,11 @@ export default function App() {
     e.preventDefault();
     if (!odpcConsent) {
       setMessage({ text: 'Please accept the Data Protection Act (ODPC) privacy terms.', type: 'error' });
+      return;
+    }
+
+    if (transactionPin.length !== 4) {
+      setMessage({ text: 'Please choose an exact 4-digit Security PIN.', type: 'error' });
       return;
     }
 
@@ -681,8 +760,8 @@ export default function App() {
 
       if (profileError) setMessage({ text: profileError.message, type: 'error' });
       else {
-        logAuditAction('REGISTER_ACCOUNT', `New member: ${fullName} (${memberNumber})`, authData.user.id, fullName);
-        setMessage({ text: 'Account created successfully!', type: 'success' });
+        logAuditAction('REGISTER_ACCOUNT', `New member profile: ${fullName} (${memberNumber})`, authData.user.id, fullName);
+        setMessage({ text: 'Account created successfully! Welcome to KEWA SACCO.', type: 'success' });
       }
     }
     setLoading(false);
@@ -711,7 +790,7 @@ export default function App() {
       ]);
 
       if (!error) {
-        logAuditAction('MANUAL_SAVINGS_CREDIT', `Posted KES ${parsedAmount.toLocaleString()} to ${targetMember?.full_name} (${refCode})`);
+        logAuditAction('MANUAL_SAVINGS_CREDIT', `Official posted KES ${parsedAmount.toLocaleString()} to ${targetMember?.full_name} (${refCode})`);
         setMessage({ text: `Success! KES ${parsedAmount.toLocaleString()} credited to ${targetMember?.full_name}'s Savings.`, type: 'success' });
         setManualAmountRaw('');
         setManualRefCode('');
@@ -730,7 +809,7 @@ export default function App() {
       ]);
 
       logAuditAction('WELFARE_BENEVOLENT_CREDIT', `Posted KES ${parsedAmount.toLocaleString()} Welfare Fund to ${targetMember?.full_name}`);
-      setMessage({ text: `Success! KES ${parsedAmount.toLocaleString()} credited to Welfare Account.`, type: 'success' });
+      setMessage({ text: `Success! KES ${parsedAmount.toLocaleString()} credited to ${targetMember?.full_name}'s Welfare Account.`, type: 'success' });
       setManualAmountRaw('');
       setManualRefCode('');
     } else if (manualAdjustmentType === 'loan_repayment') {
@@ -750,8 +829,8 @@ export default function App() {
             reference_code: `${refCode}-SAVINGS`,
           },
         ]);
-        logAuditAction('AUTO_ROUTED_SAVINGS', `No active loans. KES ${parsedAmount.toLocaleString()} routed to ${targetMember?.full_name}'s Savings.`);
-        setMessage({ text: `Member has no active loans. KES ${parsedAmount.toLocaleString()} credited to Savings.`, type: 'success' });
+        logAuditAction('AUTO_ROUTED_SAVINGS', `No active loans found. KES ${parsedAmount.toLocaleString()} credited to ${targetMember?.full_name}'s Savings.`);
+        setMessage({ text: `Notice: Member has no active loans. KES ${parsedAmount.toLocaleString()} was automatically credited to their Savings ledger.`, type: 'success' });
         setManualAmountRaw('');
         setManualRefCode('');
         setLoading(false);
@@ -813,7 +892,10 @@ export default function App() {
       }
 
       logAuditAction('EXACT_STANDARD_REPAYMENT', `Processed KES ${parsedAmount.toLocaleString()} for ${targetMember?.full_name}: ${distributionLog.join(' | ')}`);
-      setMessage({ text: `Success! KES ${parsedAmount.toLocaleString()} posted: ${distributionLog.join(' | ')}.`, type: 'success' });
+      setMessage({ 
+        text: `Success! KES ${parsedAmount.toLocaleString()} posted: ${distributionLog.join(' | ')}.`, 
+        type: 'success' 
+      });
       setManualAmountRaw('');
       setManualRefCode('');
     }
@@ -826,7 +908,7 @@ export default function App() {
   const handleExecuteHistoricalMigration = (e) => {
     e.preventDefault();
     if (!migrationFile) {
-      alert('Please select an Excel/CSV migration file.');
+      alert('Please select an Excel/CSV migration file containing existing SACCO balances.');
       return;
     }
 
@@ -882,8 +964,11 @@ export default function App() {
           }
         }
 
-        logAuditAction('HISTORICAL_DATA_MIGRATED', `Imported ${successCount} member records (${errorCount} unmatched)`);
-        setMessage({ text: `Migration Complete! Loaded ${successCount} records.`, type: 'success' });
+        logAuditAction('HISTORICAL_DATA_MIGRATED', `Imported ${successCount} member opening ledgers (${errorCount} unmatched)`);
+        setMessage({ 
+          text: `Migration Complete! Successfully loaded ${successCount} existing member records.`, 
+          type: 'success' 
+        });
         fetchAdminData();
         fetchUserData(session.user.id);
         setLoading(false);
@@ -892,8 +977,9 @@ export default function App() {
     });
   };
 
-  // Society-Wide Financial Metrics
+  // FINANCIAL & ACCOUNTING FORMULAS
   const totalSocietySharesCapital = allMembers.reduce((acc, m) => acc + Number(m.totalSavings || 0), 0);
+  
   const totalSocietyUnpaidLoans = allLoansLeadership
     .filter(l => ['approved', 'disbursed'].includes(l.status))
     .reduce((acc, l) => acc + Number(l.balance_remaining || 0), 0);
@@ -907,22 +993,19 @@ export default function App() {
       return acc + (principal * rate * months);
     }, 0);
 
-  // Correct Liquidity Balance Formula
-  const netSocietyLiquidity = Math.max(0, (totalSocietySharesCapital - totalSocietyUnpaidLoans) + totalSocietyInterestAccrued);
+  const netSocietyLiquidCapital = (totalSocietySharesCapital - totalSocietyUnpaidLoans) + totalSocietyInterestAccrued;
 
-  // Personal Ledger & Limit Metrics
-  const userMemberObj = allMembers.find(m => m.id === (session?.user?.id || profile?.id));
-  const totalSavings = savings.reduce((acc, curr) => acc + Number(curr.amount || 0), 0) || Number(userMemberObj?.totalSavings || 0);
+  const totalSavings = savings.reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
   const activeLoanBalance = loans
     .filter((l) => (l.status === 'approved' || l.status === 'disbursed') && Number(l.balance_remaining || 0) > 0)
-    .reduce((acc, curr) => acc + Number(curr.balance_remaining || 0), 0) || Number(userMemberObj?.totalActiveDebt || 0);
+    .reduce((acc, curr) => acc + Number(curr.balance_remaining || 0), 0);
 
-  const totalGuaranteesCommittedAmount = myGuaranteesCommitted.reduce(
+  const totalRunningGuaranteesCommitted = myGuaranteesCommitted.reduce(
     (acc, curr) => acc + Number(curr.amount_guaranteed || 0),
     0
   );
 
-  const freeSharesAvailable = Math.max(0, totalSavings - activeLoanBalance - totalGuaranteesCommittedAmount);
+  const freeSharesAvailable = Math.max(0, totalSavings - activeLoanBalance - totalRunningGuaranteesCommitted);
   
   const maxLimitForSelectedProduct = loanProduct === 'monthly_shylock'
     ? 20000 
@@ -931,7 +1014,7 @@ export default function App() {
   const loanPrincipalNum = parseAccountingNumber(loanPrincipalRaw);
   const calculatedInterest = (loanPrincipalNum * (interestRate / 100)) * loanMonths;
   const calculatedTotal = loanPrincipalNum + calculatedInterest;
-  const monthlyInstallment = calculatedTotal / loanMonths;
+  const monthlyInstallment = loanMonths > 0 ? calculatedTotal / loanMonths : 0;
 
   const selectGuarantorFromSearch = (index, member) => {
     const updated = [...guarantorList];
@@ -945,6 +1028,7 @@ export default function App() {
 
   const checkBlindGuarantorEligibility = (index, memberId, currentPledgeAmount = 0) => {
     const updated = [...guarantorList];
+
     if (!memberId) {
       updated[index].eligible = true;
       updated[index].note = '';
@@ -960,10 +1044,10 @@ export default function App() {
 
     if (calculatedFreeShares <= 0) {
       isEligible = false;
-      noteMsg = '⚠️ Ineligible: Colleague currently has no unencumbered Free Shares available.';
+      noteMsg = '⚠️ Ineligible: Colleague currently has 0 unencumbered Free Shares available.';
     } else if (currentPledgeAmount > 0 && currentPledgeAmount > calculatedFreeShares) {
       isEligible = false;
-      noteMsg = '⚠️ Insufficient Free Shares: Pledged amount exceeds colleague\'s available limit.';
+      noteMsg = `⚠️ Insufficient Free Shares: Pledged amount exceeds colleague's available limit (KES ${calculatedFreeShares.toLocaleString()}).`;
     } else {
       isEligible = true;
       noteMsg = '✓ Eligible: Colleague meets the unencumbered savings requirement for this pledge.';
@@ -1001,7 +1085,7 @@ export default function App() {
     setMessage({ text: '', type: '' });
 
     if (loanPrincipalNum > maxLimitForSelectedProduct) {
-      setMessage({ text: `Loan exceeds maximum limit of KES ${maxLimitForSelectedProduct.toLocaleString()}.`, type: 'error' });
+      setMessage({ text: `Loan exceeds maximum product limit of KES ${maxLimitForSelectedProduct.toLocaleString()}.`, type: 'error' });
       return;
     }
 
@@ -1045,7 +1129,7 @@ export default function App() {
 
     const memberActivePin = profile?.transaction_pin || '1234';
     if (enteredLoanPin !== memberActivePin) {
-      alert('Security Verification Failed: The 4-digit Transaction PIN you entered is incorrect.');
+      alert('Security Verification Failed: The 4-digit Transaction Security PIN you entered is incorrect.');
       return;
     }
 
@@ -1088,9 +1172,9 @@ export default function App() {
       await supabase.from('loan_guarantors').insert(guarantorsToInsert);
     }
 
-    logAuditAction('LOAN_APPLICATION_SUBMITTED', `${loanProduct.toUpperCase()} applied: KES ${loanPrincipalNum.toLocaleString()} (PIN Verified, Dest: ${disbursementMethod.toUpperCase()})`);
+    logAuditAction('LOAN_APPLICATION_SUBMITTED', `${loanProduct.toUpperCase()} applied: KES ${loanPrincipalNum.toLocaleString()} (PIN Verified, Dest: ${disbursementMethod.toUpperCase()} - ${disbursementDetails})`);
 
-    setMessage({ text: `Loan submitted! Pipeline: Assistant Chair -> Chairman -> Treasurer.`, type: 'success' });
+    setMessage({ text: `Loan submitted successfully! Routed into Sequential 3-Signatory Gate.`, type: 'success' });
     setGuarantorList([{ guarantorId: '', searchTerm: '', amountRaw: '', eligible: true, note: '', dropdownOpen: false }]);
     setDisbursementDetails('');
     setEnteredLoanPin('');
@@ -1205,7 +1289,11 @@ export default function App() {
       return;
     }
 
-    const { error } = await supabase.from('loan_guarantors').update({ status }).eq('id', guaranteeId);
+    const { error } = await supabase
+      .from('loan_guarantors')
+      .update({ status })
+      .eq('id', guaranteeId);
+
     if (!error) {
       logAuditAction('GUARANTOR_RESPONSE', `Marked pledge as ${status} (KES ${Number(pledgeAmount).toLocaleString()})`);
       fetchGuarantorData(session.user.id);
@@ -1223,9 +1311,14 @@ export default function App() {
     if (claimDocument) {
       const fileExt = claimDocument.name.split('.').pop();
       const fileName = `${session.user.id}-${Date.now()}.${fileExt}`;
-      const { data: uploadData, error: uploadError } = await supabase.storage.from('welfare-documents').upload(fileName, claimDocument);
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('welfare-documents')
+        .upload(fileName, claimDocument);
+
       if (!uploadError && uploadData) {
-        const { data: { publicUrl } } = supabase.storage.from('welfare-documents').getPublicUrl(fileName);
+        const { data: { publicUrl } } = supabase.storage
+          .from('welfare-documents')
+          .getPublicUrl(fileName);
         documentUrl = publicUrl;
       }
     }
@@ -1248,7 +1341,7 @@ export default function App() {
 
     if (error) setMessage({ text: error.message, type: 'error' });
     else {
-      logAuditAction('WELFARE_CLAIM_FILED', `Welfare claim for KES ${claimAmtNum.toLocaleString()} (${claimType})`);
+      logAuditAction('WELFARE_CLAIM_FILED', `Welfare claim filed: KES ${claimAmtNum.toLocaleString()} (${claimType}) via ${claimDisbursementMethod.toUpperCase()} (${claimDisbursementDetails})`);
       setMessage({ text: 'Welfare claim submitted for Sequential 3-Signatory review.', type: 'success' });
       setClaimAmountRaw('');
       setClaimDesc('');
@@ -1356,7 +1449,7 @@ export default function App() {
     if (lower.includes('loan') || lower.includes('apply') || lower.includes('borrow')) {
       botReply = `You can apply for 4 tailored products: 1. Main Loan (Up to 24 mos, 1% rate, 3X savings), 2. Emergency Loan (12 mos, 1%), 3. Christmas Loan (6 mos, 1%), and 4. Monthly Shylock (1 mo, 5% fee). Your maximum limit right now is KES ${maxLimitForSelectedProduct.toLocaleString()}.`;
     } else if (lower.includes('free share') || lower.includes('shares') || lower.includes('pledge') || lower.includes('guarant')) {
-      botReply = `Your available Free Shares are currently KES ${freeSharesAvailable.toLocaleString()}. This represents your Total Savings (KES ${totalSavings.toLocaleString()}) minus Active Debt (KES ${activeLoanBalance.toLocaleString()}) and running guarantee pledges (KES ${totalGuaranteesCommittedAmount.toLocaleString()}).`;
+      botReply = `Your available Free Shares are currently KES ${freeSharesAvailable.toLocaleString()}. This represents your Total Savings (KES ${totalSavings.toLocaleString()}) minus Active Debt (KES ${activeLoanBalance.toLocaleString()}) and running guarantee pledges (KES ${totalRunningGuaranteesCommitted.toLocaleString()}).`;
     } else if (lower.includes('mpesa') || lower.includes('paybill') || lower.includes('deposit')) {
       botReply = `Use Paybill Business No: 522522, Account No: ${profile?.member_number || 'Your Member No'}. You can top-up voluntary savings or make direct loan amortizations instantly in the M-Pesa tab!`;
     }
@@ -1426,7 +1519,10 @@ export default function App() {
           .eq('id', memberLoan.id);
 
         if (isCleared) {
-          await supabase.from('loan_guarantors').update({ status: 'released' }).eq('loan_id', memberLoan.id);
+          await supabase
+            .from('loan_guarantors')
+            .update({ status: 'released' })
+            .eq('loan_id', memberLoan.id);
         }
 
         logAuditAction('MPESA_LOAN_REPAYMENT', `KES ${mpesaAmtNum.toLocaleString()} loan repayment via M-Pesa ${receipt}`);
@@ -1514,7 +1610,12 @@ export default function App() {
         },
       ]);
 
-      const { data: currentLoan } = await supabase.from('loans').select('balance_remaining').eq('id', r.active_loan_id).single();
+      const { data: currentLoan } = await supabase
+        .from('loans')
+        .select('balance_remaining')
+        .eq('id', r.active_loan_id)
+        .single();
+
       if (currentLoan) {
         const newBal = Math.max(0, Number(currentLoan.balance_remaining) - r.loan_amount);
         const isCleared = newBal === 0;
@@ -1528,13 +1629,19 @@ export default function App() {
           .eq('id', r.active_loan_id);
 
         if (isCleared) {
-          await supabase.from('loan_guarantors').update({ status: 'released' }).eq('loan_id', r.active_loan_id);
+          await supabase
+            .from('loan_guarantors')
+            .update({ status: 'released' })
+            .eq('loan_id', r.active_loan_id);
         }
       }
     }
 
     logAuditAction('PAYROLL_CHECKOFF_EXECUTED', `Batch payroll processed for ${batchMonth} (${validRows.length} members)`);
-    setMessage({ text: `Batch checkoff processed successfully!`, type: 'success' });
+    setMessage({
+      text: `Batch checkoff processed: ${savingsInserts.length} savings credits and ${loanRows.length} loan deductions applied!`,
+      type: 'success',
+    });
     setBatchPreview([]);
     fetchUserData(session.user.id);
     setLoading(false);
@@ -1552,14 +1659,19 @@ export default function App() {
     const fileName = `doc-${Date.now()}.${fileExt}`;
     const fileSizeMB = (docFile.size / (1024 * 1024)).toFixed(2) + ' MB';
 
-    const { data: uploadData, error: uploadError } = await supabase.storage.from('sacco-documents').upload(fileName, docFile);
+    const { data: uploadData, error: uploadError } = await supabase.storage
+      .from('sacco-documents')
+      .upload(fileName, docFile);
+
     if (uploadError) {
       setMessage({ text: uploadError.message, type: 'error' });
       setLoading(false);
       return;
     }
 
-    const { data: { publicUrl } } = supabase.storage.from('sacco-documents').getPublicUrl(fileName);
+    const { data: { publicUrl } } = supabase.storage
+      .from('sacco-documents')
+      .getPublicUrl(fileName);
 
     const { error: dbError } = await supabase.from('sacco_documents').insert([
       {
@@ -1576,7 +1688,7 @@ export default function App() {
       setMessage({ text: dbError.message, type: 'error' });
     } else {
       logAuditAction('SACCO_DOCUMENT_UPLOADED', `Uploaded report: ${docTitle} (${docYear})`);
-      setMessage({ text: 'Report published to Member Library!', type: 'success' });
+      setMessage({ text: 'Official report published to Member Library!', type: 'success' });
       setDocTitle('');
       setDocFile(null);
       fetchSaccoDocuments();
@@ -1651,7 +1763,7 @@ export default function App() {
         ...loans.map(l => ({
           dateObj: new Date(l.created_at),
           dateStr: new Date(l.created_at).toLocaleDateString('en-GB'),
-          type: `LOAN DISBURSED (${(l.loan_product || 'MAIN').replace(/_/g, ' ').toUpperCase()})`,
+          type: `LOAN DISBURSED (${(l.loan_product || 'MAIN').replace('_', ' ').toUpperCase()})`,
           ref: `LOAN-${l.id.slice(0, 6)}`,
           amount: Number(l.principal_amount),
           isPositive: true
@@ -1659,7 +1771,7 @@ export default function App() {
         ...repayments.map(r => ({
           dateObj: new Date(r.created_at),
           dateStr: new Date(r.created_at).toLocaleDateString('en-GB'),
-          type: `LOAN REPAYMENT (${(r.loans?.loan_product || 'LOAN').replace(/_/g, ' ').toUpperCase()})`,
+          type: `LOAN REPAYMENT (${(r.loans?.loan_product || 'LOAN').replace('_', ' ').toUpperCase()})`,
           ref: r.reference_code || 'DEDUCTION',
           amount: Number(r.amount),
           isPositive: false
@@ -1718,16 +1830,19 @@ export default function App() {
 
   const pendingGuaranteesCount = guarantorRequests.filter((g) => g.status === 'pending').length;
 
-  const chairmanOfficial = allMembers.find((m) => m.role === 'chairman') || { full_name: 'Philip Karish (Chairman)', phone: '0793608000' };
-  const treasurerOfficial = allMembers.find((m) => m.role === 'treasurer') || { full_name: 'Moses Opere (Treasurer)', phone: '0785202416' };
-  const asstChairOfficial = allMembers.find((m) => m.role === 'assistant_chair') || { full_name: 'Fred Songoni (Assistant Chair)', phone: '0719732399' };
+  const chairmanOfficial = allMembers.find((m) => m.role === 'chairman') || { full_name: 'Executive Chairperson', phone: '0700000001' };
+  const treasurerOfficial = allMembers.find((m) => m.role === 'treasurer') || { full_name: 'Treasurer & Finance', phone: '0700000002' };
+  const asstChairOfficial = allMembers.find((m) => m.role === 'assistant_chair') || { full_name: 'Assistant Chairperson', phone: '0700000003' };
 
   const formatKenyanWhatsAppNumber = (rawPhone) => {
     if (!rawPhone) return '254700000000';
     let clean = rawPhone.toString().replace(/[^0-9]/g, '');
-    if (clean.startsWith('0')) clean = '254' + clean.substring(1);
-    else if (clean.startsWith('7') || clean.startsWith('1')) clean = '254' + clean;
-    return clean || '254700000000';
+    if (clean.startsWith('0')) {
+      clean = '254' + clean.substring(1);
+    } else if (clean.startsWith('7') || clean.startsWith('1')) {
+      clean = '254' + clean;
+    }
+    return clean;
   };
 
   const getWhatsAppLink = (phoneNum, roleName) => {
@@ -1892,7 +2007,112 @@ export default function App() {
         )}
       </header>
 
-      {/* Main Container */}
+      {/* Full-Screen Mobile Drawer */}
+      {session && authMode !== 'reset' && mobileMenuOpen && (
+        <div className="lg:hidden fixed inset-0 top-[52px] bg-slate-950/98 backdrop-blur-2xl z-[100] px-4 py-5 space-y-2.5 overflow-y-auto border-t border-slate-800 animate-fadeIn">
+          <div className="p-3 bg-slate-900/90 border border-slate-800 rounded-2xl mb-3 flex items-center justify-between">
+            <div>
+              <p className="text-xs font-bold text-white">{profile?.full_name || 'Member'}</p>
+              <p className="text-[10px] text-emerald-400 font-mono">{profile?.member_number || ''}</p>
+            </div>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-950 border border-amber-800 text-amber-300 uppercase">
+              {profile?.role ? profile.role.replace('_', ' ') : 'Member'}
+            </span>
+          </div>
+
+          <button
+            onClick={() => { setActiveTab('overview'); setMobileMenuOpen(false); }}
+            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition ${
+              activeTab === 'overview' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-slate-300 border border-slate-800/80'
+            }`}
+          >
+            <PiggyBank className="w-4 h-4" /> Overview Dashboard
+          </button>
+          
+          <button
+            onClick={() => { setActiveTab('loans'); setMobileMenuOpen(false); }}
+            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition ${
+              activeTab === 'loans' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-slate-300 border border-slate-800/80'
+            }`}
+          >
+            <Calculator className="w-4 h-4" /> Loan Products & Limits
+          </button>
+
+          <button
+            onClick={() => { setActiveTab('guarantors'); setMobileMenuOpen(false); }}
+            className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold transition ${
+              activeTab === 'guarantors' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-slate-300 border border-slate-800/80'
+            }`}
+          >
+            <span className="flex items-center gap-3">
+              <Users className="w-4 h-4" /> Guarantor Requests
+            </span>
+            {pendingGuaranteesCount > 0 && (
+              <span className="bg-rose-500 text-white text-[10px] px-2 py-0.5 rounded-full font-bold">
+                {pendingGuaranteesCount} new
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => { setActiveTab('documents'); setMobileMenuOpen(false); }}
+            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition ${
+              activeTab === 'documents' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-slate-300 border border-slate-800/80'
+            }`}
+          >
+            <FolderDown className="w-4 h-4 text-emerald-400" /> Reports & AGM Booklets
+          </button>
+
+          <button
+            onClick={() => { setActiveTab('beneficiaries'); setMobileMenuOpen(false); }}
+            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition ${
+              activeTab === 'beneficiaries' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-slate-300 border border-slate-800/80'
+            }`}
+          >
+            <Settings className="w-4 h-4" /> Profile & Welfare (KES 200)
+          </button>
+
+          <button
+            onClick={() => { setActiveTab('mpesa'); setMobileMenuOpen(false); }}
+            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition ${
+              activeTab === 'mpesa' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-slate-300 border border-slate-800/80'
+            }`}
+          >
+            <Smartphone className="w-4 h-4" /> M-Pesa Top-Up & Repay
+          </button>
+
+          <button
+            onClick={() => { setActiveTab('support'); setMobileMenuOpen(false); }}
+            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition ${
+              activeTab === 'support' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-emerald-300 border border-slate-800/80'
+            }`}
+          >
+            <MessageSquare className="w-4 h-4" /> Helpdesk, Bot & Officials Chat
+          </button>
+
+          {['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(userRole) && (
+            <button
+              onClick={() => { setActiveTab('admin'); setMobileMenuOpen(false); }}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold transition ${
+                activeTab === 'admin' ? 'bg-gradient-to-r from-amber-600 to-orange-600 text-white shadow-lg' : 'bg-slate-900/80 text-amber-300 border border-slate-800/80'
+              }`}
+            >
+              <ShieldCheck className="w-4 h-4" /> 3-Signatory Leadership Hub
+            </button>
+          )}
+
+          <div className="pt-3 border-t border-slate-800">
+            <button
+              onClick={() => handlePerformSignOut(false)}
+              className="w-full flex items-center justify-center gap-2 bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-200 py-3 rounded-xl text-xs font-bold shadow cursor-pointer"
+            >
+              <LogOut className="w-4 h-4" /> Sign Out of Portal
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Main View Area */}
       <main className="max-w-6xl mx-auto p-3 sm:p-8 space-y-4 sm:space-y-6">
         {message.text && (
           <div
@@ -1908,7 +2128,6 @@ export default function App() {
         )}
 
         {!session || authMode === 'reset' ? (
-          /* Authentication Forms */
           <div className="max-w-md mx-auto mt-6 sm:mt-12 bg-slate-900/90 border border-slate-800/90 rounded-3xl p-5 sm:p-10 shadow-2xl backdrop-blur-xl">
             <div className="text-center mb-5">
               <div className="inline-flex bg-gradient-to-tr from-emerald-600 to-teal-400 p-3 rounded-2xl shadow-xl shadow-emerald-900/30 mb-2">
@@ -1925,18 +2144,7 @@ export default function App() {
             {authMode === 'login' && (
               <form onSubmit={handleLogin} className="space-y-3.5" autoComplete="off">
                 <div>
-                  <div className="flex justify-between items-center mb-1">
-                    <label className="block text-xs font-semibold text-slate-300">Email Address</label>
-                    {savedEmailChip && !email && (
-                      <button
-                        type="button"
-                        onClick={() => setEmail(savedEmailChip)}
-                        className="text-[10px] text-emerald-400 hover:text-emerald-300 font-semibold flex items-center gap-1 bg-emerald-950/60 border border-emerald-800/80 px-2 py-0.5 rounded-full transition cursor-pointer"
-                      >
-                        <AtSign className="w-3 h-3" /> Use: {savedEmailChip}
-                      </button>
-                    )}
-                  </div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Email Address</label>
                   <input
                     type="email"
                     required
@@ -1947,39 +2155,20 @@ export default function App() {
                   />
                 </div>
                 <div>
-                  <div className="flex justify-between items-center mb-1">
-                    <label className="block text-xs font-semibold text-slate-300">Password</label>
-                    <button
-                      type="button"
-                      onClick={() => setAuthMode('forgot')}
-                      className="text-[11px] text-emerald-400 hover:underline cursor-pointer font-medium"
-                    >
-                      Forgot password?
-                    </button>
-                  </div>
-                  <div className="relative">
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      required
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-3.5 pr-10 py-2.5 text-xs sm:text-sm text-white"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
-                    >
-                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Password</label>
+                  <input
+                    type="password"
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white"
+                  />
                 </div>
-
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3 rounded-xl text-xs sm:text-sm transition mt-1 shadow-lg cursor-pointer"
+                  className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3 rounded-xl text-xs sm:text-sm transition shadow-lg cursor-pointer"
                 >
                   {loading ? 'Processing...' : 'Sign In to Portal'}
                 </button>
@@ -1987,7 +2176,7 @@ export default function App() {
             )}
 
             {authMode === 'register' && (
-              <form onSubmit={handleRegister} className="space-y-3.5" autoComplete="off">
+              <form onSubmit={handleRegister} className="space-y-3" autoComplete="off">
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">Full Name</label>
                   <input
@@ -1996,22 +2185,10 @@ export default function App() {
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
                     placeholder="John Doe"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
                   />
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Affiliation / Branch</label>
-                  <select
-                    value={companyId}
-                    onChange={(e) => setCompanyId(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white"
-                  >
-                    {companies.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="grid grid-cols-2 gap-2.5">
+                <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="block text-xs font-semibold text-slate-300 mb-1">Member No.</label>
                     <input
@@ -2020,7 +2197,7 @@ export default function App() {
                       value={memberNumber}
                       onChange={(e) => setMemberNumber(e.target.value)}
                       placeholder="KW-001"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs sm:text-sm text-white font-mono"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
                     />
                   </div>
                   <div>
@@ -2031,26 +2208,24 @@ export default function App() {
                       value={idNumber}
                       onChange={(e) => setIdNumber(e.target.value)}
                       placeholder="12345678"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs sm:text-sm text-white font-mono"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
                     />
                   </div>
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Set 4-Digit Security PIN</label>
+                  <label className="block text-xs font-semibold text-amber-300 mb-1">4-Digit Transaction Security PIN</label>
                   <input
                     type="password"
                     inputMode="numeric"
                     pattern="[0-9]*"
                     maxLength={4}
-                    required
-                    autoComplete="new-password"
-                    name="kewa_reg_pin_no_autofill"
                     data-lpignore="true"
-                    data-form-type="other"
+                    autoComplete="new-password"
+                    required
                     value={transactionPin}
                     onChange={(e) => setTransactionPin(e.target.value.replace(/[^0-9]/g, ''))}
                     placeholder="••••"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white font-mono text-center tracking-widest"
+                    className="w-full bg-slate-950 border border-amber-500/60 rounded-xl px-3.5 py-2 text-xs text-white font-mono text-center tracking-widest"
                   />
                 </div>
                 <div>
@@ -2061,7 +2236,7 @@ export default function App() {
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     placeholder="0712345678"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white font-mono"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
                   />
                 </div>
                 <div>
@@ -2072,30 +2247,20 @@ export default function App() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="name@domain.com"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white"
                   />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">Password</label>
-                  <div className="relative">
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      required
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-3.5 pr-10 py-2.5 text-xs sm:text-sm text-white"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
-                    >
-                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
+                  <input
+                    type="password"
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                  />
                 </div>
-
                 <div className="flex items-start gap-2 pt-1">
                   <input
                     type="checkbox"
@@ -2109,11 +2274,10 @@ export default function App() {
                     I consent to KEWA SACCO processing my data under the <strong>Kenya Data Protection Act (2019)</strong>.
                   </label>
                 </div>
-
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3 rounded-xl text-xs sm:text-sm transition mt-1 shadow-lg cursor-pointer"
+                  className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-2.5 rounded-xl text-xs sm:text-sm transition mt-1 shadow-lg cursor-pointer"
                 >
                   {loading ? 'Processing...' : 'Complete Registration'}
                 </button>
@@ -2139,7 +2303,6 @@ export default function App() {
             </div>
           </div>
         ) : (
-          /* Authenticated Dashboard */
           <>
             <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-3 shadow-xl">
               <div>
@@ -2148,7 +2311,7 @@ export default function App() {
                     {profile?.companies?.name || 'KEWA Member'}
                   </span>
                   <span className="text-[10px] sm:text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-amber-950 border border-amber-800 text-amber-300 uppercase">
-                    Role: {profile?.role ? profile.role.replace(/_/g, ' ') : 'Member'}
+                    Role: {profile?.role ? profile.role.replace('_', ' ') : 'Member'}
                   </span>
                 </div>
                 <h2 className="text-xl sm:text-3xl font-black text-white mt-2 tracking-tight">{profile?.full_name}</h2>
@@ -2193,9 +2356,9 @@ export default function App() {
 
                   <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-4 flex items-center justify-between shadow">
                     <div>
-                      <p className="text-[11px] font-semibold text-slate-400">Guarantees</p>
+                      <p className="text-[11px] font-semibold text-slate-400">Running Guarantees</p>
                       <h3 className="text-lg sm:text-xl font-black text-rose-400 mt-0.5">
-                        KES {totalGuaranteesCommittedAmount.toLocaleString('en-KE', { minimumFractionDigits: 0 })}
+                        KES {totalRunningGuaranteesCommitted.toLocaleString('en-KE', { minimumFractionDigits: 0 })}
                       </h3>
                     </div>
                     <div className="bg-rose-950/80 border border-rose-800/50 p-2.5 rounded-xl text-rose-400 hidden sm:block">
@@ -2236,10 +2399,80 @@ export default function App() {
                     </div>
                   </div>
                 )}
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-lg">
+                    <div className="flex items-center gap-2 mb-3">
+                      <ArrowUpRight className="w-4 h-4 text-emerald-400" />
+                      <h4 className="text-sm sm:text-base font-bold text-white">Monthly Savings Checkoff Ledger</h4>
+                    </div>
+
+                    {savings.length === 0 ? (
+                      <div className="text-center py-6 text-slate-500 text-xs">No contributions found.</div>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs">
+                          <thead>
+                            <tr className="border-b border-slate-800 text-slate-400 uppercase font-semibold">
+                              <th className="pb-2">Date</th>
+                              <th className="pb-2">Batch Ref</th>
+                              <th className="pb-2 text-right">Credit</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-800/50">
+                            {savings.map((s) => (
+                              <tr key={s.id}>
+                                <td className="py-2 text-slate-300">{new Date(s.created_at).toLocaleDateString()}</td>
+                                <td className="py-2 text-slate-400 font-mono">{s.reference_code || '-'}</td>
+                                <td className="py-2 text-right font-bold text-emerald-400">
+                                  +KES {Number(s.amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-lg">
+                    <div className="flex items-center gap-2 mb-3">
+                      <ArrowDownRight className="w-4 h-4 text-amber-400" />
+                      <h4 className="text-sm sm:text-base font-bold text-white">Monthly Loan Repayments Ledger</h4>
+                    </div>
+
+                    {repayments.length === 0 ? (
+                      <div className="text-center py-6 text-slate-500 text-xs">No loan repayments deducted yet.</div>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs">
+                          <thead>
+                            <tr className="border-b border-slate-800 text-slate-400 uppercase font-semibold">
+                              <th className="pb-2">Date</th>
+                              <th className="pb-2">Batch Ref</th>
+                              <th className="pb-2 text-right">Deducted</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-800/50">
+                            {repayments.map((r) => (
+                              <tr key={r.id}>
+                                <td className="py-2 text-slate-300">{new Date(r.created_at).toLocaleDateString()}</td>
+                                <td className="py-2 text-slate-400 font-mono">{r.reference_code || '-'}</td>
+                                <td className="py-2 text-right font-bold text-amber-400">
+                                  -KES {Number(r.amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
 
-            {/* TAB 2: LOANS & LIMITS */}
+            {/* TAB 2: LOANS */}
             {activeTab === 'loans' && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-lg">
@@ -2251,6 +2484,60 @@ export default function App() {
                     <div className="bg-emerald-950 border border-emerald-800 px-2.5 py-1 rounded-xl text-[11px] font-bold text-emerald-300">
                       Max Limit: KES {maxLimitForSelectedProduct.toLocaleString()}
                     </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 mb-3">
+                    <button
+                      type="button"
+                      onClick={() => handleLoanProductChange('main_loan')}
+                      className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
+                        loanProduct === 'main_loan' 
+                          ? 'bg-emerald-950/80 border-emerald-500 text-white shadow' 
+                          : 'bg-slate-950 border-slate-800 text-slate-400'
+                      }`}
+                    >
+                      <span className="text-xs font-bold block">1. Main Loan</span>
+                      <span className="text-[10px] text-slate-400">Long-term (24 mos, 1%)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleLoanProductChange('emergency_loan')}
+                      className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
+                        loanProduct === 'emergency_loan' 
+                          ? 'bg-emerald-950/80 border-emerald-500 text-white shadow' 
+                          : 'bg-slate-950 border-slate-800 text-slate-400'
+                      }`}
+                    >
+                      <span className="text-xs font-bold block">2. Emergency Loan</span>
+                      <span className="text-[10px] text-slate-400">School & Medical (12 mos)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleLoanProductChange('christmas_loan')}
+                      className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
+                        loanProduct === 'christmas_loan' 
+                          ? 'bg-emerald-950/80 border-emerald-500 text-white shadow' 
+                          : 'bg-slate-950 border-slate-800 text-slate-400'
+                      }`}
+                    >
+                      <span className="text-xs font-bold block">3. Christmas Loan</span>
+                      <span className="text-[10px] text-slate-400">Festivities (6 mos)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleLoanProductChange('monthly_shylock')}
+                      className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
+                        loanProduct === 'monthly_shylock' 
+                          ? 'bg-amber-950/80 border-amber-500 text-white shadow' 
+                          : 'bg-slate-950 border-slate-800 text-slate-400'
+                      }`}
+                    >
+                      <span className="text-xs font-bold block text-amber-400">4. Monthly Shylock</span>
+                      <span className="text-[10px] text-slate-400">Instant Advance (1 mo)</span>
+                    </button>
                   </div>
 
                   <form onSubmit={handleInitiateLoan} className="space-y-3">
@@ -2427,7 +2714,7 @@ export default function App() {
                     <div className="bg-slate-950 border border-slate-800 rounded-2xl p-3 space-y-1 text-xs">
                       <div className="flex justify-between text-slate-400">
                         <span>Selected Product:</span>
-                        <span className="text-white font-bold capitalize">{loanProduct.replace(/_/g, ' ')}</span>
+                        <span className="text-white font-bold capitalize">{loanProduct.replace('_', ' ')}</span>
                       </div>
                       <div className="flex justify-between text-slate-400">
                         <span>Interest Rate:</span>
@@ -2448,9 +2735,64 @@ export default function App() {
                       disabled={loading}
                       className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-2.5 rounded-xl text-xs transition shadow-lg cursor-pointer"
                     >
-                      Review Terms & Continue Application
+                      Review Terms & Authorize with PIN
                     </button>
                   </form>
+                </div>
+
+                <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-lg">
+                  <h3 className="text-sm sm:text-base font-bold text-white mb-3">My Loan Applications & Approval Tracker</h3>
+                  {loans.length === 0 ? (
+                    <div className="text-center py-8 text-slate-500 text-xs">No active or past loans found.</div>
+                  ) : (
+                    <div className="space-y-3">
+                      {loans.map((l) => (
+                        <div key={l.id} className="bg-slate-950 border border-slate-800 rounded-2xl p-3.5 space-y-2.5 shadow">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full ${
+                                  l.status === 'approved' ? 'bg-emerald-950 border border-emerald-800 text-emerald-300' :
+                                  l.status === 'completed' ? 'bg-blue-950 border border-blue-800 text-blue-300' :
+                                  l.status === 'pending' ? 'bg-amber-950 border border-amber-800 text-amber-300' : 'bg-slate-800 text-slate-400'
+                                }`}>
+                                  Status: {l.status}
+                                </span>
+                                <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-slate-900 text-slate-300 capitalize border border-slate-800">
+                                  {(l.loan_product || 'main_loan').replace('_', ' ')}
+                                </span>
+                              </div>
+                              <h4 className="text-base font-black text-white mt-1">
+                                KES {Number(l.principal_amount).toLocaleString()}
+                              </h4>
+                              <p className="text-[11px] text-slate-400 font-medium">{l.repayment_period_months} Month(s) Term • Via <span className="uppercase text-emerald-400 font-bold">{l.disbursement_method || 'mpesa'}</span></p>
+                            </div>
+                            <button
+                              onClick={() => generatePDFStatement(l)}
+                              className="flex items-center gap-1 bg-slate-900 hover:bg-slate-800 text-emerald-400 px-2.5 py-1 rounded-xl text-[11px] font-semibold border border-slate-800 cursor-pointer"
+                            >
+                              <Download className="w-3 h-3" /> PDF
+                            </button>
+                          </div>
+
+                          <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800/80 text-[10px] space-y-1">
+                            <p className="text-slate-400 font-semibold mb-0.5">Sequential 3-Signatory Pipeline:</p>
+                            <div className="grid grid-cols-3 gap-1 text-center font-mono">
+                              <span className={`p-1 rounded-lg font-bold ${l.assistant_chair_approval ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-slate-950 text-slate-500'}`}>
+                                1. Asst: {l.assistant_chair_approval ? '✓' : 'PENDING'}
+                              </span>
+                              <span className={`p-1 rounded-lg font-bold ${l.chairman_approval ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-slate-950 text-slate-500'}`}>
+                                2. Chair: {l.chairman_approval ? '✓' : 'PENDING'}
+                              </span>
+                              <span className={`p-1 rounded-lg font-bold ${l.treasurer_approval ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-slate-950 text-slate-500'}`}>
+                                3. Treas: {l.treasurer_approval ? '✓' : 'PENDING'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -2490,7 +2832,7 @@ export default function App() {
                             <h4 className="text-sm font-bold text-white mt-1">{borrowerName}</h4>
                             <p className="text-[11px] text-slate-400">{borrowerCompany} • Member {borrowerMemberNo}</p>
                             <p className="text-[11px] text-emerald-400 mt-0.5 font-medium">
-                              Pledged: KES {Number(g.amount_guaranteed).toLocaleString()} (Product: {(g.loans?.loan_product || 'main_loan').replace(/_/g, ' ').toUpperCase()})
+                              Pledged: KES {Number(g.amount_guaranteed).toLocaleString()} (Product: {(g.loans?.loan_product || 'main_loan').replace('_', ' ').toUpperCase()})
                             </p>
                           </div>
 
@@ -2518,24 +2860,100 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB 5: PROFILE & WELFARE */}
+            {/* TAB 4: REPORTS & AGM */}
+            {activeTab === 'documents' && (
+              <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 space-y-4 shadow-lg">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <h3 className="text-sm sm:text-base font-bold text-white flex items-center gap-1.5">
+                      <FolderDown className="w-4 h-4 text-emerald-400" /> Official Reports & AGM Booklets
+                    </h3>
+                    <p className="text-[11px] text-slate-400 mt-0.5 font-medium">
+                      Access certified annual audit reports, AGM booklets, and society policies digitally.
+                    </p>
+                  </div>
+                  <button
+                    onClick={fetchSaccoDocuments}
+                    className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold flex items-center gap-1 cursor-pointer transition border border-slate-700"
+                    title="Refresh Library"
+                  >
+                    <RotateCcw className="w-3 h-3" /> Refresh
+                  </button>
+                </div>
+
+                {saccoDocs.length === 0 ? (
+                  <div className="text-center py-12 border border-slate-800 rounded-2xl bg-slate-950">
+                    <FileArchive className="w-10 h-10 text-slate-600 mx-auto mb-2" />
+                    <p className="text-xs font-semibold text-slate-300">No official documents published yet.</p>
+                    <p className="text-[11px] text-slate-500 mt-0.5">Leadership will upload the upcoming AGM and audit packages here.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {saccoDocs.map((doc) => (
+                      <div key={doc.id} className="bg-slate-950 border border-slate-800 rounded-2xl p-4 flex flex-col justify-between space-y-3 shadow">
+                        <div>
+                          <div className="flex justify-between items-start">
+                            <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full ${
+                              doc.category === 'audit_report' ? 'bg-emerald-950 border border-emerald-800 text-emerald-300' :
+                              doc.category === 'agm_booklet' ? 'bg-amber-950 border border-amber-800 text-amber-300' :
+                              'bg-blue-950 border border-blue-800 text-blue-300'
+                            }`}>
+                              {doc.category.replace('_', ' ')}
+                            </span>
+                            <span className="text-[11px] font-mono text-slate-400">{doc.financial_year}</span>
+                          </div>
+
+                          <h4 className="text-sm font-bold text-white mt-1.5 leading-snug">{doc.title}</h4>
+                          <p className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1.5">
+                            <span>Size: {doc.file_size || 'PDF'}</span> • 
+                            <span>Published: {new Date(doc.created_at).toLocaleDateString()}</span>
+                          </p>
+                        </div>
+
+                        <div className="flex gap-2 pt-2 border-t border-slate-800/80">
+                          <a
+                            href={doc.file_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded-xl text-xs flex items-center justify-center gap-1 transition shadow"
+                          >
+                            <Download className="w-3.5 h-3.5" /> Read / Download PDF
+                          </a>
+                          {['admin', 'chairman', 'treasurer', 'assistant_chair'].includes(userRole) && (
+                            <button
+                              onClick={() => handleDeleteSaccoDocument(doc.id, doc.title)}
+                              className="bg-rose-950/60 hover:bg-rose-900 border border-rose-900/60 text-rose-300 p-2 rounded-xl text-xs transition cursor-pointer"
+                              title="Delete Report"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB 5: PROFILE SETTINGS & WELFARE */}
             {activeTab === 'beneficiaries' && (
               <div className="space-y-6">
                 <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
                   <div className="flex justify-between items-center mb-3">
                     <div className="flex items-center gap-2">
                       <Settings className="w-4 h-4 text-emerald-400" />
-                      <h3 className="text-sm sm:text-base font-bold text-white">Profile Settings & Contact Information</h3>
+                      <h3 className="text-sm sm:text-base font-bold text-white">Profile Settings & Credentials</h3>
                     </div>
                     <button
                       type="button"
-                      onClick={() => setShowPinResetModal(true)}
-                      className="flex items-center gap-1.5 bg-amber-950/80 hover:bg-amber-900 border border-amber-800 text-amber-300 text-xs font-bold py-1.5 px-3 rounded-xl transition cursor-pointer"
+                      onClick={() => setShowPinChangeModal(true)}
+                      className="bg-amber-950/70 hover:bg-amber-900 border border-amber-800 text-amber-300 px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
                     >
-                      <Key className="w-3.5 h-3.5" /> Change Security PIN
+                      <KeyRound className="w-3.5 h-3.5" /> Change Security PIN
                     </button>
                   </div>
-                  
+
                   <form onSubmit={handleUpdateProfileDetails} className="space-y-3">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
@@ -2591,95 +3009,327 @@ export default function App() {
                   </form>
                 </div>
 
-                <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-lg">
-                  <div className="flex items-center gap-2 mb-3">
-                    <HeartHandshake className="w-4 h-4 text-rose-400" />
-                    <h3 className="text-sm sm:text-base font-bold text-white">Benevolent & Welfare Claims (KES 200 Scheme)</h3>
-                  </div>
-
-                  <form onSubmit={handleSubmitWelfareClaim} className="space-y-2.5">
-                    <div>
-                      <label className="block text-xs text-slate-400 mb-1">Claim Category</label>
-                      <select
-                        value={claimType}
-                        onChange={(e) => setClaimType(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
-                      >
-                        <option value="hospitalization">Hospitalization / Medical Assistance</option>
-                        <option value="bereavement">Bereavement Support</option>
-                        <option value="disaster">Emergency Relief / Disaster</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs text-slate-400 mb-1">Amount Claimed (KES)</label>
-                      <input
-                        type="text"
-                        required
-                        value={claimAmountRaw}
-                        onChange={(e) => setClaimAmountRaw(formatAccountingNumber(e.target.value))}
-                        placeholder="e.g. 20,000"
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <div>
-                        <label className="block text-xs text-slate-400 mb-1">Disbursement Channel</label>
-                        <select
-                          value={claimDisbursementMethod}
-                          onChange={(e) => setClaimDisbursementMethod(e.target.value)}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
-                        >
-                          <option value="mpesa">M-Pesa Mobile Money</option>
-                          <option value="bank">Direct Bank Transfer</option>
-                        </select>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-lg">
+                    <div className="flex justify-between items-center mb-3">
+                      <div className="flex items-center gap-2">
+                        <Users className="w-4 h-4 text-emerald-400" />
+                        <h3 className="text-sm sm:text-base font-bold text-white">Nominated Beneficiaries (Next of Kin)</h3>
                       </div>
+                      <span className="text-[11px] font-semibold text-emerald-400 bg-emerald-950/60 px-2.5 py-0.5 rounded-full border border-emerald-800">
+                        Total: {beneficiaries.reduce((sum, b) => sum + Number(b.allocation_percentage || 0), 0)}% / 100%
+                      </span>
+                    </div>
+
+                    <form onSubmit={handleAddBeneficiary} className="space-y-2.5">
                       <div>
-                        <label className="block text-xs text-slate-400 mb-1">Payout Destination Details</label>
+                        <label className="block text-xs text-slate-400 mb-1">Full Name</label>
                         <input
                           type="text"
                           required
-                          value={claimDisbursementDetails}
-                          onChange={(e) => setClaimDisbursementDetails(e.target.value)}
-                          placeholder={claimDisbursementMethod === 'mpesa' ? '07xxxxxxxx' : 'Bank, Acc No'}
+                          autoComplete="off"
+                          value={nokName}
+                          onChange={(e) => setNokName(e.target.value)}
+                          placeholder="e.g. Mary Atieno"
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-xs text-slate-400 mb-1">Relationship</label>
+                          <select
+                            value={nokRel}
+                            onChange={(e) => setNokRel(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
+                          >
+                            <option value="Spouse">Spouse</option>
+                            <option value="Child">Child</option>
+                            <option value="Parent">Parent</option>
+                            <option value="Sibling">Sibling</option>
+                            <option value="Other">Other</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs text-slate-400 mb-1">Share Allocation (%)</label>
+                          <input
+                            type="number"
+                            required
+                            min="1"
+                            max="100"
+                            value={nokPercent}
+                            onChange={(e) => setNokPercent(e.target.value)}
+                            placeholder="e.g. 50"
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-xs text-slate-400 mb-1">National ID</label>
+                          <input
+                            type="text"
+                            autoComplete="off"
+                            value={nokId}
+                            onChange={(e) => setNokId(e.target.value)}
+                            placeholder="ID Number"
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-slate-400 mb-1">Phone Number</label>
+                          <input
+                            type="tel"
+                            required
+                            autoComplete="off"
+                            value={nokPhone}
+                            onChange={(e) => setNokPhone(e.target.value)}
+                            placeholder="07xxxxxxxx"
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
+                          />
+                        </div>
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={loading}
+                        className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded-xl text-xs transition shadow cursor-pointer flex items-center justify-center gap-1.5"
+                      >
+                        <Plus className="w-4 h-4" /> Add Another Beneficiary
+                      </button>
+                    </form>
+
+                    <div className="mt-3 pt-3 border-t border-slate-800 space-y-2 max-h-48 overflow-y-auto">
+                      {beneficiaries.length === 0 ? (
+                        <p className="text-xs text-slate-500 text-center py-4">No beneficiaries registered yet.</p>
+                      ) : (
+                        beneficiaries.map((b) => (
+                          <div key={b.id} className="bg-slate-950 p-2.5 rounded-xl flex justify-between items-center text-xs">
+                            <div>
+                              <h5 className="font-bold text-white text-xs">{b.full_name} ({b.relationship})</h5>
+                              <p className="text-[10px] text-slate-400">Phone: {b.phone} • ID: {b.id_number || '-'}</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="bg-emerald-950 text-emerald-300 font-bold px-2 py-0.5 rounded text-[10px] border border-emerald-800">
+                                {b.allocation_percentage}%
+                              </span>
+                              <button onClick={() => handleDeleteBeneficiary(b.id)} className="text-rose-400 hover:text-rose-300 cursor-pointer">
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-lg">
+                    <div className="flex items-center gap-2 mb-3">
+                      <HeartHandshake className="w-4 h-4 text-rose-400" />
+                      <h3 className="text-sm sm:text-base font-bold text-white">Benevolent & Welfare Claims (KES 200 Scheme)</h3>
+                    </div>
+
+                    <form onSubmit={handleSubmitWelfareClaim} className="space-y-2.5">
+                      <div>
+                        <label className="block text-xs text-slate-400 mb-1">Claim Category</label>
+                        <select
+                          value={claimType}
+                          onChange={(e) => setClaimType(e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
+                        >
+                          <option value="hospitalization">Hospitalization / Medical Assistance</option>
+                          <option value="bereavement">Bereavement Support</option>
+                          <option value="disaster">Emergency Relief / Disaster</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-400 mb-1">Amount Claimed (KES)</label>
+                        <input
+                          type="text"
+                          required
+                          value={claimAmountRaw}
+                          onChange={(e) => setClaimAmountRaw(formatAccountingNumber(e.target.value))}
+                          placeholder="e.g. 20,000"
                           className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
                         />
                       </div>
-                    </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-xs text-slate-400 mb-1">Payout Destination</label>
+                          <select
+                            value={claimDisbursementMethod}
+                            onChange={(e) => setClaimDisbursementMethod(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
+                          >
+                            <option value="mpesa">M-Pesa Mobile Transfer</option>
+                            <option value="bank">Bank Account Transfer</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs text-slate-400 mb-1">
+                            {claimDisbursementMethod === 'mpesa' ? 'M-Pesa Phone No.' : 'Bank Details'}
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            value={claimDisbursementDetails}
+                            onChange={(e) => setClaimDisbursementDetails(e.target.value)}
+                            placeholder={claimDisbursementMethod === 'mpesa' ? '0712345678' : 'Bank, Branch, Account No'}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-400 mb-1">Details & Justification</label>
+                        <textarea
+                          required
+                          rows="2"
+                          value={claimDesc}
+                          onChange={(e) => setClaimDesc(e.target.value)}
+                          placeholder="Provide circumstances for 3-Signatory review..."
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-400 mb-1 flex items-center gap-1 font-medium">
+                          <Paperclip className="w-3.5 h-3.5 text-amber-400" /> Upload Evidence Document (PDF/Photo)
+                        </label>
+                        <input
+                          type="file"
+                          accept="image/*,.pdf"
+                          onChange={(e) => setClaimDocument(e.target.files[0])}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1 text-xs text-slate-300 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[11px] file:bg-rose-900/60 file:text-rose-200 cursor-pointer"
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={loading}
+                        className="w-full bg-rose-600 hover:bg-rose-500 text-white font-bold py-2 rounded-xl text-xs transition shadow cursor-pointer"
+                      >
+                        Submit Welfare Claim for Sequential Review
+                      </button>
+                    </form>
 
-                    <div>
-                      <label className="block text-xs text-slate-400 mb-1">Details & Justification</label>
-                      <textarea
-                        required
-                        rows="2"
-                        value={claimDesc}
-                        onChange={(e) => setClaimDesc(e.target.value)}
-                        placeholder="Provide circumstances for 3-Signatory review..."
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
-                      />
-                    </div>
+                    <div className="mt-3 pt-3 border-t border-slate-800 space-y-2">
+                      {welfareClaims.map((c) => (
+                        <div key={c.id} className="bg-slate-950 p-3 rounded-2xl space-y-1.5 text-xs">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <span className={`text-[9px] uppercase font-bold px-2 py-0.5 rounded-full ${
+                                c.status === 'approved' ? 'bg-emerald-950 text-emerald-300' : 'bg-amber-950 text-amber-300'
+                              }`}>
+                                {c.status}
+                              </span>
+                              <h5 className="font-bold text-white capitalize mt-1 text-xs">{c.claim_type}</h5>
+                              <p className="text-[10px] text-slate-400">{c.description}</p>
+                              <p className="text-[10px] text-emerald-400 mt-0.5">
+                                Dest: <strong className="uppercase">{c.disbursement_method || 'mpesa'}</strong> ({c.disbursement_details || 'Profile Phone'})
+                              </p>
+                            </div>
+                            <span className="font-bold text-rose-400 text-xs">
+                              KES {Number(c.amount_requested).toLocaleString()}
+                            </span>
+                          </div>
 
-                    <div>
-                      <label className="block text-xs text-slate-400 mb-1 flex items-center gap-1 font-medium">
-                        <Paperclip className="w-3.5 h-3.5 text-amber-400" /> Upload Evidence Document (PDF/Photo)
-                      </label>
-                      <input
-                        type="file"
-                        accept="image/*,.pdf"
-                        onChange={(e) => setClaimDocument(e.target.files[0])}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1 text-xs text-slate-300 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[11px] file:bg-rose-900/60 file:text-rose-200 cursor-pointer"
-                      />
-                    </div>
+                          {c.evidence_url && (
+                            <a
+                              href={c.evidence_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-[10px] text-amber-400 hover:underline"
+                            >
+                              <FileCheck className="w-3.5 h-3.5" /> View Supporting Evidence Document
+                            </a>
+                          )}
 
-                    <button
-                      type="submit"
-                      disabled={loading}
-                      className="w-full bg-rose-600 hover:bg-rose-500 text-white font-bold py-2 rounded-xl text-xs transition shadow cursor-pointer"
-                    >
-                      Submit Welfare Claim for Sequential Review
-                    </button>
-                  </form>
+                          <div className="grid grid-cols-3 gap-1 text-[9px] font-mono text-center pt-1 border-t border-slate-800/60">
+                            <span className={c.assistant_chair_approval ? 'text-emerald-400 font-bold' : 'text-slate-500'}>1. Asst: {c.assistant_chair_approval ? '✓' : 'PENDING'}</span>
+                            <span className={c.chairman_approval ? 'text-emerald-400 font-bold' : 'text-slate-500'}>2. Chair: {c.chairman_approval ? '✓' : 'PENDING'}</span>
+                            <span className={c.treasurer_approval ? 'text-emerald-400 font-bold' : 'text-slate-500'}>3. Treas: {c.treasurer_approval ? '✓' : 'PENDING'}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
+              </div>
+            )}
+
+            {/* TAB 6: M-PESA */}
+            {activeTab === 'mpesa' && (
+              <div className="max-w-xl mx-auto bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-5 sm:p-8 space-y-4 shadow-2xl">
+                <div className="flex items-center gap-3">
+                  <div className="bg-emerald-600 p-2.5 rounded-2xl text-white shadow-lg">
+                    <Smartphone className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base sm:text-lg font-bold text-white">Direct M-Pesa Payment & Top-Up</h3>
+                    <p className="text-[11px] text-slate-400">Instant Savings Deposit or Loan Repayment via M-Pesa</p>
+                  </div>
+                </div>
+
+                <div className="bg-slate-950 border border-slate-800 p-3.5 rounded-2xl space-y-0.5 text-xs font-medium">
+                  <p className="text-slate-300 font-bold">Paybill Instructions:</p>
+                  <p className="text-slate-400">Business No: <strong className="text-white font-mono">522522</strong> (KEWA SACCO)</p>
+                  <p className="text-slate-400">Account No: <strong className="text-emerald-400 font-mono">{profile?.member_number}</strong></p>
+                </div>
+
+                <form onSubmit={handleMpesaTransaction} className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Destination Account</label>
+                    <select
+                      value={mpesaType}
+                      onChange={(e) => setMpesaType(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white"
+                    >
+                      <option value="savings_deposit">Voluntary Savings Top-Up</option>
+                      <option value="loan_repayment">Direct Loan Repayment (Clear Balance)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">M-Pesa Phone Number</label>
+                    <input
+                      type="tel"
+                      required
+                      autoComplete="off"
+                      value={mpesaPhone || profile?.phone || ''}
+                      onChange={(e) => setMpesaPhone(e.target.value)}
+                      placeholder="0712345678"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Amount (KES)</label>
+                    <input
+                      type="text"
+                      required
+                      value={mpesaAmountRaw}
+                      onChange={(e) => setMpesaAmountRaw(formatAccountingNumber(e.target.value))}
+                      placeholder="e.g. 3,000"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">M-Pesa Transaction Code (Optional)</label>
+                    <input
+                      type="text"
+                      autoComplete="off"
+                      value={mpesaCode}
+                      onChange={(e) => setMpesaCode(e.target.value)}
+                      placeholder="e.g. QGH789KL12"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono uppercase"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3 rounded-xl text-xs transition shadow-lg flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <Send className="w-4 h-4" /> Confirm & Credit Account
+                  </button>
+                </form>
               </div>
             )}
 
@@ -2851,6 +3501,32 @@ export default function App() {
                         <Send className="w-3.5 h-3.5" /> Submit Message to Committee
                       </button>
                     </form>
+
+                    <div className="pt-2 border-t border-slate-800 space-y-1.5 max-h-36 overflow-y-auto">
+                      <p className="text-[10px] font-bold text-slate-300">My Past Submitted Inquiries:</p>
+                      {inquiries.length === 0 ? (
+                        <p className="text-[10px] text-slate-500">No tickets submitted yet.</p>
+                      ) : (
+                        inquiries.map((inq) => (
+                          <div key={inq.id} className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 text-xs space-y-1">
+                            <div className="flex justify-between items-center">
+                              <span className="font-bold text-white text-[11px]">{inq.subject}</span>
+                              <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded-full ${
+                                inq.status === 'resolved' ? 'bg-emerald-950 text-emerald-300' : 'bg-amber-950 text-amber-300'
+                              }`}>
+                                {inq.status.toUpperCase()}
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-slate-400">{inq.message}</p>
+                            {inq.admin_response && (
+                              <div className="mt-1 p-1.5 bg-emerald-950/40 border border-emerald-800/40 rounded-lg text-[10px] text-emerald-300">
+                                <strong>Committee Reply:</strong> {inq.admin_response}
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2862,7 +3538,7 @@ export default function App() {
                 <div className="bg-gradient-to-r from-amber-950/80 to-slate-900 border border-amber-800/60 rounded-2xl sm:rounded-3xl p-4 sm:p-5 flex justify-between items-center shadow-lg">
                   <div>
                     <span className="text-[9px] sm:text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-900 text-amber-200 uppercase tracking-wide">
-                      Active Portfolio View: {userRole.replace(/_/g, ' ').toUpperCase()}
+                      Active Portfolio View: {userRole.replace('_', ' ').toUpperCase()}
                     </span>
                     <h3 className="text-base sm:text-lg font-black text-white mt-1">
                       {userRole === 'chairman' || userRole === 'admin' ? 'Executive Control & Oversight Dashboard' :
@@ -2873,12 +3549,12 @@ export default function App() {
                   <span className="text-xs text-amber-300/80 font-mono hidden sm:inline">KEWA SACCO Governance Framework</span>
                 </div>
 
-                {/* 1. FINANCIAL OVERSIGHT METRICS */}
+                {/* 1. SOCIETY FINANCIAL POSITION */}
                 {['admin', 'chairman'].includes(userRole) && (
                   <div className="bg-slate-900/90 border border-emerald-900/50 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl space-y-3">
                     <div className="flex items-center gap-2 mb-1">
                       <Coins className="w-5 h-5 text-emerald-400" />
-                      <h3 className="text-sm sm:text-base font-bold text-white">Society-Wide Financial Position & Exposure Matrix</h3>
+                      <h3 className="text-sm sm:text-base font-bold text-white">Society Financial Position & Accrued Capital Matrix</h3>
                     </div>
                     
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -2909,9 +3585,1015 @@ export default function App() {
                       <div className="bg-slate-950 border border-slate-800 p-3.5 rounded-2xl shadow">
                         <p className="text-[10px] text-slate-400 font-semibold uppercase">Net Liquid Capital</p>
                         <h4 className="text-base sm:text-xl font-black text-teal-300 mt-1">
-                          KES {netSocietyLiquidity.toLocaleString('en-KE', { minimumFractionDigits: 0 })}
+                          KES {netSocietyLiquidCapital.toLocaleString('en-KE', { minimumFractionDigits: 0 })}
                         </h4>
-                        <span className="text-[9px] text-teal-400 font-medium">(Shares - Loans) + Interest</span>
+                        <span className="text-[9px] text-teal-400 font-medium">Cash Reserve Available</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 2. GUARANTOR LIABILITY TRACKER */}
+                {['admin', 'chairman'].includes(userRole) && (
+                  <div className="bg-slate-900/90 border border-purple-900/50 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
+                    <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2.5 mb-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <Layers className="w-4 h-4 text-purple-400" />
+                          <h3 className="text-sm sm:text-base font-bold text-white">Guarantor Liability & Tracking Matrix ({filteredGuarantorInspectionList.length})</h3>
+                        </div>
+                        <p className="text-[11px] text-slate-400 mt-0.5 font-medium">
+                          Track active liability vs. auto-released pledges upon borrower loan clearance.
+                        </p>
+                      </div>
+
+                      <button
+                        onClick={fetchAdminData}
+                        className="self-start sm:self-auto p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-purple-400 text-xs font-semibold flex items-center gap-1 transition border border-slate-700"
+                      >
+                        <RotateCcw className="w-3 h-3" /> Refresh
+                      </button>
+                    </div>
+
+                    <div className="mb-3 relative">
+                      <input
+                        type="text"
+                        placeholder="Search by Guarantor Name, Borrower Name, or Member Number..."
+                        value={guarantorTrackerSearch}
+                        onChange={(e) => setGuarantorTrackerSearch(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white focus:border-purple-500"
+                      />
+                      <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    </div>
+
+                    {filteredGuarantorInspectionList.length === 0 ? (
+                      <div className="text-center py-6 text-slate-500 text-xs bg-slate-950 rounded-2xl border border-slate-800">
+                        No guarantor records matched your search.
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto border border-slate-800 rounded-2xl bg-slate-950 max-h-72 overflow-y-auto">
+                        <table className="w-full text-left text-xs">
+                          <thead className="bg-slate-900 text-slate-400 font-semibold sticky top-0 z-10">
+                            <tr>
+                              <th className="p-2.5">Guarantor Details</th>
+                              <th className="p-2.5">Borrower Details</th>
+                              <th className="p-2.5 text-right">Pledged Amount</th>
+                              <th className="p-2.5 text-right">Loan Balance</th>
+                              <th className="p-2.5 text-center">Liability Status</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-800/60 font-mono">
+                            {filteredGuarantorInspectionList.map((g) => {
+                              const isLoanPaid = g.loans?.status === 'completed' || Number(g.loans?.balance_remaining || 0) === 0 || g.status === 'released';
+
+                              return (
+                                <tr key={g.id} className="hover:bg-slate-900/50 transition">
+                                  <td className="p-2.5 font-sans">
+                                    <div className="font-bold text-white">{g.profiles?.full_name || 'Member'}</div>
+                                    <div className="text-[10px] text-purple-400 font-mono">{g.profiles?.member_number} • {g.profiles?.phone}</div>
+                                  </td>
+                                  <td className="p-2.5 font-sans">
+                                    <div className="font-bold text-white">{g.loans?.profiles?.full_name || 'Borrower'}</div>
+                                    <div className="text-[10px] text-slate-400 font-mono">{g.loans?.profiles?.companies?.name || 'Branch'} ({g.loans?.profiles?.member_number})</div>
+                                  </td>
+                                  <td className="p-2.5 text-right font-bold text-emerald-400">
+                                    KES {Number(g.amount_guaranteed || 0).toLocaleString()}
+                                  </td>
+                                  <td className="p-2.5 text-right font-bold text-amber-400">
+                                    KES {Number(g.loans?.balance_remaining || 0).toLocaleString()}
+                                  </td>
+                                  <td className="p-2.5 text-center font-sans">
+                                    {isLoanPaid ? (
+                                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-blue-950 text-blue-300 border border-blue-800 flex items-center justify-center gap-1">
+                                        <CheckCircle2 className="w-3 h-3" /> RELEASED
+                                      </span>
+                                    ) : g.status === 'accepted' ? (
+                                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-rose-950 text-rose-300 border border-rose-800">
+                                        ACTIVE LIABILITY
+                                      </span>
+                                    ) : (
+                                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-950 text-amber-300 border border-amber-800 uppercase">
+                                        {g.status}
+                                      </span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 3. WELFARE CLAIMS APPROVAL QUEUE */}
+                <div className="bg-slate-900/90 border border-rose-900/50 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
+                  <div className="flex justify-between items-center mb-2">
+                    <div className="flex items-center gap-2">
+                      <HeartHandshake className="w-4 h-4 text-rose-400" />
+                      <h3 className="text-sm sm:text-base font-bold text-white">Benevolent & Welfare Claims Approval Queue ({allPendingClaims.length})</h3>
+                    </div>
+                    <button
+                      onClick={fetchAdminData}
+                      className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold flex items-center gap-1 cursor-pointer transition border border-slate-700"
+                    >
+                      <RotateCcw className="w-3 h-3" /> Refresh
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mb-3 font-medium">
+                    Review and disburse member welfare claims with transparent payout account verification.
+                  </p>
+
+                  {allPendingClaims.length === 0 ? (
+                    <div className="text-center py-6 text-slate-500 text-xs bg-slate-950 rounded-2xl border border-slate-800">
+                      No welfare claims awaiting signatory review.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {allPendingClaims.map((claim) => {
+                        const canChairSign = claim.assistant_chair_approval;
+                        const canTreasurerSign = claim.assistant_chair_approval && claim.chairman_approval;
+
+                        const isAsstChairUser = userRole === 'assistant_chair' || userRole === 'admin';
+                        const isChairUser = userRole === 'chairman' || userRole === 'admin';
+                        const isTreasurerUser = userRole === 'treasurer' || userRole === 'admin';
+
+                        return (
+                          <div key={claim.id} className="bg-slate-950 border border-slate-800 rounded-2xl p-4 space-y-2.5 shadow">
+                            <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2">
+                              <div>
+                                <div className="flex items-center gap-1.5">
+                                  <h4 className="text-sm font-bold text-white">{claim.profiles?.full_name}</h4>
+                                  <span className="bg-rose-950 text-rose-300 text-[9px] font-bold px-2 py-0.5 rounded-full border border-rose-800 uppercase">
+                                    {claim.claim_type}
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-slate-400 font-medium">{claim.profiles?.companies?.name || 'External'} • Member {claim.profiles?.member_number}</p>
+                                <p className="text-xs font-black text-rose-400 mt-0.5">
+                                  KES {Number(claim.amount_requested).toLocaleString()} • Payout via: <span className="uppercase text-white font-bold">{claim.disbursement_method || 'mpesa'}</span> ({claim.disbursement_details || 'Profile Phone'})
+                                </p>
+                                <p className="text-[11px] text-slate-300 mt-0.5">{claim.description}</p>
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {claim.assistant_chair_approval ? (
+                                  <button
+                                    onClick={() => handleWelfarePipeline(claim.id, 'assistant_chair', 'unsign')}
+                                    disabled={!isAsstChairUser}
+                                    className={`text-[11px] font-bold px-2.5 py-1.5 rounded-xl flex items-center gap-1 transition ${
+                                      isAsstChairUser
+                                        ? 'bg-emerald-950 hover:bg-rose-950/80 border border-emerald-800 hover:border-rose-700 text-emerald-300 hover:text-rose-200 cursor-pointer'
+                                        : 'bg-emerald-950/40 border border-emerald-800/40 text-emerald-300/60 cursor-not-allowed'
+                                    }`}
+                                  >
+                                    <CheckCircle className="w-3 h-3" /> 1. Asst {isAsstChairUser && <RotateCcw className="w-2.5 h-2.5 ml-0.5 opacity-60" />}
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={() => handleWelfarePipeline(claim.id, 'assistant_chair', 'sign')}
+                                    disabled={!isAsstChairUser}
+                                    className={`text-[11px] font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 transition shadow ${
+                                      isAsstChairUser
+                                        ? 'bg-amber-600 hover:bg-amber-500 text-white cursor-pointer'
+                                        : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
+                                    }`}
+                                  >
+                                    1. Sign: Asst
+                                  </button>
+                                )}
+
+                                {claim.chairman_approval ? (
+                                  <button
+                                    onClick={() => handleWelfarePipeline(claim.id, 'chairman', 'unsign')}
+                                    disabled={!isChairUser}
+                                    className={`text-[11px] font-bold px-2.5 py-1.5 rounded-xl flex items-center gap-1 transition ${
+                                      isChairUser
+                                        ? 'bg-emerald-950 hover:bg-rose-950/80 border border-emerald-800 hover:border-rose-700 text-emerald-300 hover:text-rose-200 cursor-pointer'
+                                        : 'bg-emerald-950/40 border border-emerald-800/40 text-emerald-300/60 cursor-not-allowed'
+                                    }`}
+                                  >
+                                    <CheckCircle className="w-3 h-3" /> 2. Chair {isChairUser && <RotateCcw className="w-2.5 h-2.5 ml-0.5 opacity-60" />}
+                                  </button>
+                                ) : (
+                                  <button
+                                    disabled={!canChairSign || !isChairUser}
+                                    onClick={() => handleWelfarePipeline(claim.id, 'chairman', 'sign')}
+                                    className={`text-[11px] font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 transition shadow ${
+                                      canChairSign && isChairUser
+                                        ? 'bg-amber-600 hover:bg-amber-500 text-white cursor-pointer'
+                                        : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
+                                    }`}
+                                  >
+                                    {(!canChairSign || !isChairUser) && <Lock className="w-3.5 h-3.5 text-slate-600" />}
+                                    2. Sign: Chair
+                                  </button>
+                                )}
+
+                                {claim.treasurer_approval ? (
+                                  <button
+                                    onClick={() => handleWelfarePipeline(claim.id, 'treasurer', 'unsign')}
+                                    disabled={!isTreasurerUser}
+                                    className={`text-[11px] font-bold px-2.5 py-1.5 rounded-xl flex items-center gap-1 transition ${
+                                      isTreasurerUser
+                                        ? 'bg-emerald-950 hover:bg-rose-950/80 border border-emerald-800 hover:border-rose-700 text-emerald-300 hover:text-rose-200 cursor-pointer'
+                                        : 'bg-emerald-950/40 border border-emerald-800/40 text-emerald-300/60 cursor-not-allowed'
+                                    }`}
+                                  >
+                                    <CheckCircle className="w-3 h-3" /> 3. Treas {isTreasurerUser && <RotateCcw className="w-2.5 h-2.5 ml-0.5 opacity-60" />}
+                                  </button>
+                                ) : (
+                                  <button
+                                    disabled={!canTreasurerSign || !isTreasurerUser}
+                                    onClick={() => handleWelfarePipeline(claim.id, 'treasurer', 'sign')}
+                                    className={`text-[11px] font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 transition shadow ${
+                                      canTreasurerSign && isTreasurerUser
+                                        ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white cursor-pointer'
+                                        : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
+                                    }`}
+                                  >
+                                    {(!canTreasurerSign || !isTreasurerUser) && <Lock className="w-3.5 h-3.5 text-slate-600" />}
+                                    3. Disburse
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            {claim.evidence_url && (
+                              <div className="pt-2 border-t border-slate-800">
+                                <a
+                                  href={claim.evidence_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center gap-1 text-[11px] text-amber-400 hover:underline font-medium"
+                                >
+                                  <FileCheck className="w-3.5 h-3.5" /> View Supporting Evidence Document
+                                </a>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* 4. HISTORICAL DATA IMPORT ENGINE */}
+                {['admin', 'chairman'].includes(userRole) && (
+                  <div className="bg-slate-900/90 border border-cyan-900/50 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Database className="w-4 h-4 text-cyan-400" />
+                      <h3 className="text-sm sm:text-base font-bold text-white">Opening Balances & Historical Migration Desk</h3>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mb-3 font-medium">
+                      Upload legacy CSV (<code className="text-cyan-300 font-mono">member_number, total_shares, active_loan, loan_product</code>) to port balances into KEWA SACCO.
+                    </p>
+
+                    <form onSubmit={handleExecuteHistoricalMigration} className="flex flex-col sm:flex-row gap-2.5">
+                      <input
+                        type="file"
+                        accept=".csv"
+                        required
+                        onChange={(e) => setMigrationFile(e.target.files[0])}
+                        className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-300 file:mr-2 file:py-1 file:px-2.5 file:rounded-lg file:border-0 file:text-[11px] file:bg-cyan-950 file:text-cyan-300 cursor-pointer"
+                      />
+                      <button
+                        type="submit"
+                        disabled={loading}
+                        className="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2 px-4 rounded-xl text-xs transition shadow cursor-pointer flex items-center justify-center gap-1"
+                      >
+                        <UploadCloud className="w-3.5 h-3.5" /> Import Legacy Balances
+                      </button>
+                    </form>
+                  </div>
+                )}
+
+                {/* 5. MEMBER DIRECTORY */}
+                <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
+                  <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2.5 mb-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <Contact2 className="w-4 h-4 text-emerald-400" />
+                        <h3 className="text-sm sm:text-base font-bold text-white">Registered Members Directory ({filteredMemberDirectory.length})</h3>
+                      </div>
+                      <p className="text-[11px] text-slate-400 mt-0.5 font-medium">
+                        Complete cooperative register displaying demographics, active debt, and shares.
+                      </p>
+                    </div>
+
+                    <button
+                      onClick={fetchAdminData}
+                      className="self-start sm:self-auto p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold flex items-center gap-1 transition border border-slate-700"
+                    >
+                      <RotateCcw className="w-3 h-3" /> Refresh
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mb-3">
+                    <div className="sm:col-span-2 relative">
+                      <input
+                        type="text"
+                        placeholder="Search member by Name, Member No, ID, or Phone..."
+                        value={memberDirectorySearch}
+                        onChange={(e) => setMemberDirectorySearch(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white focus:border-emerald-500"
+                      />
+                      <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    </div>
+
+                    <div>
+                      <select
+                        value={memberDirectoryCompanyFilter}
+                        onChange={(e) => setMemberDirectoryCompanyFilter(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
+                      >
+                        <option value="all">All Branches / Companies</option>
+                        <option value="Kenya Builders">Kenya Builders & Concrete</option>
+                        <option value="Warren">Warren Concrete</option>
+                        <option value="Eurocon">Eurocon Tiles</option>
+                        <option value="External">External / Independent</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {filteredMemberDirectory.length === 0 ? (
+                    <div className="text-center py-8 text-slate-500 text-xs bg-slate-950 rounded-2xl border border-slate-800">
+                      No members matched your search criteria.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto border border-slate-800 rounded-2xl bg-slate-950 max-h-80 overflow-y-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-900 text-slate-400 font-semibold sticky top-0 z-10">
+                          <tr>
+                            <th className="p-2.5">Member Details</th>
+                            <th className="p-2.5">Branch / Company</th>
+                            <th className="p-2.5">National ID</th>
+                            <th className="p-2.5">Phone Number</th>
+                            <th className="p-2.5 text-right">Total Savings</th>
+                            <th className="p-2.5 text-right">Active Loan</th>
+                            <th className="p-2.5 text-center">System Role</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60 font-mono">
+                          {filteredMemberDirectory.map((m) => (
+                            <tr key={m.id} className="hover:bg-slate-900/50 transition">
+                              <td className="p-2.5 font-sans">
+                                <div className="font-bold text-white">{m.full_name}</div>
+                                <div className="text-[10px] text-emerald-400 font-mono">{m.member_number}</div>
+                              </td>
+                              <td className="p-2.5 font-sans text-slate-300">
+                                {m.companies?.name || 'External'}
+                              </td>
+                              <td className="p-2.5 text-slate-300">
+                                {m.id_number || '-'}
+                              </td>
+                              <td className="p-2.5 text-slate-300">
+                                {m.phone || '-'}
+                              </td>
+                              <td className="p-2.5 text-right font-bold text-emerald-400">
+                                KES {Number(m.totalSavings || 0).toLocaleString()}
+                              </td>
+                              <td className="p-2.5 text-right font-bold text-amber-400">
+                                KES {Number(m.totalActiveDebt || 0).toLocaleString()}
+                              </td>
+                              <td className="p-2.5 text-center font-sans">
+                                <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${
+                                  m.role === 'admin' || m.role === 'chairman' ? 'bg-purple-950 text-purple-300 border border-purple-800' :
+                                  m.role === 'treasurer' || m.role === 'assistant_chair' ? 'bg-amber-950 text-amber-300 border border-amber-800' :
+                                  'bg-slate-900 text-slate-400 border border-slate-800'
+                                }`}>
+                                  {m.role ? m.role.replace('_', ' ') : 'Member'}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* 6. MANUAL ADJUSTMENT */}
+                {['admin', 'chairman', 'treasurer'].includes(userRole) && (
+                  <div className="bg-slate-900/90 border border-emerald-900/50 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
+                    <div className="flex items-center gap-2 mb-2">
+                      <UserCheck className="w-4 h-4 text-emerald-400" />
+                      <h3 className="text-sm sm:text-base font-bold text-white">Manual Member Contribution / Loan Repayment Desk</h3>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mb-3 font-medium">
+                      Exact loan balance is amortized, and any excess is automatically routed into member Savings.
+                    </p>
+
+                    <form onSubmit={handleManualMemberAdjustment} className="space-y-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-300 mb-1">Select Beneficiary Member</label>
+                          <select
+                            value={manualTargetMemberId}
+                            onChange={(e) => setManualTargetMemberId(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
+                          >
+                            {allMembers.map((m) => (
+                              <option key={m.id} value={m.id}>
+                                {m.full_name} ({m.member_number}) - {m.companies?.name || 'External'}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-300 mb-1">Adjustment Type</label>
+                          <select
+                            value={manualAdjustmentType}
+                            onChange={(e) => setManualAdjustmentType(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-medium"
+                          >
+                            <option value="loan_repayment">1. Smart Loan Repayment (Exact Loan + Excess to Savings)</option>
+                            <option value="savings_deposit">2. Direct Savings Contribution Only</option>
+                            <option value="welfare_monthly_200">3. Welfare Benevolent Fund (KES 200)</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-300 mb-1">Amount (KES)</label>
+                          <input
+                            type="text"
+                            required
+                            value={manualAmountRaw}
+                            onChange={(e) => setManualAmountRaw(formatAccountingNumber(e.target.value))}
+                            placeholder="e.g. 200 or 9,000"
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                        <div className="sm:col-span-2">
+                          <label className="block text-xs font-semibold text-slate-300 mb-1">Audit Reference Code (Optional)</label>
+                          <input
+                            type="text"
+                            value={manualRefCode}
+                            onChange={(e) => setManualRefCode(e.target.value)}
+                            placeholder="e.g. BANK-SLIP-7821 or CASH-RECEIPT-09"
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono uppercase"
+                          />
+                        </div>
+
+                        <div className="sm:col-span-1 flex items-end">
+                          <button
+                            type="submit"
+                            disabled={loading}
+                            className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-2 rounded-xl text-xs transition shadow cursor-pointer flex items-center justify-center gap-1.5"
+                          >
+                            <PlusCircle className="w-4 h-4" /> Post Payment
+                          </button>
+                        </div>
+                      </div>
+                    </form>
+                  </div>
+                )}
+
+                {/* 7. LOAN RECOVERY MATRIX */}
+                <div className="bg-slate-900/90 border border-rose-900/40 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
+                  <div className="flex justify-between items-center mb-2">
+                    <div className="flex items-center gap-2">
+                      <AlertOctagon className="w-4 h-4 text-rose-400" />
+                      <h3 className="text-sm sm:text-base font-bold text-white">Loan Recovery & Performance Matrix (Worst to Best)</h3>
+                    </div>
+                    <button
+                      onClick={fetchAdminData}
+                      className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold flex items-center gap-1 cursor-pointer transition border border-slate-700"
+                    >
+                      <RotateCcw className="w-3 h-3" /> Refresh
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mb-3 font-medium">
+                    Monitors all active borrowers ranked from lowest repayment percentage to fully compliant.
+                  </p>
+
+                  {performanceRankedLoans.length === 0 ? (
+                    <div className="text-center py-8 text-slate-500 text-xs">No active or historical loans found in the system.</div>
+                  ) : (
+                    <div className="overflow-x-auto border border-slate-800 rounded-2xl bg-slate-950 max-h-80 overflow-y-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-900 text-slate-400 font-semibold sticky top-0 z-10">
+                          <tr>
+                            <th className="p-2.5">Rank & Member</th>
+                            <th className="p-2.5">Facility</th>
+                            <th className="p-2.5 text-right">Principal</th>
+                            <th className="p-2.5 text-right">Total Repaid</th>
+                            <th className="p-2.5 text-right">Outstanding Debt</th>
+                            <th className="p-2.5 text-center">Recovery Progress</th>
+                            <th className="p-2.5 text-center">Performance Risk</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60 font-mono">
+                          {performanceRankedLoans.map((loan, idx) => {
+                            const isZeroRepaid = loan.progressPercent === 0;
+                            const isCompleted = loan.progressPercent >= 100;
+
+                            return (
+                              <tr key={loan.id} className={isZeroRepaid ? 'bg-rose-950/20 hover:bg-rose-950/30' : 'hover:bg-slate-900/40'}>
+                                <td className="p-2.5">
+                                  <div className="font-sans font-bold text-white">#{idx + 1} {loan.profiles?.full_name}</div>
+                                  <div className="text-[10px] text-slate-400">{loan.profiles?.companies?.name || 'External'} ({loan.profiles?.member_number})</div>
+                                </td>
+                                <td className="p-2.5 font-sans capitalize text-slate-300">
+                                  {(loan.loan_product || 'main_loan').replace('_', ' ')}
+                                </td>
+                                <td className="p-2.5 text-right text-slate-300">
+                                  KES {Number(loan.principal_amount).toLocaleString()}
+                                </td>
+                                <td className="p-2.5 text-right text-emerald-400 font-bold">
+                                  KES {loan.totalPaid.toLocaleString()}
+                                </td>
+                                <td className="p-2.5 text-right text-amber-400 font-bold">
+                                  KES {Number(loan.balance_remaining).toLocaleString()}
+                                </td>
+                                <td className="p-2.5 text-center">
+                                  <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden mb-1">
+                                    <div 
+                                      className={`h-full ${isCompleted ? 'bg-blue-500' : isZeroRepaid ? 'bg-rose-500' : 'bg-emerald-500'}`} 
+                                      style={{ width: `${loan.progressPercent}%` }}
+                                    />
+                                  </div>
+                                  <span className="text-[9px] text-slate-300">{loan.progressPercent.toFixed(1)}%</span>
+                                </td>
+                                <td className="p-2.5 text-center font-sans">
+                                  {isCompleted ? (
+                                    <span className="px-2 py-0.5 rounded-full text-[8px] font-bold bg-blue-950 text-blue-300 border border-blue-800">
+                                      CLEARED ✓
+                                    </span>
+                                  ) : isZeroRepaid ? (
+                                    <span className="px-2 py-0.5 rounded-full text-[8px] font-bold bg-rose-950 text-rose-300 border border-rose-800 animate-pulse">
+                                      DEFAULT RISK (0%)
+                                    </span>
+                                  ) : (
+                                    <span className="px-2 py-0.5 rounded-full text-[8px] font-bold bg-amber-950 text-amber-300 border border-amber-800">
+                                      IN PROGRESS
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* 8. PUBLISH REPORTS */}
+                {['admin', 'chairman'].includes(userRole) && (
+                  <div className="bg-slate-900/90 border border-emerald-900/40 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
+                    <div className="flex items-center gap-2 mb-2">
+                      <FolderDown className="w-4 h-4 text-emerald-400" />
+                      <h3 className="text-sm sm:text-base font-bold text-white">Publish Official Report / Audit Booklet</h3>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mb-3 font-medium">
+                      Upload verified PDF documents (Audit Reports, AGM Booklets, By-laws) for members.
+                    </p>
+
+                    <form onSubmit={handleUploadSaccoDocument} className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">Document Title</label>
+                        <input
+                          type="text"
+                          required
+                          value={docTitle}
+                          onChange={(e) => setDocTitle(e.target.value)}
+                          placeholder="e.g. KEWA SACCO Audited Financials 2025"
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">Report Category</label>
+                        <select
+                          value={docCategory}
+                          onChange={(e) => setDocCategory(e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
+                        >
+                          <option value="audit_report">Audited Financial Statements</option>
+                          <option value="agm_booklet">Annual AGM Booklet & Minutes</option>
+                          <option value="bylaws_policy">SACCO By-Laws & Policies</option>
+                          <option value="financial_statement">Mid-Year Financial Report</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">Financial Year</label>
+                        <input
+                          type="text"
+                          required
+                          value={docYear}
+                          onChange={(e) => setDocYear(e.target.value)}
+                          placeholder="e.g. 2025/2026"
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-2">
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">Select PDF Report File</label>
+                        <input
+                          type="file"
+                          accept=".pdf"
+                          required
+                          onChange={(e) => setDocFile(e.target.files[0])}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1 text-xs text-slate-300 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[11px] file:bg-emerald-600 file:text-white cursor-pointer"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-1 flex items-end">
+                        <button
+                          type="submit"
+                          disabled={loading}
+                          className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-2 rounded-xl text-xs transition shadow cursor-pointer flex items-center justify-center gap-1.5"
+                        >
+                          <UploadCloud className="w-3.5 h-3.5" /> Publish Report
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                )}
+
+                {/* 9. DUAL PAYROLL CHECKOFF */}
+                {['admin', 'chairman', 'treasurer'].includes(userRole) && (
+                  <div className="bg-slate-900/90 border border-amber-900/40 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
+                    <div className="flex items-center gap-2 mb-2">
+                      <FileSpreadsheet className="w-4 h-4 text-amber-400" />
+                      <h3 className="text-sm sm:text-base font-bold text-white">Automated Dual Payroll Checkoff (Savings + Loans)</h3>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mb-3 font-medium">
+                      Upload monthly payroll deductions CSV (<code className="text-amber-300 font-mono">member_number, savings_amount, loan_amount</code>).
+                    </p>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mb-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">Payroll Month</label>
+                        <input
+                          type="text"
+                          value={batchMonth}
+                          onChange={(e) => setBatchMonth(e.target.value)}
+                          placeholder="e.g. AUG-2026"
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">Select Payroll Deductions CSV</label>
+                        <input
+                          type="file"
+                          accept=".csv"
+                          onChange={handleCSVUpload}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-300 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[11px] file:bg-amber-600 file:text-white cursor-pointer"
+                        />
+                      </div>
+                    </div>
+
+                    {batchPreview.length > 0 && (
+                      <div className="mt-3 border-t border-slate-800 pt-3">
+                        <div className="flex justify-between items-center mb-2">
+                          <span className="text-xs font-bold text-slate-300">
+                            Matched Rows: {batchPreview.filter((r) => r.valid).length} of {batchPreview.length}
+                          </span>
+                          <button
+                            onClick={handleExecuteBatchCheckoff}
+                            disabled={loading}
+                            className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 shadow-lg cursor-pointer"
+                          >
+                            <UploadCloud className="w-3.5 h-3.5" /> Process & Post All Checkoffs
+                          </button>
+                        </div>
+
+                        <div className="max-h-40 overflow-y-auto border border-slate-800 rounded-2xl bg-slate-950">
+                          <table className="w-full text-left text-xs">
+                            <thead className="bg-slate-900 text-slate-400 sticky top-0 font-semibold">
+                              <tr>
+                                <th className="p-2">Member No</th>
+                                <th className="p-2">Matched Name</th>
+                                <th className="p-2 text-right">Savings Credit</th>
+                                <th className="p-2 text-right">Loan Deduct</th>
+                                <th className="p-2 text-center">Status</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-800/60 font-medium">
+                              {batchPreview.map((row, idx) => (
+                                <tr key={idx} className={row.valid ? 'hover:bg-slate-900/40' : 'bg-rose-950/20'}>
+                                  <td className="p-2 font-mono">{row.member_number}</td>
+                                  <td className="p-2">{row.full_name}</td>
+                                  <td className="p-2 text-right font-bold text-emerald-400">
+                                    +KES {Number(row.savings_amount || 0).toLocaleString()}
+                                  </td>
+                                  <td className="p-2 text-right font-bold text-amber-400">
+                                    -KES {Number(row.loan_amount || 0).toLocaleString()}
+                                  </td>
+                                  <td className="p-2 text-center">
+                                    {row.valid ? (
+                                      <span className="text-emerald-400 text-[10px] font-bold">READY</span>
+                                    ) : (
+                                      <span className="text-rose-400 text-[10px] font-bold">NO MATCH</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 10. SEQUENTIAL 3-SIGNATORY DESK */}
+                <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Clock className="w-4 h-4 text-amber-400" />
+                    <h3 className="text-sm sm:text-base font-bold text-white">Sequential 3-Signatory Approval Pipeline</h3>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mb-3 font-medium">
+                    Signed in as <strong className="text-amber-300 uppercase">{userRole.replace('_', ' ')}</strong>. You can only execute endorsements for your designated role.
+                  </p>
+
+                  {allPendingLoans.length === 0 ? (
+                    <div className="text-center py-6 text-slate-500 text-xs">No loan applications awaiting signatory action.</div>
+                  ) : (
+                    <div className="space-y-3">
+                      {allPendingLoans.map((l) => {
+                        const canChairSign = l.assistant_chair_approval;
+                        const canTreasurerSign = l.assistant_chair_approval && l.chairman_approval;
+
+                        const isAsstChairUser = userRole === 'assistant_chair' || userRole === 'admin';
+                        const isChairUser = userRole === 'chairman' || userRole === 'admin';
+                        const isTreasurerUser = userRole === 'treasurer' || userRole === 'admin';
+
+                        return (
+                          <div key={l.id} className="bg-slate-950 border border-slate-800 rounded-2xl p-4 space-y-3 shadow">
+                            <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2">
+                              <div>
+                                <div className="flex items-center gap-1.5">
+                                  <h4 className="text-sm font-bold text-white">{l.profiles?.full_name}</h4>
+                                  <span className="bg-emerald-950 text-emerald-300 text-[9px] font-bold px-2 py-0.5 rounded-full border border-emerald-800 uppercase">
+                                    {(l.loan_product || 'main_loan').replace('_', ' ')}
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-slate-400 font-medium">{l.profiles?.companies?.name || 'External'} • Member {l.profiles?.member_number}</p>
+                                <p className="text-xs font-black text-emerald-400 mt-0.5">
+                                  KES {Number(l.principal_amount).toLocaleString()} ({l.repayment_period_months} Mos Term) • Payout: <span className="uppercase text-white font-bold">{l.disbursement_method || 'mpesa'}</span> ({l.disbursement_details || 'N/A'})
+                                </p>
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {l.assistant_chair_approval ? (
+                                  <button
+                                    onClick={() => handleSignatoryPipeline(l.id, 'assistant_chair', 'unsign')}
+                                    disabled={!isAsstChairUser}
+                                    className={`text-[11px] font-bold px-2.5 py-1.5 rounded-xl flex items-center gap-1 transition ${
+                                      isAsstChairUser
+                                        ? 'bg-emerald-950 hover:bg-rose-950/80 border border-emerald-800 hover:border-rose-700 text-emerald-300 hover:text-rose-200 cursor-pointer'
+                                        : 'bg-emerald-950/40 border border-emerald-800/40 text-emerald-300/60 cursor-not-allowed'
+                                    }`}
+                                  >
+                                    <CheckCircle className="w-3 h-3" /> 1. Asst {isAsstChairUser && <RotateCcw className="w-2.5 h-2.5 ml-0.5 opacity-60" />}
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={() => handleSignatoryPipeline(l.id, 'assistant_chair', 'sign')}
+                                    disabled={!isAsstChairUser}
+                                    className={`text-[11px] font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 transition shadow ${
+                                      isAsstChairUser
+                                        ? 'bg-amber-600 hover:bg-amber-500 text-white cursor-pointer'
+                                        : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
+                                    }`}
+                                  >
+                                    1. Sign: Asst
+                                  </button>
+                                )}
+
+                                {l.chairman_approval ? (
+                                  <button
+                                    onClick={() => handleSignatoryPipeline(l.id, 'chairman', 'unsign')}
+                                    disabled={!isChairUser}
+                                    className={`text-[11px] font-bold px-2.5 py-1.5 rounded-xl flex items-center gap-1 transition ${
+                                      isChairUser
+                                        ? 'bg-emerald-950 hover:bg-rose-950/80 border border-emerald-800 hover:border-rose-700 text-emerald-300 hover:text-rose-200 cursor-pointer'
+                                        : 'bg-emerald-950/40 border border-emerald-800/40 text-emerald-300/60 cursor-not-allowed'
+                                    }`}
+                                  >
+                                    <CheckCircle className="w-3 h-3" /> 2. Chair {isChairUser && <RotateCcw className="w-2.5 h-2.5 ml-0.5 opacity-60" />}
+                                  </button>
+                                ) : (
+                                  <button
+                                    disabled={!canChairSign || !isChairUser}
+                                    onClick={() => handleSignatoryPipeline(l.id, 'chairman', 'sign')}
+                                    className={`text-[11px] font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 transition shadow ${
+                                      canChairSign && isChairUser
+                                        ? 'bg-amber-600 hover:bg-amber-500 text-white cursor-pointer'
+                                        : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
+                                    }`}
+                                  >
+                                    {(!canChairSign || !isChairUser) && <Lock className="w-3.5 h-3.5 text-slate-600" />}
+                                    2. Sign: Chair
+                                  </button>
+                                )}
+
+                                {l.treasurer_approval ? (
+                                  <button
+                                    onClick={() => handleSignatoryPipeline(l.id, 'treasurer', 'unsign')}
+                                    disabled={!isTreasurerUser}
+                                    className={`text-[11px] font-bold px-2.5 py-1.5 rounded-xl flex items-center gap-1 transition ${
+                                      isTreasurerUser
+                                        ? 'bg-emerald-950 hover:bg-rose-950/80 border border-emerald-800 hover:border-rose-700 text-emerald-300 hover:text-rose-200 cursor-pointer'
+                                        : 'bg-emerald-950/40 border border-emerald-800/40 text-emerald-300/60 cursor-not-allowed'
+                                    }`}
+                                  >
+                                    <CheckCircle className="w-3 h-3" /> 3. Treas {isTreasurerUser && <RotateCcw className="w-2.5 h-2.5 ml-0.5 opacity-60" />}
+                                  </button>
+                                ) : (
+                                  <button
+                                    disabled={!canTreasurerSign || !isTreasurerUser}
+                                    onClick={() => handleSignatoryPipeline(l.id, 'treasurer', 'sign')}
+                                    className={`text-[11px] font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 transition shadow ${
+                                      canTreasurerSign && isTreasurerUser
+                                        ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white cursor-pointer'
+                                        : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
+                                    }`}
+                                  >
+                                    {(!canTreasurerSign || !isTreasurerUser) && <Lock className="w-3.5 h-3.5 text-slate-600" />}
+                                    3. Disburse
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800 text-[10px] text-slate-400">
+                              <p className="font-semibold text-slate-300 mb-0.5">Guarantor Pledges:</p>
+                              <div className="space-y-0.5">
+                                {l.loan_guarantors?.map((g) => (
+                                  <div key={g.id} className="flex justify-between font-mono text-[10px]">
+                                    <span>{g.profiles?.full_name}:</span>
+                                    <span className={g.status === 'accepted' ? 'text-emerald-400 font-bold' : 'text-amber-400'}>
+                                      {g.status.toUpperCase()} (KES {Number(g.amount_guaranteed).toLocaleString()})
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* 11. SUPPORT TICKETS */}
+                <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
+                  <div className="flex justify-between items-center mb-2">
+                    <div className="flex items-center gap-2">
+                      <MessageSquare className="w-4 h-4 text-emerald-400" />
+                      <h3 className="text-sm sm:text-base font-bold text-white">Member Support Tickets & Formal Inquiries</h3>
+                    </div>
+                    <button
+                      onClick={fetchAdminData}
+                      className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold flex items-center gap-1 cursor-pointer transition border border-slate-700"
+                    >
+                      <RotateCcw className="w-3 h-3" /> Refresh
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mb-3 font-medium">
+                    Review and resolve messages submitted by members directly from their portal accounts.
+                  </p>
+
+                  {allAdminInquiries.length === 0 ? (
+                    <div className="text-center py-6 text-slate-500 text-xs">No member inquiries awaiting response.</div>
+                  ) : (
+                    <div className="space-y-3">
+                      {allAdminInquiries.map((ticket) => (
+                        <div key={ticket.id} className="bg-slate-950 border border-slate-800 p-4 rounded-2xl space-y-2.5 text-xs shadow">
+                          <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-1.5">
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <h5 className="font-bold text-white text-xs">{ticket.profiles?.full_name || 'Member'}</h5>
+                                <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded-full ${
+                                  ticket.status === 'resolved' ? 'bg-emerald-950 text-emerald-300' : 'bg-amber-950 text-amber-300'
+                                }`}>
+                                  {ticket.status.toUpperCase()}
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-slate-400">{ticket.profiles?.companies?.name || 'External'} • Member {ticket.profiles?.member_number} • Phone: {ticket.profiles?.phone}</p>
+                              <p className="text-emerald-400 font-bold mt-0.5 text-[11px]">Category: {ticket.category.replace('_', ' ').toUpperCase()}</p>
+                            </div>
+                            <span className="text-[9px] text-slate-500 font-mono">{new Date(ticket.created_at).toLocaleString()}</span>
+                          </div>
+
+                          <div className="p-2.5 bg-slate-900 border border-slate-800/80 rounded-xl space-y-0.5">
+                            <p className="font-bold text-slate-200 text-xs">Subject: {ticket.subject}</p>
+                            <p className="text-slate-300 leading-relaxed text-[11px]">{ticket.message}</p>
+                          </div>
+
+                          {ticket.admin_response ? (
+                            <div className="p-2.5 bg-emerald-950/40 border border-emerald-800/40 rounded-xl text-[11px] text-emerald-300">
+                              <strong>Official Reply:</strong> {ticket.admin_response}
+                            </div>
+                          ) : (
+                            <div className="flex gap-2 pt-1.5 border-t border-slate-800">
+                              <input
+                                type="text"
+                                placeholder="Type official response..."
+                                value={adminReplyText[ticket.id] || ''}
+                                onChange={(e) => setAdminReplyText({ ...adminReplyText, [ticket.id]: e.target.value })}
+                                className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
+                              />
+                              <button
+                                onClick={() => handleAdminReplyInquiry(ticket.id)}
+                                className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-xl text-xs font-bold transition shadow cursor-pointer flex items-center gap-1"
+                              >
+                                <Send className="w-3 h-3" /> Reply
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* 12. POST NOTICES & AUDIT LOGS */}
+                {['admin', 'chairman'].includes(userRole) && (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Bell className="w-4 h-4 text-amber-400" />
+                        <h4 className="text-sm sm:text-base font-bold text-white">Post Announcement to Member Board</h4>
+                      </div>
+
+                      <form onSubmit={handlePublishNotice} className="space-y-2.5">
+                        <div>
+                          <label className="block text-xs text-slate-400 mb-1">Announcement Title</label>
+                          <input
+                            type="text"
+                            required
+                            value={newNoticeTitle}
+                            onChange={(e) => setNewNoticeTitle(e.target.value)}
+                            placeholder="e.g. December Loan Applications Open"
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-slate-400 mb-1">Notice Body Content</label>
+                          <textarea
+                            required
+                            rows="2"
+                            value={newNoticeContent}
+                            onChange={(e) => setNewNoticeContent(e.target.value)}
+                            placeholder="Write message to all members..."
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
+                          />
+                        </div>
+                        <button
+                          type="submit"
+                          disabled={loading}
+                          className="w-full bg-amber-600 hover:bg-amber-500 text-white font-bold py-2 rounded-xl text-xs transition cursor-pointer shadow"
+                        >
+                          Publish Notice
+                        </button>
+                      </form>
+                    </div>
+
+                    <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
+                      <div className="flex items-center gap-2 mb-2.5">
+                        <History className="w-4 h-4 text-amber-400" />
+                        <h4 className="text-sm sm:text-base font-bold text-white">Immutable Audit Trail (SASRA Standard)</h4>
+                      </div>
+
+                      <div className="max-h-48 overflow-y-auto border border-slate-800 rounded-2xl bg-slate-950">
+                        <table className="w-full text-left text-xs">
+                          <thead className="bg-slate-900 text-slate-400 sticky top-0 font-semibold">
+                            <tr>
+                              <th className="p-2">Date & Time</th>
+                              <th className="p-2">User</th>
+                              <th className="p-2">Action</th>
+                              <th className="p-2">Details</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-800/60 font-mono text-[10px]">
+                            {auditLogs.map((log) => (
+                              <tr key={log.id}>
+                                <td className="p-2 text-slate-400">
+                                  {new Date(log.created_at).toLocaleString('en-GB', { 
+                                    day: '2-digit', 
+                                    month: 'short', 
+                                    year: 'numeric', 
+                                    hour: '2-digit', 
+                                    minute: '2-digit' 
+                                  })}
+                                </td>
+                                <td className="p-2 text-slate-200 font-sans font-bold">{log.user_name || 'Member'}</td>
+                                <td className="p-2 text-emerald-400 font-bold">{log.action}</td>
+                                <td className="p-2 text-slate-300">{log.details}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
                     </div>
                   </div>
@@ -2922,90 +4604,84 @@ export default function App() {
         )}
       </main>
 
-      {/* Security PIN Change Modal */}
-      {showPinResetModal && (
+      {/* CHANGE SECURITY PIN MODAL */}
+      {showPinChangeModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
-          <div className="bg-slate-950 border border-amber-900/60 rounded-3xl max-w-sm w-full p-6 shadow-2xl space-y-4">
-            <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+          <div className="bg-slate-950 border border-amber-800/80 rounded-3xl max-w-sm w-full p-5 sm:p-6 shadow-2xl space-y-4">
+            <div className="flex justify-between items-center pb-2 border-b border-slate-800">
               <div className="flex items-center gap-2">
-                <Key className="w-5 h-5 text-amber-400" />
-                <h3 className="font-bold text-white text-sm">Change Security PIN</h3>
+                <KeyRound className="w-5 h-5 text-amber-400" />
+                <h3 className="font-bold text-white text-sm sm:text-base">Change Transaction PIN</h3>
               </div>
-              <button onClick={() => setShowPinResetModal(false)} className="text-slate-400 hover:text-white p-1">
-                <X className="w-4 h-4" />
+              <button onClick={() => setShowPinChangeModal(false)} className="text-slate-400 hover:text-white p-1 cursor-pointer">
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleResetTransactionPin} className="space-y-3" autoComplete="off">
+            <form onSubmit={handleChangeSecurityPin} className="space-y-3">
               <div>
-                <label className="block text-[11px] text-slate-300 font-medium mb-1">Enter Current 4-Digit PIN</label>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Current 4-Digit PIN</label>
                 <input
                   type="password"
                   inputMode="numeric"
                   pattern="[0-9]*"
                   maxLength={4}
-                  required
-                  autoComplete="new-password"
-                  name="current_pin_no_autofill"
                   data-lpignore="true"
-                  data-form-type="other"
+                  autoComplete="new-password"
+                  required
                   value={currentPinInput}
                   onChange={(e) => setCurrentPinInput(e.target.value.replace(/[^0-9]/g, ''))}
                   placeholder="••••"
-                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-center text-sm text-white font-mono tracking-widest"
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono text-center tracking-widest focus:border-amber-500"
                 />
               </div>
 
               <div>
-                <label className="block text-[11px] text-slate-300 font-medium mb-1">Enter New 4-Digit PIN</label>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">New 4-Digit PIN</label>
                 <input
                   type="password"
                   inputMode="numeric"
                   pattern="[0-9]*"
                   maxLength={4}
-                  required
-                  autoComplete="new-password"
-                  name="new_pin_no_autofill"
                   data-lpignore="true"
-                  data-form-type="other"
+                  autoComplete="new-password"
+                  required
                   value={newPinInput}
                   onChange={(e) => setNewPinInput(e.target.value.replace(/[^0-9]/g, ''))}
                   placeholder="••••"
-                  className="w-full bg-slate-900 border border-amber-500/50 rounded-xl px-3 py-2 text-center text-sm text-white font-mono tracking-widest"
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono text-center tracking-widest focus:border-amber-500"
                 />
               </div>
 
               <div>
-                <label className="block text-[11px] text-slate-300 font-medium mb-1">Confirm New 4-Digit PIN</label>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Confirm New 4-Digit PIN</label>
                 <input
                   type="password"
                   inputMode="numeric"
                   pattern="[0-9]*"
                   maxLength={4}
-                  required
-                  autoComplete="new-password"
-                  name="confirm_pin_no_autofill"
                   data-lpignore="true"
-                  data-form-type="other"
-                  value={confirmPinInput}
-                  onChange={(e) => setConfirmPinInput(e.target.value.replace(/[^0-9]/g, ''))}
+                  autoComplete="new-password"
+                  required
+                  value={confirmNewPinInput}
+                  onChange={(e) => setConfirmNewPinInput(e.target.value.replace(/[^0-9]/g, ''))}
                   placeholder="••••"
-                  className="w-full bg-slate-900 border border-amber-500/50 rounded-xl px-3 py-2 text-center text-sm text-white font-mono tracking-widest"
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono text-center tracking-widest focus:border-amber-500"
                 />
               </div>
 
-              <div className="flex gap-2 pt-2">
+              <div className="flex gap-2 pt-2 border-t border-slate-800">
                 <button
                   type="button"
-                  onClick={() => setShowPinResetModal(false)}
-                  className="flex-1 bg-slate-900 hover:bg-slate-800 text-slate-300 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer"
+                  onClick={() => setShowPinChangeModal(false)}
+                  className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-2 rounded-xl text-xs transition cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={loading}
-                  className="flex-1 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white py-2.5 rounded-xl text-xs font-bold transition shadow cursor-pointer"
+                  className="flex-1 bg-amber-600 hover:bg-amber-500 text-white font-bold py-2 rounded-xl text-xs transition cursor-pointer shadow"
                 >
                   Update PIN
                 </button>
@@ -3015,7 +4691,7 @@ export default function App() {
         </div>
       )}
 
-      {/* LOAN TERMS & TRANSACTION PIN VERIFICATION MODAL */}
+      {/* LOAN AUTHORIZATION & PIN VERIFICATION MODAL */}
       {showTermsModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
           <div className="bg-slate-950 border border-emerald-900/60 rounded-3xl max-w-lg w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
@@ -3031,7 +4707,7 @@ export default function App() {
 
             <div className="p-6 overflow-y-auto space-y-3.5 text-xs text-slate-300 leading-relaxed">
               <div className="p-4 bg-emerald-950/40 border border-emerald-800/40 rounded-2xl space-y-1">
-                <p className="font-bold text-emerald-300 text-sm capitalize">Facility: {loanProduct.replace(/_/g, ' ').toUpperCase()}</p>
+                <p className="font-bold text-emerald-300 text-sm capitalize">Facility: {loanProduct.replace('_', ' ').toUpperCase()}</p>
                 <div className="flex justify-between text-slate-300 font-medium">
                   <span>Principal: <strong>KES {loanPrincipalNum.toLocaleString()}</strong></span>
                   <span>Duration: <strong>{loanMonths} Month(s)</strong></span>
@@ -3050,11 +4726,9 @@ export default function App() {
                     inputMode="numeric"
                     pattern="[0-9]*"
                     maxLength={4}
-                    required
-                    autoComplete="new-password"
-                    name="loan_auth_pin_no_autofill"
                     data-lpignore="true"
-                    data-form-type="other"
+                    autoComplete="new-password"
+                    required
                     value={enteredLoanPin}
                     onChange={(e) => setEnteredLoanPin(e.target.value.replace(/[^0-9]/g, ''))}
                     placeholder="••••"
@@ -3062,10 +4736,28 @@ export default function App() {
                   />
                   <Key className="w-4 h-4 text-amber-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 </div>
+                <p className="text-[10px] text-slate-400 mt-1">Default PIN is <code className="text-emerald-400 font-mono">1234</code>.</p>
               </div>
 
               <h4 className="font-bold text-white text-xs uppercase tracking-wide">1. Payroll Deduction Authorization</h4>
-              <p>By submitting this loan request, I authorize my employer to deduct <strong>KES {monthlyInstallment.toFixed(2)}</strong> monthly until settled.</p>
+              <p>
+                By submitting this loan request, I authorize my employer or checkoff unit to deduct <strong>KES {monthlyInstallment.toFixed(2)}</strong> monthly until settled.
+              </p>
+
+              <h4 className="font-bold text-white text-xs uppercase tracking-wide">2. Interest Rate & Repayment</h4>
+              <p>
+                Interest is charged at <strong>{interestRate}% per month</strong>. Default attracts recovery under the Co-operative Societies Act.
+              </p>
+
+              <h4 className="font-bold text-white text-xs uppercase tracking-wide">3. Sequential 3-Signatory Quorum</h4>
+              <p className="flex items-center gap-1.5 flex-wrap">
+                Disbursement proceeds strictly in sequence: 
+                <span className="bg-slate-900 px-2 py-0.5 rounded text-emerald-300 font-bold border border-slate-800">1. Assistant Chair</span> 
+                <ArrowRight className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="bg-slate-900 px-2 py-0.5 rounded text-emerald-300 font-bold border border-slate-800">2. Chairman</span> 
+                <ArrowRight className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="bg-slate-900 px-2 py-0.5 rounded text-emerald-300 font-bold border border-slate-800">3. Treasurer</span>.
+              </p>
 
               <div className="flex items-start gap-2 pt-2 border-t border-slate-800">
                 <input
@@ -3102,28 +4794,80 @@ export default function App() {
         </div>
       )}
 
-      {/* Mobile Bottom Bar */}
+      {/* Mobile Bottom Navigation Bar */}
       {session && authMode !== 'reset' && (
         <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-slate-950/98 backdrop-blur-xl border-t border-slate-800/90 flex justify-around items-center py-2.5 px-1 z-50 shadow-2xl">
-          <button onClick={() => setActiveTab('overview')} className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 transition ${activeTab === 'overview' ? 'text-emerald-400' : 'text-slate-400'}`}>
-            <PiggyBank className="w-4 h-4" /><span>Overview</span>
+          <button
+            onClick={() => setActiveTab('overview')}
+            className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 transition ${
+              activeTab === 'overview' ? 'text-emerald-400' : 'text-slate-400'
+            }`}
+          >
+            <PiggyBank className="w-4 h-4" />
+            <span>Overview</span>
           </button>
-          <button onClick={() => setActiveTab('loans')} className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 transition ${activeTab === 'loans' ? 'text-emerald-400' : 'text-slate-400'}`}>
-            <Calculator className="w-4 h-4" /><span>Loans</span>
+
+          <button
+            onClick={() => setActiveTab('loans')}
+            className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 transition ${
+              activeTab === 'loans' ? 'text-emerald-400' : 'text-slate-400'
+            }`}
+          >
+            <Calculator className="w-4 h-4" />
+            <span>Loans</span>
           </button>
-          <button onClick={() => setActiveTab('guarantors')} className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 relative transition ${activeTab === 'guarantors' ? 'text-emerald-400' : 'text-slate-400'}`}>
-            <Users className="w-4 h-4" /><span>Guarantors</span>
+
+          <button
+            onClick={() => setActiveTab('documents')}
+            className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 transition ${
+              activeTab === 'documents' ? 'text-emerald-400' : 'text-slate-400'
+            }`}
+          >
+            <FolderDown className="w-4 h-4" />
+            <span>Reports</span>
           </button>
-          <button onClick={() => setActiveTab('support')} className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 transition ${activeTab === 'support' ? 'text-emerald-400' : 'text-slate-400'}`}>
-            <MessageSquare className="w-4 h-4" /><span>Help</span>
+
+          <button
+            onClick={() => setActiveTab('guarantors')}
+            className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 relative transition ${
+              activeTab === 'guarantors' ? 'text-emerald-400' : 'text-slate-400'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            <span>Guarantors</span>
+            {pendingGuaranteesCount > 0 && (
+              <span className="absolute top-0 right-1 w-2 h-2 bg-rose-500 rounded-full animate-ping" />
+            )}
           </button>
+
+          <button
+            onClick={() => setActiveTab('support')}
+            className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 transition ${
+              activeTab === 'support' ? 'text-emerald-400' : 'text-slate-400'
+            }`}
+          >
+            <MessageSquare className="w-4 h-4" />
+            <span>Help</span>
+          </button>
+
           {['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(userRole) && (
-            <button onClick={() => setActiveTab('admin')} className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 transition ${activeTab === 'admin' ? 'text-amber-400' : 'text-slate-400'}`}>
-              <ShieldCheck className="w-4 h-4" /><span>Leadership</span>
+            <button
+              onClick={() => setActiveTab('admin')}
+              className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 transition ${
+                activeTab === 'admin' ? 'text-amber-400' : 'text-slate-400'
+              }`}
+            >
+              <ShieldCheck className="w-4 h-4" />
+              <span>Leadership Hub</span>
             </button>
           )}
-          <button onClick={() => handlePerformSignOut(false)} className="flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 text-rose-400 hover:text-rose-300 transition">
-            <LogOut className="w-4 h-4" /><span>Exit</span>
+
+          <button
+            onClick={() => handlePerformSignOut(false)}
+            className="flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 text-rose-400 hover:text-rose-300 transition"
+          >
+            <LogOut className="w-4 h-4" />
+            <span>Exit</span>
           </button>
         </div>
       )}

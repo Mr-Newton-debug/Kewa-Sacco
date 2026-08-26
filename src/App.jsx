@@ -292,57 +292,85 @@ export default function App() {
 
   const fetchUserData = async (userId) => {
     setLoading(true);
-    const { data: profileData } = await supabase
-      .from('profiles')
-      .select('id, full_name, member_number, id_number, phone, email, role, company_id, transaction_pin, created_at, companies(id, name)')
-      .eq('id', userId)
-      .single();
+    try {
+      // 1. Fetch profile cleanly without crashing on foreign key relations
+      const { data: profileData, error: profErr } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .single();
 
-    if (profileData) {
-      setProfile(profileData);
-      setEditFullName(profileData.full_name || '');
-      setEditPhone(profileData.phone || '');
-      setEditIdNumber(profileData.id_number || '');
-      setEditCompanyId(profileData.company_id || '');
+      if (profErr) throw profErr;
 
-      fetchAllMembers();
-      fetchGuarantorData(userId);
-      fetchBeneficiaries(userId);
-      fetchWelfareClaims(userId);
-      fetchMemberInquiries(userId);
-      if (['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(profileData.role)) {
-        fetchAdminData();
+      if (profileData) {
+        // 2. Fetch company name separately if company_id exists
+        let companyData = { name: 'KEWA SACCO' };
+        if (profileData.company_id) {
+          const { data: comp } = await supabase
+            .from('companies')
+            .select('name')
+            .eq('id', profileData.company_id)
+            .single();
+          if (comp) companyData = comp;
+        }
+
+        const hydratedProfile = {
+          ...profileData,
+          companies: companyData
+        };
+
+        setProfile(hydratedProfile);
+        setEditFullName(hydratedProfile.full_name || '');
+        setEditPhone(hydratedProfile.phone || '');
+        setEditIdNumber(hydratedProfile.id_number || '');
+        setEditCompanyId(hydratedProfile.company_id || '');
+
+        fetchAllMembers();
+        fetchGuarantorData(userId);
+        fetchBeneficiaries(userId);
+        fetchWelfareClaims(userId);
+        fetchMemberInquiries(userId);
+        
+        if (['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(hydratedProfile.role)) {
+          fetchAdminData();
+        }
       }
+
+      const { data: savingsData } = await supabase.from('savings_ledger').select('*').eq('member_id', userId).order('created_at', { ascending: false });
+      if (savingsData) setSavings(savingsData);
+
+      const { data: loanData } = await supabase.from('loans').select('*').eq('member_id', userId).order('created_at', { ascending: false });
+      if (loanData) setLoans(loanData);
+
+      const { data: repaymentData } = await supabase.from('loan_repayments').select('*, loans(principal_amount, loan_product)').eq('member_id', userId).order('created_at', { ascending: false });
+      if (repaymentData) setRepayments(repaymentData);
+
+    } catch (err) {
+      console.error('Error in fetchUserData:', err);
     }
-
-    const { data: savingsData } = await supabase.from('savings_ledger').select('*').eq('member_id', userId).order('created_at', { ascending: false });
-    if (savingsData) setSavings(savingsData);
-
-    const { data: loanData } = await supabase.from('loans').select('*').eq('member_id', userId).order('created_at', { ascending: false });
-    if (loanData) setLoans(loanData);
-
-    const { data: repaymentData } = await supabase.from('loan_repayments').select('*, loans(principal_amount, loan_product)').eq('member_id', userId).order('created_at', { ascending: false });
-    if (repaymentData) setRepayments(repaymentData);
-
     setLoading(false);
   };
 
   const fetchAllMembers = async () => {
     try {
-      const [
-        { data: membersData, error: memErr },
-        { data: savingsData },
-        { data: loansData },
-        { data: guarantorsData }
-      ] = await Promise.all([
-        supabase.from('profiles').select('id, full_name, member_number, id_number, phone, email, role, company_id, companies(id, name)').order('full_name', { ascending: true }),
+      const { data: membersData, error: memErr } = await supabase
+        .from('profiles')
+        .select('*')
+        .order('full_name', { ascending: true });
+
+      if (memErr) throw memErr;
+
+      const [{ data: savingsData }, { data: loansData }, { data: guarantorsData }, { data: compsData }] = await Promise.all([
         supabase.from('savings_ledger').select('member_id, amount'),
         supabase.from('loans').select('id, member_id, balance_remaining, status'),
-        supabase.from('loan_guarantors').select('id, loan_id, guarantor_id, amount_guaranteed, status')
+        supabase.from('loan_guarantors').select('id, loan_id, guarantor_id, amount_guaranteed, status'),
+        supabase.from('companies').select('id, name')
       ]);
 
-      if (!memErr && membersData) {
+      if (membersData) {
         const formatted = membersData.map((m) => {
+          const matchedCompany = (compsData || []).find((c) => c.id === m.company_id) || { name: 'External' };
+
           const totalMemberSavings = (savingsData || [])
             .filter((s) => s.member_id === m.id)
             .reduce((acc, s) => acc + Number(s.amount || 0), 0);
@@ -362,6 +390,7 @@ export default function App() {
 
           return {
             ...m,
+            companies: matchedCompany,
             totalSavings: totalMemberSavings,
             totalActiveDebt: totalMemberLoans,
             runningGuaranteedPledges: runningPledges,
@@ -373,7 +402,7 @@ export default function App() {
         if (formatted.length > 0) setManualTargetMemberId((prev) => prev || formatted[0].id);
       }
     } catch (err) {
-      console.error('fetchAllMembers error:', err);
+      console.error('Failed in fetchAllMembers:', err);
     }
   };
 

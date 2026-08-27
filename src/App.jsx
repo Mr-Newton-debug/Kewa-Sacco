@@ -149,10 +149,10 @@ export default function App() {
   const [newNoticeTitle, setNewNoticeTitle] = useState('');
   const [newNoticeContent, setNewNoticeContent] = useState('');
 
+  // Derived Variables & Filters
   const pendingGuaranteesCount = guarantorRequests.filter((g) => g.status === 'pending').length;
   const profilePhone = profile?.phone || '';
 
-  // Filtered lists for Admin/Leadership Hub
   const filteredGuarantorInspectionList = allSystemGuarantors.filter((g) => {
     const term = (guarantorTrackerSearch || '').toLowerCase();
     const gName = (g.profiles?.full_name || '').toLowerCase();
@@ -180,7 +180,7 @@ export default function App() {
     const bPaid = (b.loan_repayments || []).reduce((sum, r) => sum + Number(r.amount || 0), 0);
     const aPct = Number(a.total_payable || 1) > 0 ? (aPaid / Number(a.total_payable)) * 100 : 0;
     const bPct = Number(b.total_payable || 1) > 0 ? (bPaid / Number(b.total_payable)) * 100 : 0;
-    return aPct - bPct; // Lowest progress to highest progress
+    return aPct - bPct;
   }).map((l) => {
     const totalPaid = (l.loan_repayments || []).reduce((sum, r) => sum + Number(r.amount || 0), 0);
     const progressPercent = Number(l.total_payable || 1) > 0 ? Math.min(100, (totalPaid / Number(l.total_payable)) * 100) : 0;
@@ -633,7 +633,7 @@ export default function App() {
     setLoading(false);
   };
 
-  // Additional admin / leadership dummy placeholders to prevent reference errors
+  // Additional admin / leadership dummy placeholders
   const handleExecuteHistoricalMigration = (e) => { e.preventDefault(); alert('Migration feature initialized.'); };
   const handleManualMemberAdjustment = (e) => { e.preventDefault(); alert('Manual adjustment posted.'); };
   const handleUploadSaccoDocument = (e) => { e.preventDefault(); alert('Document uploaded.'); };

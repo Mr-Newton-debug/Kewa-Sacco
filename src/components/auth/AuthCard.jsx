@@ -20,6 +20,10 @@ export default function AuthCard({
   setPhone,
   registrationPin,
   setRegistrationPin,
+  securityQuestion,   // <-- Must be listed here
+  setSecurityQuestion, // <-- Must be listed here
+  securityAnswer,     // <-- Must be listed here
+  setSecurityAnswer,   // <-- Must be listed here
   odpcConsent,
   setOdpcConsent,
   companies,

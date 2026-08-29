@@ -17,6 +17,7 @@ export default function LoansTab({
   setDisbursementMethod,
   disbursementDetails,
   setDisbursementDetails,
+  profilePhone,       // <-- Must be listed here in props!
   guarantorList,
   allMembers,
   currentUserId,
@@ -26,7 +27,7 @@ export default function LoansTab({
   calculatedTotal,
   monthlyInstallment,
   onInitiateLoan,
-  loans = [],
+  loans,
   onDownloadPDF,
   loading
 }) {

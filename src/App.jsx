@@ -46,9 +46,11 @@ export default function App() {
   const [phone, setPhone] = useState('');
   const [companyId, setCompanyId] = useState('');
   const [registrationPin, setRegistrationPin] = useState('1234');
-  const [securityQuestion, setSecurityQuestion] = useState("What is your mother's maiden name?");
-  const [securityAnswer, setSecurityAnswer] = useState('');
-  const [odpcConsent, setOdpcConsent] = useState(false);
+  // Inside App.jsx - State declarations (ensure these exist)
+ const [securityQuestion, setSecurityQuestion] = useState("What is your mother's maiden name?");
+const [securityAnswer, setSecurityAnswer] = useState('');
+const profilePhone = profile?.phone || ''; // <-- Keep this one single declaration
+const [odpcConsent, setOdpcConsent] = useState(false);
 
   // Core Data State
   const [companies, setCompanies] = useState([]);
@@ -151,7 +153,7 @@ export default function App() {
 
   // Derived Variables & Filters
   const pendingGuaranteesCount = guarantorRequests.filter((g) => g.status === 'pending').length;
-  const profilePhone = profile?.phone || '';
+
 
   const filteredGuarantorInspectionList = allSystemGuarantors.filter((g) => {
     const term = (guarantorTrackerSearch || '').toLowerCase();
@@ -1042,7 +1044,7 @@ export default function App() {
               />
             )}
 
-            {activeTab === 'loans' && (
+{activeTab === 'loans' && (
               <LoansTab
                 loanProduct={loanProduct}
                 onProductChange={handleLoanProductChange}

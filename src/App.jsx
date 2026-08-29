@@ -18,8 +18,6 @@ import LoanAuthorizationModal from './components/modals/LoanAuthorizationModal';
 
 // Auth Component
 import AuthCard from './components/auth/AuthCard';
-
-// Tabs
 import OverviewTab from './components/tabs/OverviewTab';
 import LoansTab from './components/tabs/LoansTab';
 import GuarantorsTab from './components/tabs/GuarantorsTab';

@@ -74,15 +74,7 @@ export default function App() {
   const profilePhone = profile?.phone || '';
   const pendingGuaranteesCount = guarantorRequests.filter((g) => g.status === 'pending').length;
 
-  const filteredGuarantorInspectionList = allSystemGuarantors.filter((g) => {
-    const term = (guarantorTrackerSearch || '').toLowerCase();
-    const gName = (g.profiles?.full_name || '').toLowerCase();
-    const bName = (g.loans?.profiles?.full_name || '').toLowerCase();
-    const mNum = (g.profiles?.member_number || '').toLowerCase();
-    return gName.includes(term) || bName.includes(term) || mNum.includes(term);
-  });
-
-  // Profile Settings & PIN Modal State
+   // Profile Settings & PIN Modal State
   const [editFullName, setEditFullName] = useState('');
   const [editPhone, setEditPhone] = useState('');
   const [editIdNumber, setEditIdNumber] = useState('');
@@ -161,7 +153,8 @@ export default function App() {
   const [newNoticeTitle, setNewNoticeTitle] = useState('');
   const [newNoticeContent, setNewNoticeContent] = useState('');
 
-  const filteredMemberDirectory = allMembers.filter((m) => {
+  // Safe filtering with fallback empty arrays
+  const filteredMemberDirectory = (allMembers || []).filter((m) => {
     const term = (memberDirectorySearch || '').toLowerCase();
     const name = (m.full_name || '').toLowerCase();
     const num = (m.member_number || '').toLowerCase();
@@ -173,6 +166,14 @@ export default function App() {
     const matchesCompany = memberDirectoryCompanyFilter === 'all' || compName.toLowerCase().includes(memberDirectoryCompanyFilter.toLowerCase());
 
     return matchesSearch && matchesCompany;
+  });
+
+  const filteredGuarantorInspectionList = (allSystemGuarantors || []).filter((g) => {
+    const term = (guarantorTrackerSearch || '').toLowerCase();
+    const gName = (g.profiles?.full_name || '').toLowerCase();
+    const bName = (g.loans?.profiles?.full_name || '').toLowerCase();
+    const mNum = (g.profiles?.member_number || '').toLowerCase();
+    return gName.includes(term) || bName.includes(term) || mNum.includes(term);
   });
 
   const performanceRankedLoans = [...allLoansLeadership].sort((a, b) => {

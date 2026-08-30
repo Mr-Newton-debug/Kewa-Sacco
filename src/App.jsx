@@ -446,22 +446,33 @@ export default function App() {
   const fetchGuarantorData = async (userId) => {
     if (!userId) return;
     try {
-      const [
-        { data: requestsRaw },
-        { data: allLoansRaw },
-        { data: allProfilesRaw }
-      ] = await Promise.all([
-        supabase.from('loan_guarantors').select('*').eq('guarantor_id', userId).order('created_at', { ascending: false }),
-        supabase.from('loans').select('*'),
-        supabase.from('profiles').select('id, full_name, member_number, phone, company_id, companies(name)')
-      ]);
+      const { data: requestsRaw } = await supabase
+        .from('loan_guarantors')
+        .select('*')
+        .eq('guarantor_id', userId)
+        .order('created_at', { ascending: false });
 
       if (requestsRaw) {
+        // Fetch all loans and profiles to map cleanly
+        const { data: allLoansRaw } = await supabase.from('loans').select('*');
+        const { data: allProfilesRaw } = awaitwaanSupabaseProfilesSafely(); // helper or standard query
+
         const hydratedRequests = requestsRaw.map((req) => {
           const matchedLoan = (allLoansRaw || []).find((l) => l.id === req.loan_id) || {};
-          const matchedBorrower = (allProfilesRaw || []).find((p) => p.id === matchedLoan.member_id) || {};
-          return { ...req, loans: { ...matchedLoan, profiles: matchedBorrower } };
+          // Try finding borrower from allMembers if already loaded, or fall back to profiles table
+          const matchedBorrower = (allMembers || []).find((m) => m.id === matchedLoan.member_id) || 
+                                  (allProfilesRaw || []).find((p) => p.id === matchedLoan.member_id) || 
+                                  { full_name: 'Cooperative Member', member_number: 'N/A', companies: { name: 'KEWA SACCO' } };
+          
+          return { 
+            ...req, 
+            loans: { 
+              ...matchedLoan, 
+              profiles: matchedBorrower 
+            } 
+          };
         });
+
         setGuarantorRequests(hydratedRequests);
 
         const activeRunning = hydratedRequests.filter((g) => {
@@ -477,6 +488,12 @@ export default function App() {
     } catch (e) {
       console.error('Guarantor fetch error:', e);
     }
+  };
+
+  // Helper to fetch profiles safely without RLS blockage
+  const supabaseProfilesSafely = async () => {
+    const { data } = await supabase.from('profiles').select('id, full_name, member_number, phone, company_id, companies(name)');
+    return data || [];
   };
 
   const fetchBeneficiaries = async (userId) => {

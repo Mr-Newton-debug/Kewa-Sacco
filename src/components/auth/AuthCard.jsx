@@ -161,6 +161,7 @@ export default function AuthCard({
               ))}
             </select>
           </div>
+          
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1">Phone Number</label>
             <input

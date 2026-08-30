@@ -1,5 +1,5 @@
-import React from 'react';
-import { Building2 } from 'lucide-react';
+import React, { useState } from 'react';
+import { supabase } from '../../supabaseClient';
 
 export default function AuthCard({
   authMode,
@@ -20,10 +20,10 @@ export default function AuthCard({
   setPhone,
   registrationPin,
   setRegistrationPin,
-  securityQuestion,   // <-- Must be listed here
-  setSecurityQuestion, // <-- Must be listed here
-  securityAnswer,     // <-- Must be listed here
-  setSecurityAnswer,   // <-- Must be listed here
+  securityQuestion,
+  setSecurityQuestion,
+  securityAnswer,
+  setSecurityAnswer,
   odpcConsent,
   setOdpcConsent,
   companies,
@@ -36,21 +36,19 @@ export default function AuthCard({
   loading
 }) {
   return (
-    <div className="max-w-md mx-auto mt-6 sm:mt-12 bg-slate-900/90 border border-slate-800/90 rounded-3xl p-5 sm:p-10 shadow-2xl backdrop-blur-xl">
-      <div className="text-center mb-5">
-        <div className="inline-flex bg-gradient-to-tr from-emerald-600 to-teal-400 p-3 rounded-2xl shadow-xl shadow-emerald-900/30 mb-2">
-          <Building2 className="w-6 h-6 text-white" />
-        </div>
-        <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
-          {authMode === 'login' && 'Member Sign In'}
-          {authMode === 'register' && 'Join KEWA SACCO'}
-          {authMode === 'forgot' && 'Reset Password'}
-          {authMode === 'reset' && 'Set New Password'}
-        </h2>
+    <div className="max-w-md mx-auto bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl my-8">
+      <div className="text-center mb-6">
+        <h1 className="text-2xl font-black text-white tracking-tight">KEWA SACCO PORTAL</h1>
+        <p className="text-xs text-slate-400 mt-1">
+          {authMode === 'login' && 'Sign in to access your financial cooperative account'}
+          {authMode === 'register' && 'Register a new membership account'}
+          {authMode === 'forgot' && 'Reset your account password'}
+          {authMode === 'reset' && 'Set your new secure password'}
+        </p>
       </div>
 
       {authMode === 'login' && (
-        <form onSubmit={onLogin} className="space-y-3.5" autoComplete="off">
+        <form onSubmit={onLogin} className="space-y-4">
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1">Email Address</label>
             <input
@@ -58,42 +56,46 @@ export default function AuthCard({
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="name@domain.com"
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white focus:border-emerald-500 transition"
+              placeholder="name@example.com"
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500"
             />
           </div>
           <div>
-            <div className="flex justify-between items-center mb-1">
-              <label className="text-xs font-semibold text-slate-300">Password</label>
-              <button
-                type="button"
-                onClick={() => setAuthMode('forgot')}
-                className="text-[11px] text-emerald-400 hover:underline cursor-pointer"
-              >
-                Forgot?
-              </button>
-            </div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1">Password</label>
             <input
               type="password"
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white"
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500"
             />
+          </div>
+          <div className="flex items-center justify-between text-xs">
+            <button type="button" onClick={() => setAuthMode('forgot')} className="text-emerald-400 hover:underline">
+              Forgot password?
+            </button>
           </div>
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3 rounded-xl text-xs sm:text-sm transition shadow-lg cursor-pointer"
+            className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-xl text-xs transition shadow-lg cursor-pointer"
           >
-            {loading ? 'Processing...' : 'Sign In to Portal'}
+            {loading ? 'Signing In...' : 'Sign In'}
           </button>
+          <div className="text-center pt-2">
+            <p className="text-xs text-slate-400">
+              Don't have an account?{' '}
+              <button type="button" onClick={() => setAuthMode('register')} className="text-emerald-400 font-bold hover:underline">
+                Register Now
+              </button>
+            </p>
+          </div>
         </form>
       )}
 
       {authMode === 'register' && (
-        <form onSubmit={onRegister} className="space-y-3" autoComplete="off">
+        <form onSubmit={onRegister} className="space-y-3.5">
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1">Full Name</label>
             <input
@@ -102,7 +104,7 @@ export default function AuthCard({
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
               placeholder="John Doe"
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
             />
           </div>
           <div className="grid grid-cols-2 gap-2">
@@ -114,7 +116,7 @@ export default function AuthCard({
                 value={memberNumber}
                 onChange={(e) => setMemberNumber(e.target.value)}
                 placeholder="KW-001"
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500 font-mono"
               />
             </div>
             <div>
@@ -125,27 +127,25 @@ export default function AuthCard({
                 value={idNumber}
                 onChange={(e) => setIdNumber(e.target.value)}
                 placeholder="12345678"
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
               />
             </div>
           </div>
           <div>
-            <label className="block text-xs font-semibold text-amber-300 mb-1">4-Digit Security PIN</label>
+            <label className="block text-xs font-semibold text-slate-300 mb-1">4-Digit Security PIN</label>
             <input
               type="password"
-              inputMode="numeric"
-              pattern="[0-9]*"
               maxLength={4}
-              data-lpignore="true"
-              autoComplete="new-password"
               required
               value={registrationPin}
-              onChange={(e) => setRegistrationPin(e.target.value.replace(/[^0-9]/g, ''))}
-              placeholder="••••"
-              className="w-full bg-slate-950 border border-amber-500/60 rounded-xl px-3.5 py-2 text-xs text-white font-mono text-center tracking-widest"
+              onChange={(e) => setRegistrationPin(e.target.value)}
+              placeholder="1234"
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono tracking-widest text-center"
             />
           </div>
-          <div className="relative mb-3">
+          
+          {/* Clean Company Branch Dropdown */}
+          <div className="relative">
             <label className="block text-xs font-semibold text-slate-300 mb-1">Company / Branch</label>
             <select
               value={companyId || ''}
@@ -161,16 +161,16 @@ export default function AuthCard({
               ))}
             </select>
           </div>
-          
+
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1">Phone Number</label>
             <input
-              type="tel"
+              type="text"
               required
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               placeholder="0712345678"
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
             />
           </div>
           <div>
@@ -180,8 +180,8 @@ export default function AuthCard({
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="name@domain.com"
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+              placeholder="name@example.com"
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
             />
           </div>
           <div>
@@ -192,83 +192,97 @@ export default function AuthCard({
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
             />
           </div>
-          <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1">Security Question</label>
-            <select
-              value={securityQuestion}
-              onChange={(e) => setSecurityQuestion(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white mb-2"
-            >
-              <option value="What is your mother's maiden name?">What is your mother's maiden name?</option>
-              <option value="What was the name of your first pet?">What was the name of your first pet?</option>
-              <option value="What city were you born in?">What city were you born in?</option>
-            </select>
-            <input
-              type="text"
-              required
-              value={securityAnswer}
-              onChange={(e) => setSecurityAnswer(e.target.value)}
-              placeholder="Your secret answer (case-insensitive)"
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
-            />
+
+          {/* Security Question */}
+          <div className="grid grid-cols-1 gap-2 pt-1">
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-300 mb-1">Security Question</label>
+              <select
+                value={securityQuestion}
+                onChange={(e) => setSecurityQuestion(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+              >
+                <option value="What is your mother's maiden name?">What is your mother's maiden name?</option>
+                <option value="What was your first pet's name?">What was your first pet's name?</option>
+                <option value="What city were you born in?">What city were you born in?</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-300 mb-1">Secret Answer</label>
+              <input
+                type="text"
+                required
+                value={securityAnswer}
+                onChange={(e) => setSecurityAnswer(e.target.value)}
+                placeholder="Case-insensitive answer"
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+              />
+            </div>
           </div>
-          <div className="flex items-start gap-2 pt-1">
+
+          {/* ODPC Compliance Checkbox */}
+          <div className="flex items-start gap-2 pt-2">
             <input
               type="checkbox"
-              id="odpcConsentBox"
-              required
+              id="odpc"
               checked={odpcConsent}
               onChange={(e) => setOdpcConsent(e.target.checked)}
-              className="mt-0.5 accent-emerald-500 rounded cursor-pointer"
+              className="mt-0.5 rounded bg-slate-950 border-slate-800 text-emerald-600 focus:ring-0"
             />
-            <label htmlFor="odpcConsentBox" className="text-[11px] text-slate-400 leading-tight cursor-pointer">
-              I consent to KEWA SACCO processing my data under the <strong>Kenya Data Protection Act (2019)</strong>.
+            <label htmlFor="odpc" className="text-[11px] text-slate-400 leading-tight">
+              I consent to the processing of my personal data in compliance with the <span className="text-emerald-400 font-semibold">Kenya Data Protection Act (2019)</span>.
             </label>
           </div>
+
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-2.5 rounded-xl text-xs sm:text-sm transition mt-1 shadow-lg cursor-pointer"
+            className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-xl text-xs transition shadow-lg cursor-pointer mt-2"
           >
-            {loading ? 'Processing...' : 'Complete Registration'}
+            {loading ? 'Creating Account...' : 'Complete Registration'}
           </button>
+          
+          <div className="text-center pt-1">
+            <button type="button" onClick={() => setAuthMode('login')} className="text-xs text-slate-400 hover:text-white">
+              Already have an account? <span className="text-emerald-400 font-bold">Sign In</span>
+            </button>
+          </div>
         </form>
       )}
 
       {authMode === 'forgot' && (
-        <form onSubmit={onForgotPassword} className="space-y-3.5">
-          <p className="text-xs text-slate-400">
-            Enter your registered email address to receive password reset instructions.
-          </p>
+        <form onSubmit={onForgotPassword} className="space-y-4">
           <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1">Email Address</label>
+            <label className="block text-xs font-semibold text-slate-300 mb-1">Enter your account email</label>
             <input
               type="email"
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="name@domain.com"
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white"
+              placeholder="name@example.com"
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500"
             />
           </div>
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 rounded-xl text-xs sm:text-sm transition cursor-pointer shadow"
+            className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-xl text-xs transition shadow-lg cursor-pointer"
           >
-            {loading ? 'Sending...' : 'Send Reset Link'}
+            {loading ? 'Sending Link...' : 'Send Password Reset Link'}
           </button>
+          <div className="text-center pt-2">
+            <button type="button" onClick={() => setAuthMode('login')} className="text-xs text-emerald-400 hover:underline">
+              Back to Sign In
+            </button>
+          </div>
         </form>
       )}
 
       {authMode === 'reset' && (
-        <form onSubmit={onUpdatePassword} className="space-y-3.5">
-          <p className="text-xs text-slate-400">
-            Create a secure new password for your cooperative account.
-          </p>
+        <form onSubmit={onUpdatePassword} className="space-y-4">
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1">New Password</label>
             <input
@@ -276,45 +290,19 @@ export default function AuthCard({
               required
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
-              placeholder="••••••••"
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white"
+              placeholder="Enter new secure password"
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500"
             />
           </div>
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 rounded-xl text-xs sm:text-sm transition cursor-pointer shadow"
+            className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-xl text-xs transition shadow-lg cursor-pointer"
           >
-            {loading ? 'Updating...' : 'Set New Password & Sign In'}
+            {loading ? 'Updating Password...' : 'Update Password'}
           </button>
         </form>
       )}
-
-      <div className="text-center mt-5 text-xs text-slate-400 font-medium">
-        {authMode === 'login' ? (
-          <>
-            New member?{' '}
-            <button
-              type="button"
-              onClick={() => setAuthMode('register')}
-              className="text-emerald-400 hover:underline font-bold cursor-pointer"
-            >
-              Register Account
-            </button>
-          </>
-        ) : (
-          <>
-            Already registered?{' '}
-            <button
-              type="button"
-              onClick={() => setAuthMode('login')}
-              className="text-emerald-400 hover:underline font-bold cursor-pointer"
-            >
-              Sign In
-            </button>
-          </>
-        )}
-      </div>
     </div>
   );
 }

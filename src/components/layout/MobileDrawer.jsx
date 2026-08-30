@@ -1,135 +1,58 @@
 import React from 'react';
-import { 
-  PiggyBank, Calculator, Users, FolderDown, Settings, 
-  Smartphone, MessageSquare, ShieldCheck, LogOut 
-} from 'lucide-react';
+import { LogOut, X } from 'lucide-react';
 
-export default function MobileDrawer({
-  isOpen,
-  onClose,
-  profile,
-  activeTab,
-  setActiveTab,
-  pendingGuaranteesCount,
-  userRole,
-  onSignOut
-}) {
+export default function MobileDrawer({ isOpen, onClose, profile, activeTab, setActiveTab, pendingGuaranteesCount, userRole, onSignOut }) {
   if (!isOpen) return null;
 
-  const handleTabClick = (tab) => {
-    setActiveTab(tab);
-    onClose();
-  };
-
   return (
-    <div className="lg:hidden fixed inset-0 top-[52px] bg-slate-950/98 backdrop-blur-2xl z-[100] px-4 py-5 space-y-2.5 overflow-y-auto border-t border-slate-800 animate-fadeIn">
-      <div className="p-3 bg-slate-900/90 border border-slate-800 rounded-2xl mb-3 flex items-center justify-between">
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex justify-end md:hidden">
+      <div className="w-72 bg-slate-900 h-full p-5 border-l border-slate-800 flex flex-col justify-between shadow-2xl">
         <div>
-          <p className="text-xs font-bold text-white">{profile?.full_name || 'Member'}</p>
-          <p className="text-[10px] text-emerald-400 font-mono">{profile?.member_number || ''}</p>
+          <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-4">
+            <div>
+              <h2 className="text-sm font-bold text-white">{profile?.full_name || 'Member Portal'}</h2>
+              <p className="text-[10px] text-slate-400 font-mono">No: {profile?.member_number || 'N/A'}</p>
+            </div>
+            <button onClick={onClose} className="p-1 rounded-lg bg-slate-800 text-slate-300">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          <nav className="space-y-1.5">
+            {['overview', 'loans', 'guarantors', 'documents', 'beneficiaries', 'mpesa', 'support'].map((tab) => (
+              <button
+                key={tab}
+                onClick={() => { setActiveTab(tab); onClose(); }}
+                className={`w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-bold capitalize transition ${activeTab === tab ? 'bg-emerald-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}
+              >
+                {tab === 'beneficiaries' ? 'Profile & Welfare' : tab === 'documents' ? 'Reports & Bylaws' : tab}
+                {tab === 'guarantors' && pendingGuaranteesCount > 0 && (
+                  <span className="float-right bg-rose-600 text-white text-[10px] px-1.5 py-0.5 rounded-full">
+                    {pendingGuaranteesCount}
+                  </span>
+                )}
+              </button>
+            ))}
+
+            {['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(userRole) && (
+              <button
+                onClick={() => { setActiveTab('admin'); onClose(); }}
+                className={`w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-bold transition ${activeTab === 'admin' ? 'bg-amber-600 text-white' : 'text-amber-400 hover:bg-slate-800'}`}
+              >
+                Leadership Hub
+              </button>
+            )}
+          </nav>
         </div>
-        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-950 border border-amber-800 text-amber-300 uppercase">
-          {profile?.role ? profile.role.replace('_', ' ') : 'Member'}
-        </span>
-      </div>
 
-      <button
-        type="button"
-        onClick={() => handleTabClick('overview')}
-        className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition cursor-pointer ${
-          activeTab === 'overview' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-slate-300 border border-slate-800/80'
-        }`}
-      >
-        <PiggyBank className="w-4 h-4" /> Overview Dashboard
-      </button>
-
-      <button
-        type="button"
-        onClick={() => handleTabClick('loans')}
-        className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition cursor-pointer ${
-          activeTab === 'loans' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-slate-300 border border-slate-800/80'
-        }`}
-      >
-        <Calculator className="w-4 h-4" /> Loan Products & Limits
-      </button>
-
-      <button
-        type="button"
-        onClick={() => handleTabClick('guarantors')}
-        className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold transition cursor-pointer ${
-          activeTab === 'guarantors' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-slate-300 border border-slate-800/80'
-        }`}
-      >
-        <span className="flex items-center gap-3">
-          <Users className="w-4 h-4" /> Guarantor Requests
-        </span>
-        {pendingGuaranteesCount > 0 && (
-          <span className="bg-rose-500 text-white text-[10px] px-2 py-0.5 rounded-full font-bold">
-            {pendingGuaranteesCount} new
-          </span>
-        )}
-      </button>
-
-      <button
-        type="button"
-        onClick={() => handleTabClick('documents')}
-        className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition cursor-pointer ${
-          activeTab === 'documents' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-slate-300 border border-slate-800/80'
-        }`}
-      >
-        <FolderDown className="w-4 h-4 text-emerald-400" /> Reports & AGM Booklets
-      </button>
-
-      <button
-        type="button"
-        onClick={() => handleTabClick('beneficiaries')}
-        className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition cursor-pointer ${
-          activeTab === 'beneficiaries' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-slate-300 border border-slate-800/80'
-        }`}
-      >
-        <Settings className="w-4 h-4" /> Profile & Welfare (KES 200)
-      </button>
-
-      <button
-        type="button"
-        onClick={() => handleTabClick('mpesa')}
-        className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition cursor-pointer ${
-          activeTab === 'mpesa' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-slate-300 border border-slate-800/80'
-        }`}
-      >
-        <Smartphone className="w-4 h-4" /> M-Pesa Top-Up & Repay
-      </button>
-
-      <button
-        type="button"
-        onClick={() => handleTabClick('support')}
-        className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition cursor-pointer ${
-          activeTab === 'support' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900/80 text-emerald-300 border border-slate-800/80'
-        }`}
-      >
-        <MessageSquare className="w-4 h-4" /> Helpdesk, Bot & Officials Chat
-      </button>
-
-      {['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(userRole) && (
-        <button
-          type="button"
-          onClick={() => handleTabClick('admin')}
-          className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold transition cursor-pointer ${
-            activeTab === 'admin' ? 'bg-gradient-to-r from-amber-600 to-orange-600 text-white shadow-lg' : 'bg-slate-900/80 text-amber-300 border border-slate-800/80'
-          }`}
-        >
-          <ShieldCheck className="w-4 h-4" /> 3-Signatory Leadership Hub
-        </button>
-      )}
-
-      <div className="pt-3 border-t border-slate-800">
-        <button
-          type="button"
-          onClick={onSignOut}
-          className="w-full flex items-center justify-center gap-2 bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-200 py-3 rounded-xl text-xs font-bold shadow cursor-pointer"
-        >
-          <LogOut className="w-4 h-4" /> Sign Out of Portal
-        </button>
+        <div className="border-t border-slate-800 pt-4">
+          <button
+            onClick={() => { onSignOut(); onClose(); }}
+            className="w-full flex items-center justify-center gap-2 bg-rose-950/60 hover:bg-rose-900 text-rose-300 py-2.5 rounded-xl text-xs font-bold border border-rose-800"
+          >
+            <LogOut className="w-4 h-4" /> Sign Out
+          </button>
+        </div>
       </div>
     </div>
   );

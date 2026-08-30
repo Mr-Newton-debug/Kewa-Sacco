@@ -1,129 +1,109 @@
-import { jsPDF } from 'jspdf';
-import autoTable from 'jspdf-autotable';
+export function generatePDFStatement({ profile, totalSavings, activeLoanBalance, freeSharesAvailable, savings, loans, repayments }) {
+  const windowContent = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>KEWA SACCO - Official Financial Statement</title>
+        <style>
+          body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #111; padding: 30px; }
+          .header { border-bottom: 3px solid #065f46; padding-bottom: 15px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; }
+          h1 { color: #065f46; font-size: 24px; margin: 0; }
+          p { margin: 4px 0; font-size: 13px; color: #4b5563; }
+          .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; background: #f9fafb; padding: 15px; border-radius: 8px; margin-bottom: 25px; border: 1px solid #e5e7eb; }
+          .summary-box { background: #ecfdf5; border: 1px solid #a7f3d0; padding: 15px; border-radius: 8px; margin-bottom: 25px; }
+          .summary-box h3 { color: #065f46; margin-top: 0; font-size: 16px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 12px; }
+          th, td { border: 1px solid #d1d5db; padding: 8px 10px; text-align: left; }
+          th { background: #065f46; color: white; font-weight: 600; }
+          tr:nth-child(even) { background-color: #f9fafb; }
+          .footer { margin-top: 40px; font-size: 11px; text-align: center; color: #9ca3af; border-top: 1px solid #e5e7eb; pt-10; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div>
+            <h1>KEWA BUILDERS & CONCRETE CO. LTD SACCO</h1>
+            <p>Multi-Branch Financial Cooperative Portal</p>
+          </div>
+          <div style="text-align: right;">
+            <p><strong>Official Statement</strong></p>
+            <p>Date: ${new Date().toLocaleDateString()}</p>
+          </div>
+        </div>
 
-export const generatePDFStatement = ({
-  profile,
-  totalSavings = 0,
-  activeLoanBalance = 0,
-  freeSharesAvailable = 0,
-  savings = [],
-  loans = [],
-  repayments = []
-}) => {
-  try {
-    const doc = new jsPDF();
+        <div class="meta-grid">
+          <div>
+            <p><strong>Member Name:</strong> ${profile?.full_name || 'N/A'}</p>
+            <p><strong>Member Number:</strong> ${profile?.member_number || 'N/A'}</p>
+          </div>
+          <div>
+            <p><strong>Branch / Company:</strong> ${profile?.companies?.name || 'KEWA SACCO'}</p>
+            <p><strong>National ID:</strong> ${profile?.id_number || 'N/A'}</p>
+          </div>
+        </div>
 
-    // Top Header Banner
-    doc.setFillColor(6, 78, 59);
-    doc.rect(0, 0, 210, 35, 'F');
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(18);
-    doc.text('KEWA SACCO SOCIETY LIMITED', 14, 18);
-    doc.setFontSize(9);
-    doc.text('Kenya Builders & Concrete • Warren Concrete • Eurocon Tiles • External', 14, 25);
-    doc.text(`Statement Date: ${new Date().toLocaleDateString('en-GB')}`, 145, 25);
+        <div class="summary-box">
+          <h3>Account Financial Summary</h3>
+          <p><strong>Total Accumulated Savings:</strong> KES ${Number(totalSavings || 0).toLocaleString()}</p>
+          <p><strong>Active Loan Debt Balance:</strong> KES ${Number(activeLoanBalance || 0).toLocaleString()}</p>
+          <p><strong>Unencumbered Free Shares:</strong> KES ${Number(freeSharesAvailable || 0).toLocaleString()}</p>
+        </div>
 
-    // Member Demographics Section
-    doc.setTextColor(30, 41, 59);
-    doc.setFontSize(12);
-    doc.text('OFFICIAL MEMBER UNIFIED AUDIT STATEMENT', 14, 46);
+        <div>
+          <h3 style="color: #1f2937; font-size: 15px; border-bottom: 2px solid #e5e7eb; padding-bottom: 5px;">Recent Savings Contributions</h3>
+          <table>
+            <thead>
+              <tr><th>Date</th><th>Transaction Type</th><th>Reference Code</th><th>Amount (KES)</th></tr>
+            </thead>
+            <tbody>
+              ${(savings || []).map(s => `
+                <tr>
+                  <td>${new Date(s.created_at).toLocaleDateString()}</td>
+                  <td>${s.transaction_type.replace('_', ' ').toUpperCase()}</td>
+                  <td>${s.reference_code || 'N/A'}</td>
+                  <td><b>KES ${Number(s.amount).toLocaleString()}</b></td>
+                </tr>
+              `).join('')}
+              ${(!savings || savings.length === 0) ? '<tr><td colspan="4" style="text-align:center;">No savings records found.</td></tr>' : ''}
+            </tbody>
+          </table>
+        </div>
 
-    const compName = Array.isArray(profile?.companies) 
-      ? profile.companies[0]?.name 
-      : profile?.companies?.name;
+        <div style="margin-top: 30px;">
+          <h3 style="color: #1f2937; font-size: 15px; border-bottom: 2px solid #e5e7eb; padding-bottom: 5px;">Active & Historical Loans</h3>
+          <table>
+            <thead>
+              <tr><th>Product</th><th>Principal (KES)</th><th>Period</th><th>Balance Remaining (KES)</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+              ${(loans || []).map(l => `
+                <tr>
+                  <td>${l.loan_product.replace('_', ' ').toUpperCase()}</td>
+                  <td>KES ${Number(l.principal_amount).toLocaleString()}</td>
+                  <td>${l.repayment_period_months} Months</td>
+                  <td><b>KES ${Number(l.balance_remaining).toLocaleString()}</b></td>
+                  <td><span style="text-transform: uppercase;">${l.status}</span></td>
+                </tr>
+              `).join('')}
+              ${(!loans || loans.length === 0) ? '<tr><td colspan="5" style="text-align:center;">No loan records found.</td></tr>' : ''}
+            </tbody>
+          </table>
+        </div>
 
-    doc.setFontSize(9);
-    doc.text(`Member Name: ${profile?.full_name || 'N/A'}`, 14, 54);
-    doc.text(`Member No: ${profile?.member_number || 'N/A'}`, 14, 60);
-    doc.text(`Branch / Company: ${compName || 'KEWA SACCO'}`, 14, 66);
-    doc.text(`National ID: ${profile?.id_number || 'N/A'}`, 120, 54);
-    doc.text(`Total Shares/Savings: KES ${Number(totalSavings).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`, 120, 60);
-    doc.text(`Active Loan Debt: KES ${Number(activeLoanBalance).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`, 120, 66);
-    doc.text(`Free Shares Available: KES ${Number(freeSharesAvailable).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`, 120, 72);
-
-    // Progressive Ledger Assembly
-    doc.setFontSize(11);
-    doc.setTextColor(6, 78, 59);
-    doc.text('1. Progressive Member Financial Activity Ledger (Contributions (+) & Loan Movements (-))', 14, 82);
-
-    const unifiedLedger = [
-      ...savings.map((s) => ({
-        dateObj: new Date(s.created_at),
-        dateStr: new Date(s.created_at).toLocaleDateString('en-GB'),
-        type: 'SAVINGS CONTRIBUTION',
-        ref: s.reference_code || 'CHECKOFF',
-        amount: Number(s.amount || 0),
-        isPositive: true,
-      })),
-      ...loans.map((l) => ({
-        dateObj: new Date(l.created_at),
-        dateStr: new Date(l.created_at).toLocaleDateString('en-GB'),
-        type: `LOAN DISBURSED (${(l.loan_product || 'MAIN').replace('_', ' ').toUpperCase()})`,
-        ref: `LOAN-${(l.id || '').slice(0, 6)}`,
-        amount: Number(l.principal_amount || 0),
-        isPositive: true,
-      })),
-      ...repayments.map((r) => ({
-        dateObj: new Date(r.created_at),
-        dateStr: new Date(r.created_at).toLocaleDateString('en-GB'),
-        type: `LOAN REPAYMENT (${(r.loans?.loan_product || 'LOAN').replace('_', ' ').toUpperCase()})`,
-        ref: r.reference_code || 'DEDUCTION',
-        amount: Number(r.amount || 0),
-        isPositive: false,
-      })),
-    ].sort((a, b) => a.dateObj - b.dateObj);
-
-    const ledgerRows = unifiedLedger.length > 0
-      ? unifiedLedger.map((item) => [
-          item.dateStr,
-          item.type,
-          item.ref,
-          item.isPositive
-            ? `+KES ${item.amount.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`
-            : `-KES ${item.amount.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`,
-        ])
-      : [['-', 'No financial transactions recorded', '-', 'KES 0.00']];
-
-    autoTable(doc, {
-      startY: 87,
-      head: [['Transaction Date', 'Activity Type', 'Reference Code', 'Amount (Plus / Minus)']],
-      body: ledgerRows,
-      theme: 'striped',
-      headStyles: { fillColor: [6, 78, 59] },
-    });
-
-    // Summations & Balances Table
-    const sumY = doc.lastAutoTable.finalY + 10;
-    doc.setFontSize(11);
-    doc.setTextColor(180, 83, 9);
-    doc.text('2. Account Summary, Summations & Net Difference', 14, sumY);
-
-    const totalCreditsSum = unifiedLedger.filter((i) => i.isPositive).reduce((acc, curr) => acc + curr.amount, 0);
-    const totalDebitsSum = unifiedLedger.filter((i) => !i.isPositive).reduce((acc, curr) => acc + curr.amount, 0);
-    const netAccountDifference = totalCreditsSum - totalDebitsSum;
-
-    const summaryRows = [
-      ['Total Credits (Savings Deposits & Loan Disbursements)', `KES ${totalCreditsSum.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`],
-      ['Total Debits (Loan Repayments & Deductions)', `KES ${totalDebitsSum.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`],
-      ['Net Account Difference (Credits minus Debits)', `KES ${netAccountDifference.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`],
-      ['Current Outstanding Loan Balance', `KES ${Number(activeLoanBalance).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`]
-    ];
-
-    autoTable(doc, {
-      startY: sumY + 4,
-      head: [['Financial Metric', 'Summation Value']],
-      body: summaryRows,
-      theme: 'striped',
-      headStyles: { fillColor: [180, 83, 9] },
-    });
-
-    const finalY = doc.lastAutoTable ? doc.lastAutoTable.finalY + 12 : 150;
-    doc.setFontSize(8);
-    doc.setTextColor(100, 116, 139);
-    doc.text('This is an official computer-generated progressive audit statement issued by KEWA SACCO core financial system.', 14, finalY);
-
-    doc.save(`KEWA_Progressive_Statement_${profile?.member_number || 'Member'}.pdf`);
-  } catch (err) {
-    alert('Could not generate PDF: ' + err.message);
+        <div class="footer">
+          <p>This is a system-generated official report for KEWA SACCO Portal. Valid without physical signature unless stamped by executive auditors.</p>
+        </div>
+      </body>
+    </html>
+  `;
+  
+  const printWindow = window.open('', '_blank');
+  if (printWindow) {
+    printWindow.document.write(windowContent);
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => {
+      printWindow.print();
+    }, 600);
   }
-};
+}

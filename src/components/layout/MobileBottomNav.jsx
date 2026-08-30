@@ -1,97 +1,63 @@
 import React from 'react';
-import { 
-  PiggyBank, Calculator, FolderDown, Users, 
-  MessageSquare, ShieldCheck, LogOut 
-} from 'lucide-react';
+import { Home, CreditCard, Users, FileText, LifeBuoy, ShieldAlert, LogOut } from 'lucide-react';
 
-export default function MobileBottomNav({
-  activeTab,
-  setActiveTab,
-  pendingGuaranteesCount,
-  userRole,
-  onSignOut
-}) {
+export default function MobileBottomNav({ activeTab, setActiveTab, pendingGuaranteesCount, userRole, onSignOut }) {
   return (
-    <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-slate-950/98 backdrop-blur-xl border-t border-slate-800/90 flex justify-around items-center py-2.5 px-1 z-50 shadow-2xl">
+    <div className="fixed bottom-0 left-0 right-0 bg-slate-900/95 border-t border-slate-800 px-2 py-2 flex justify-around items-center z-40 md:hidden backdrop-blur-md">
       <button
-        type="button"
         onClick={() => setActiveTab('overview')}
-        className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 transition cursor-pointer ${
-          activeTab === 'overview' ? 'text-emerald-400' : 'text-slate-400'
-        }`}
+        className={`flex flex-col items-center gap-1 ${activeTab === 'overview' ? 'text-emerald-400 font-bold' : 'text-slate-400 font-medium'}`}
       >
-        <PiggyBank className="w-4 h-4" />
-        <span>Overview</span>
+        <Home className="w-5 h-5" />
+        <span className="text-[10px]">Overview</span>
       </button>
 
       <button
-        type="button"
         onClick={() => setActiveTab('loans')}
-        className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 transition cursor-pointer ${
-          activeTab === 'loans' ? 'text-emerald-400' : 'text-slate-400'
-        }`}
+        className={`flex flex-col items-center gap-1 ${activeTab === 'loans' ? 'text-emerald-400 font-bold' : 'text-slate-400 font-medium'}`}
       >
-        <Calculator className="w-4 h-4" />
-        <span>Loans</span>
+        <CreditCard className="w-5 h-5" />
+        <span className="text-[10px]">Loans</span>
       </button>
 
       <button
-        type="button"
-        onClick={() => setActiveTab('documents')}
-        className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 transition cursor-pointer ${
-          activeTab === 'documents' ? 'text-emerald-400' : 'text-slate-400'
-        }`}
-      >
-        <FolderDown className="w-4 h-4" />
-        <span>Reports</span>
-      </button>
-
-      <button
-        type="button"
         onClick={() => setActiveTab('guarantors')}
-        className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 relative transition cursor-pointer ${
-          activeTab === 'guarantors' ? 'text-emerald-400' : 'text-slate-400'
-        }`}
+        className={`flex flex-col items-center gap-1 relative ${activeTab === 'guarantors' ? 'text-emerald-400 font-bold' : 'text-slate-400 font-medium'}`}
       >
-        <Users className="w-4 h-4" />
-        <span>Guarantors</span>
+        <Users className="w-5 h-5" />
+        <span className="text-[10px]">Guarantors</span>
         {pendingGuaranteesCount > 0 && (
-          <span className="absolute top-0 right-1 w-2 h-2 bg-rose-500 rounded-full animate-ping" />
+          <span className="absolute -top-1 right-2 bg-rose-600 text-white text-[9px] w-4 h-4 rounded-full flex items-center justify-center font-bold">
+            {pendingGuaranteesCount}
+          </span>
         )}
       </button>
 
       <button
-        type="button"
         onClick={() => setActiveTab('support')}
-        className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 transition cursor-pointer ${
-          activeTab === 'support' ? 'text-emerald-400' : 'text-slate-400'
-        }`}
+        className={`flex flex-col items-center gap-1 ${activeTab === 'support' ? 'text-emerald-400 font-bold' : 'text-slate-400 font-medium'}`}
       >
-        <MessageSquare className="w-4 h-4" />
-        <span>Help</span>
+        <LifeBuoy className="w-5 h-5" />
+        <span className="text-[10px]">Support</span>
       </button>
 
       {['admin', 'treasurer', 'chairman', 'assistant_chair'].includes(userRole) && (
         <button
-          type="button"
           onClick={() => setActiveTab('admin')}
-          className={`flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 transition cursor-pointer ${
-            activeTab === 'admin' ? 'text-amber-400' : 'text-slate-400'
-          }`}
+          className={`flex flex-col items-center gap-1 ${activeTab === 'admin' ? 'text-amber-400 font-bold' : 'text-amber-600/80 font-medium'}`}
         >
-          <ShieldCheck className="w-4 h-4" />
-          <span>Leadership Hub</span>
+          <ShieldAlert className="w-5 h-5" />
+          <span className="text-[10px]">Admin</span>
         </button>
       )}
 
       <button
-        type="button"
         onClick={onSignOut}
-        className="flex flex-col items-center gap-1 text-[9px] font-bold py-1 px-1 text-rose-400 hover:text-rose-300 transition cursor-pointer"
+        className="flex flex-col items-center gap-1 text-rose-400 font-medium"
       >
-        <LogOut className="w-4 h-4" />
-        <span>Exit</span>
+        <LogOut className="w-5 h-5" />
+        <span className="text-[10px]">Exit</span>
       </button>
-    </nav>
+    </div>
   );
 }

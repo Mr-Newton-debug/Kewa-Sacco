@@ -6,14 +6,14 @@ import MobileDrawer from './components/layout/MobileDrawer';
 import MobileBottomNav from './components/layout/MobileBottomNav';
 import AuthCard from './components/auth/AuthCard';
 
-import OverviewTab from './tabs/OverviewTab';
-import LoansTab from './tabs/LoansTab';
-import GuarantorsTab from './tabs/GuarantorsTab';
-import DocumentsTab from './tabs/DocumentsTab';
-import ProfileWelfareTab from './tabs/ProfileWelfareTab';
-import MpesaTab from './tabs/MpesaTab';
-import SupportTab from './tabs/SupportTab';
-import LeadershipHubTab from './tabs/LeadershipHubTab';
+import OverviewTab from './components/tabs/OverviewTab';
+import LoansTab from './components/tabs/LoansTab';
+import GuarantorsTab from './components/tabs/GuarantorsTab';
+import DocumentsTab from './components/tabs/DocumentsTab';
+import ProfileWelfareTab from './components/tabs/ProfileWelfareTab';
+import MpesaTab from './components/tabs/MpesaTab';
+import SupportTab from './components/tabs/SupportTab';
+import LeadershipHubTab from './components/tabs/LeadershipHubTab';
 
 function MainPortal() {
   const { session, profile, loading: authLoading, signOut } = useAuth();

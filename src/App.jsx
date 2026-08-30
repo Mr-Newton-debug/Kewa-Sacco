@@ -733,14 +733,23 @@ export default function App() {
       return;
     }
     setLoading(true);
-    const { data: authData, error: authError } = await supabase.auth.signUp({ email, password });
+    setMessage({ text: '', type: '' });
+
+    // 1. Sign up the user in Supabase Auth
+    const { data: authData, error: authError } = await supabase.auth.signUp({ 
+      email, 
+      password 
+    });
+
     if (authError) {
       setMessage({ text: authError.message, type: 'error' });
       setLoading(false);
       return;
     }
+
     if (authData?.user) {
-      await supabase.from('profiles').insert([{
+      // 2. Explicitly insert profile and catch any table errors
+      const { error: profileError } = await supabase.from('profiles').insert([{
         id: authData.user.id,
         full_name: fullName,
         member_number: memberNumber,
@@ -753,8 +762,17 @@ export default function App() {
         security_question: securityQuestion,
         security_answer_hash: securityAnswer.trim().toLowerCase()
       }]);
-      logAuditAction('REGISTER_ACCOUNT', `New member profile: ${fullName}`, authData.user.id, fullName);
-      setMessage({ text: 'Account registered successfully!', type: 'success' });
+
+      if (profileError) {
+        console.error('Profile creation error:', profileError);
+        setMessage({ text: `Auth created, but profile table failed: ${profileError.message}`, type: 'error' });
+        setLoading(false);
+        return;
+      }
+
+      await logAuditAction('REGISTER_ACCOUNT', `New member profile: ${fullName}`, authData.user.id, fullName);
+      setMessage({ text: 'Account registered successfully! You can now log in.', type: 'success' });
+      setAuthMode('login');
     }
     setLoading(false);
   };

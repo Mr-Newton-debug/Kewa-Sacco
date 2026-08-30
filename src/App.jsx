@@ -18,6 +18,8 @@ import LoanAuthorizationModal from './components/modals/LoanAuthorizationModal';
 
 // Auth Component
 import AuthCard from './components/auth/AuthCard';
+
+// Tabs
 import OverviewTab from './components/tabs/OverviewTab';
 import LoansTab from './components/tabs/LoansTab';
 import GuarantorsTab from './components/tabs/GuarantorsTab';
@@ -34,7 +36,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('overview');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Auth State
+  // Auth States must be declared here before any logic uses them
   const [email, setEmail] = useState(() => localStorage.getItem('kewa_remembered_email') || '');
   const [password, setPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -44,11 +46,12 @@ export default function App() {
   const [phone, setPhone] = useState('');
   const [companyId, setCompanyId] = useState('');
   const [registrationPin, setRegistrationPin] = useState('1234');
-  // Inside App.jsx - State declarations (ensure these exist)
- const [securityQuestion, setSecurityQuestion] = useState("What is your mother's maiden name?");
-const [securityAnswer, setSecurityAnswer] = useState('');
-const profilePhone = profile?.phone || ''; // <-- Keep this one single declaration
-const [odpcConsent, setOdpcConsent] = useState(false);
+  const [securityQuestion, setSecurityQuestion] = useState("What is your mother's maiden name?");
+  const [securityAnswer, setSecurityAnswer] = useState('');
+  const [odpcConsent, setOdpcConsent] = useState(false);
+  const profilePhone = profile?.phone || '';
+  
+  // ... rest of your code follows down here
 
   // Core Data State
   const [companies, setCompanies] = useState([]);

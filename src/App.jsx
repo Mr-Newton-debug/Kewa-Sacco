@@ -6,17 +6,24 @@ import MobileDrawer from './components/layout/MobileDrawer';
 import MobileBottomNav from './components/layout/MobileBottomNav';
 import AuthCard from './components/auth/AuthCard';
 
+import OverviewTab from './components/tabs/OverviewTab';
+import LoansTab from './components/tabs/LoansTab';
+import GuarantorsTab from './components/tabs/GuarantorsTab';
+import DocumentsTab from './components/tabs/DocumentsTab';
+import ProfileWelfareTab from './components/tabs/ProfileWelfareTab';
+import MpesaTab from './components/tabs/MpesaTab';
+import SupportTab from './components/tabs/SupportTab';
+import LeadershipHubTab from './components/tabs/LeadershipHubTab';
+
 function MainPortal() {
   const { session, profile, loading: authLoading, signOut } = useAuth();
   
-  // Navigation & UI States
   const [activeTab, setActiveTab] = useState('overview');
-  const [authMode, setAuthMode] = useState('login'); // 'login' | 'register' | 'forgot' | 'reset'
+  const [authMode, setAuthMode] = useState('login');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState({ text: '', type: '' });
 
-  // Authentication Form Fields
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -31,10 +38,8 @@ function MainPortal() {
   const [companyId, setCompanyId] = useState('');
   const [companies, setCompanies] = useState([]);
 
-  // SACCO Data States
   const [pendingGuaranteesCount, setPendingGuaranteesCount] = useState(0);
 
-  // Fetch companies for registration dropdown on mount
   useEffect(() => {
     fetchCompanies();
   }, []);
@@ -44,7 +49,6 @@ function MainPortal() {
     if (data) setCompanies(data);
   };
 
-  // Login Handler
   const handleLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -57,7 +61,6 @@ function MainPortal() {
     setLoading(false);
   };
 
-  // Register Handler with robust RLS profile creation
   const handleRegister = async (e) => {
     e.preventDefault();
     if (!odpcConsent) {
@@ -215,7 +218,15 @@ function MainPortal() {
                 Member No: <span className="text-emerald-400 font-mono font-bold">{profile?.member_number || 'N/A'}</span> • Branch: {profile?.companies?.name || 'KEWA SACCO'}
               </p>
             </div>
-            {/* Active tab content view renderers go here */}
+
+            {activeTab === 'overview' && <OverviewTab profile={profile} session={session} />}
+            {activeTab === 'loans' && <LoansTab profile={profile} session={session} />}
+            {activeTab === 'guarantors' && <GuarantorsTab profile={profile} session={session} />}
+            {activeTab === 'documents' && <DocumentsTab profile={profile} session={session} />}
+            {activeTab === 'beneficiaries' && <ProfileWelfareTab profile={profile} session={session} />}
+            {activeTab === 'mpesa' && <MpesaTab profile={profile} session={session} />}
+            {activeTab === 'support' && <SupportTab profile={profile} session={session} />}
+            {activeTab === 'admin' && <LeadershipHubTab profile={profile} session={session} />}
           </div>
         )}
       </main>

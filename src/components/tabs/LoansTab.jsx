@@ -1,353 +1,242 @@
-import React from 'react';
-import { Calculator, Download, Plus } from 'lucide-react';
-import GuarantorSelector from '../loans/GuarantorSelector';
-import { formatAccountingNumber } from '../../utils/formatters';
+import React, { useState, useEffect } from 'react';
+import { supabase } from '../supabaseClient';
+import { CreditCard, Calculator, FileText, CheckCircle2, AlertCircle } from 'lucide-react';
+import { calculateLoanBreakdown } from '../utils/calculations';
 
-export default function LoansTab({
-  loanProduct,
-  onProductChange,
-  maxLimit,
-  loanPrincipalRaw,
-  setLoanPrincipalRaw,
-  loanPrincipalNum,
-  loanMonths,
-  setLoanMonths,
-  interestRate,
-  disbursementMethod,
-  setDisbursementMethod,
-  disbursementDetails,
-  setDisbursementDetails,
-  profilePhone,       // <-- Must be listed here in props!
-  guarantorList,
-  allMembers,
-  currentUserId,
-  onUpdateGuarantorRow,
-  onAddGuarantorRow,
-  onRemoveGuarantorRow,
-  calculatedTotal,
-  monthlyInstallment,
-  onInitiateLoan,
-  loans,
-  onDownloadPDF,
-  loading
-}) {
+export default function LoansTab({ profile, session }) {
+  const [loans, setLoans] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [message, setMessage] = useState({ text: '', type: '' });
+
+  // Loan application form states
+  const [loanProduct, setLoanProduct] = useState('main_loan');
+  const [principal, setPrincipal] = useState('');
+  const [periodMonths, setPeriodMonths] = useState('12');
+  const [guarantor1, setGuarantor1] = useState('');
+  const [guarantor2, setGuarantor2] = useState('');
+  const [membersList, setMembersList] = useState([]);
+
+  useEffect(() => {
+    if (session?.user?.id) {
+      fetchLoans();
+      fetchEligibleGuarantors();
+    }
+  }, [session]);
+
+  const fetchLoans = async () => {
+    try {
+      const { data } = await supabase
+        .from('loans')
+        .select('*')
+        .eq('member_id', session.user.id)
+        .order('created_at', { ascending: false });
+      if (data) setLoans(data);
+    } catch (err) {
+      console.error('Error fetching loans:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchEligibleGuarantors = async () => {
+    const { data } = await supabase
+      .from('profiles')
+      .select('id, full_name, member_number')
+      .neq('id', session.user.id);
+    if (data) setMembersList(data);
+  };
+
+  // Live calculation preview
+  const interestRate = loanProduct === 'monthly_shylock' ? 5.0 : 1.0;
+  const breakdown = calculateLoanBreakdown(principal, interestRate, Number(periodMonths), loanProduct);
+
+  const handleApplyLoan = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setMessage({ text: '', type: '' });
+
+    try {
+      const { error } = await supabase.from('loans').insert([{
+        member_id: session.user.id,
+        loan_product: loanProduct,
+        principal_amount: Number(principal),
+        repayment_period_months: Number(periodMonths),
+        interest_rate_percent: interestRate,
+        balance_remaining: breakdown.totalPayable,
+        status: 'pending'
+      }]);
+
+      if (error) throw error;
+
+      setMessage({ text: 'Loan application submitted successfully! Pending guarantor endorsements and committee review.', type: 'success' });
+      setPrincipal('');
+      fetchLoans();
+    } catch (err) {
+      setMessage({ text: err.message, type: 'error' });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (loading) {
+    return <div className="text-center py-12 text-slate-400 text-xs font-mono">Loading loan accounts...</div>;
+  }
+
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-      {/* Loan Application Form */}
-      <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-lg">
-        <div className="flex justify-between items-center mb-3">
-          <div className="flex items-center gap-2">
-            <Calculator className="w-4 h-4 text-emerald-400" />
-            <h3 className="text-sm sm:text-base font-bold text-white">Apply for a Loan</h3>
-          </div>
-          <div className="bg-emerald-950 border border-emerald-800 px-2.5 py-1 rounded-xl text-[11px] font-bold text-emerald-300">
-            Max Limit: KES {Number(maxLimit || 0).toLocaleString()}
-          </div>
-        </div>
+    <div className="space-y-6">
+      {/* Loan Application & Calculator Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Form */}
+        <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl">
+          <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+            <CreditCard className="w-4 h-4 text-emerald-400" /> Apply for SACCO Loan Product
+          </h3>
 
-        {/* Product Selector Cards */}
-        <div className="grid grid-cols-2 gap-2 mb-3">
-          <button
-            type="button"
-            onClick={() => onProductChange('main_loan')}
-            className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
-              loanProduct === 'main_loan'
-                ? 'bg-emerald-950/80 border-emerald-500 text-white shadow'
-                : 'bg-slate-950 border-slate-800 text-slate-400'
-            }`}
-          >
-            <span className="text-xs font-bold block">1. Main Loan</span>
-            <span className="text-[10px] text-slate-400">Long-term (24 mos, 1%)</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onProductChange('emergency_loan')}
-            className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
-              loanProduct === 'emergency_loan'
-                ? 'bg-emerald-950/80 border-emerald-500 text-white shadow'
-                : 'bg-slate-950 border-slate-800 text-slate-400'
-            }`}
-          >
-            <span className="text-xs font-bold block">2. Emergency Loan</span>
-            <span className="text-[10px] text-slate-400">School & Medical (12 mos)</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onProductChange('christmas_loan')}
-            className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
-              loanProduct === 'christmas_loan'
-                ? 'bg-emerald-950/80 border-emerald-500 text-white shadow'
-                : 'bg-slate-950 border-slate-800 text-slate-400'
-            }`}
-          >
-            <span className="text-xs font-bold block">3. Christmas Loan</span>
-            <span className="text-[10px] text-slate-400">Festivities (6 mos)</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onProductChange('monthly_shylock')}
-            className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
-              loanProduct === 'monthly_shylock'
-                ? 'bg-amber-950/80 border-amber-500 text-white shadow'
-                : 'bg-slate-950 border-slate-800 text-slate-400'
-            }`}
-          >
-            <span className="text-xs font-bold block text-amber-400">4. Monthly Shylock</span>
-            <span className="text-[10px] text-slate-400">Instant Advance (1 mo)</span>
-          </button>
-        </div>
-
-        <form onSubmit={onInitiateLoan} className="space-y-3">
-          <div>
-            <div className="flex justify-between items-center mb-1">
-              <label className="text-xs font-semibold text-slate-300">Principal Amount (KES)</label>
-              <span className="text-emerald-400 font-bold text-xs">KES {loanPrincipalNum.toLocaleString()}</span>
-            </div>
-            <input
-              type="text"
-              required
-              value={loanPrincipalRaw}
-              onChange={(e) => setLoanPrincipalRaw(formatAccountingNumber(e.target.value))}
-              placeholder="e.g. 20,000"
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-white font-mono"
-            />
-          </div>
-
-          <div>
-            <div className="flex justify-between items-center mb-1">
-              <label className="text-xs font-semibold text-slate-300">Repayment Period</label>
-              <span className="text-emerald-400 font-bold text-xs">{loanMonths} Month(s)</span>
-            </div>
-            <input
-              type="range"
-              min="1"
-              max={
-                loanProduct === 'monthly_shylock'
-                  ? 1
-                  : loanProduct === 'christmas_loan'
-                  ? 6
-                  : loanProduct === 'emergency_loan'
-                  ? 12
-                  : 24
-              }
-              step="1"
-              value={loanMonths}
-              onChange={(e) => setLoanMonths(Number(e.target.value))}
-              className="w-full accent-emerald-500"
-              disabled={loanProduct === 'monthly_shylock'}
-            />
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">Disbursement Channel</label>
-              <select
-                value={disbursementMethod}
-                onChange={(e) => {
-                  setDisbursementMethod(e.target.value);
-                  if (e.target.value === 'mpesa') {
-                    setDisbursementDetails(profilePhone || '');
-                  } else {
-                    setDisbursementDetails('');
-                  }
-                }}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
-              >
-                <option value="mpesa">M-Pesa Mobile Money</option>
-                <option value="bank">Direct Bank Account Transfer</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">
-                {disbursementMethod === 'mpesa' ? 'M-Pesa Payout Destination' : 'Bank Account Details'}
-              </label>
-
-              {disbursementMethod === 'mpesa' ? (
-                <div className="space-y-1.5">
-                  <select
-                    onChange={(e) => {
-                      if (e.target.value === 'my_number') {
-                        setDisbursementDetails(profilePhone || '');
-                      } else {
-                        setDisbursementDetails('');
-                      }
-                    }}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white mb-1"
-                  >
-                    <option value="my_number">Use My Registered Number ({profilePhone || 'N/A'})</option>
-                    <option value="other_number">Use Another Phone Number</option>
-                  </select>
-
-                  <input
-                    type="text"
-                    required
-                    value={disbursementDetails}
-                    onChange={(e) => setDisbursementDetails(e.target.value)}
-                    placeholder="0712345678"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
-                  />
-                </div>
-              ) : (
-                <input
-                  type="text"
-                  required
-                  value={disbursementDetails}
-                  onChange={(e) => setDisbursementDetails(e.target.value)}
-                  placeholder="Bank Name, Acc No, Branch"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
-                />
-              )}
-            </div>
-          </div>
-
-          {loanProduct !== 'monthly_shylock' && (
-            <div className="border-t border-slate-800 pt-3 space-y-2.5">
-              <div className="flex justify-between items-center">
-                <div>
-                  <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wide">Assign Member Guarantors</h4>
-                  <p className="text-[10px] text-slate-400">
-                    Total pledges must cover loan principal (KES {loanPrincipalNum.toLocaleString()})
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={onAddGuarantorRow}
-                  className="flex items-center gap-1 bg-emerald-950 border border-emerald-800 text-emerald-300 text-[11px] px-2 py-1 rounded-lg cursor-pointer"
-                >
-                  <Plus className="w-3 h-3" /> Add
-                </button>
-              </div>
-
-              {guarantorList.map((g, idx) => (
-                <GuarantorSelector
-                  key={idx}
-                  index={idx}
-                  row={g}
-                  allMembers={allMembers}
-                  currentUserId={currentUserId}
-                  onUpdate={onUpdateGuarantorRow}
-                  onRemove={onRemoveGuarantorRow}
-                  canRemove={guarantorList.length > 1}
-                />
-              ))}
+          {message.text && (
+            <div className={`mb-4 px-4 py-3 rounded-2xl text-xs font-bold border ${message.type === 'error' ? 'bg-rose-950/80 border-rose-800 text-rose-300' : 'bg-emerald-950/80 border-emerald-800 text-emerald-300'}`}>
+              {message.text}
             </div>
           )}
 
-          <div className="bg-slate-950 border border-slate-800 rounded-2xl p-3 space-y-1 text-xs">
-            <div className="flex justify-between text-slate-400">
-              <span>Selected Product:</span>
-              <span className="text-white font-bold capitalize">{loanProduct.replace('_', ' ')}</span>
+          <form onSubmit={handleApplyLoan} className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Loan Product Type</label>
+                <select
+                  value={loanProduct}
+                  onChange={(e) => setLoanProduct(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+                >
+                  <option value="main_loan">Main Loan (1% p.m. Reducing)</option>
+                  <option value="emergency">Emergency Loan</option>
+                  <option value="christmas">Christmas Advance</option>
+                  <option value="monthly_shylock">Monthly Shylock (Short Term)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Principal Amount (KES)</label>
+                <input
+                  type="number"
+                  required
+                  min="1000"
+                  value={principal}
+                  onChange={(e) => setPrincipal(e.target.value)}
+                  placeholder="e.g. 50000"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500 font-mono"
+                />
+              </div>
             </div>
-            <div className="flex justify-between text-slate-400">
-              <span>Interest Rate:</span>
-              <span className="text-white font-medium">{interestRate}% / month</span>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Repayment Period (Months)</label>
+                <select
+                  value={periodMonths}
+                  onChange={(e) => setPeriodMonths(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+                >
+                  <option value="3">3 Months</option>
+                  <option value="6">6 Months</option>
+                  <option value="12">12 Months</option>
+                  <option value="24">24 Months</option>
+                  <option value="36">36 Months</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Interest Rate Model</label>
+                <input
+                  type="text"
+                  disabled
+                  value={`${interestRate}% ${loanProduct === 'monthly_shylock' ? 'Flat' : 'Per Month'}`}
+                  className="w-full bg-slate-950/50 border border-slate-800/80 rounded-xl px-3.5 py-2.5 text-xs text-slate-400 font-mono"
+                />
+              </div>
             </div>
-            <div className="flex justify-between text-slate-400">
-              <span>Total Payable:</span>
-              <span className="text-white font-medium">KES {Number(calculatedTotal || 0).toLocaleString()}</span>
-            </div>
-            <div className="border-t border-slate-800 pt-1.5 flex justify-between text-xs font-bold text-emerald-400">
-              <span>Monthly Installment:</span>
-              <span>KES {Number(monthlyInstallment || 0).toFixed(2)}</span>
+
+            <button
+              type="submit"
+              disabled={submitting}
+              className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-xl text-xs transition shadow-lg cursor-pointer mt-2"
+            >
+              {submitting ? 'Submitting Application...' : 'Submit Loan Application'}
+            </button>
+          </form>
+        </div>
+
+        {/* Live Amortization Calculator Box */}
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl flex flex-col justify-between">
+          <div>
+            <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4 flex items-center gap-2 border-b border-slate-800 pb-2">
+              <Calculator className="w-4 h-4 text-emerald-400" /> Repayment Preview
+            </h3>
+            <div className="space-y-4">
+              <div>
+                <p className="text-[11px] text-slate-400">Estimated Monthly Installment</p>
+                <h4 className="text-xl font-black text-emerald-400 font-mono mt-1">
+                  KES {Number(breakdown.monthlyInstallment).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                </h4>
+              </div>
+              <div>
+                <p className="text-[11px] text-slate-400">Total Interest Payable</p>
+                <h4 className="text-sm font-bold text-white font-mono mt-0.5">
+                  KES {Number(breakdown.totalInterest).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                </h4>
+              </div>
+              <div>
+                <p className="text-[11px] text-slate-400">Total Repayment Amount</p>
+                <h4 className="text-sm font-bold text-cyan-400 font-mono mt-0.5">
+                  KES {Number(breakdown.totalPayable).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                </h4>
+              </div>
             </div>
           </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-2.5 rounded-xl text-xs transition shadow-lg cursor-pointer"
-          >
-            Review Terms & Authorize with PIN
-          </button>
-        </form>
+          <div className="mt-6 p-3 rounded-2xl bg-slate-950 border border-slate-800 text-[10px] text-slate-400 leading-relaxed">
+            * Calculations reflect approved SACCO bylaws for interest tiering and reducing balance amortization.
+          </div>
+        </div>
       </div>
 
-      {/* Loan Application Status & Signatory Progress Tracker */}
-      <div className="bg-slate-900/90 border border-slate-800/90 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-lg">
-        <h3 className="text-sm sm:text-base font-bold text-white mb-3">My Loan Applications & Approval Tracker</h3>
-        {loans.length === 0 ? (
-          <div className="text-center py-8 text-slate-500 text-xs">No active or past loans found.</div>
-        ) : (
-          <div className="space-y-3">
-            {loans.map((l) => (
-              <div key={l.id} className="bg-slate-950 border border-slate-800 rounded-2xl p-3.5 space-y-2.5 shadow">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <div className="flex items-center gap-1.5">
-                      <span
-                        className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full ${
-                          l.status === 'approved'
-                            ? 'bg-emerald-950 border border-emerald-800 text-emerald-300'
-                            : l.status === 'completed'
-                            ? 'bg-blue-950 border border-blue-800 text-blue-300'
-                            : l.status === 'pending'
-                            ? 'bg-amber-950 border border-amber-800 text-amber-300'
-                            : 'bg-slate-800 text-slate-400'
-                        }`}
-                      >
-                        Status: {l.status}
-                      </span>
-                      <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-slate-900 text-slate-300 capitalize border border-slate-800">
-                        {(l.loan_product || 'main_loan').replace('_', ' ')}
-                      </span>
-                    </div>
-                    <h4 className="text-base font-black text-white mt-1">
-                      KES {Number(l.principal_amount).toLocaleString()}
-                    </h4>
-                    <p className="text-[11px] text-slate-400 font-medium">
-                      {l.repayment_period_months} Month(s) Term • Via{' '}
-                      <span className="uppercase text-emerald-400 font-bold">{l.disbursement_method || 'mpesa'}</span>
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => onDownloadPDF(l)}
-                    className="flex items-center gap-1 bg-slate-900 hover:bg-slate-800 text-emerald-400 px-2.5 py-1 rounded-xl text-[11px] font-semibold border border-slate-800 cursor-pointer"
-                  >
-                    <Download className="w-3 h-3" /> PDF
-                  </button>
-                </div>
-
-                <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800/80 text-[10px] space-y-1">
-                  <p className="text-slate-400 font-semibold mb-0.5">Sequential 3-Signatory Pipeline:</p>
-                  <div className="grid grid-cols-3 gap-1 text-center font-mono">
-                    <span
-                      className={`p-1 rounded-lg font-bold ${
-                        l.assistant_chair_approval
-                          ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
-                          : 'bg-slate-950 text-slate-500'
-                      }`}
-                    >
-                      1. Asst: {l.assistant_chair_approval ? '✓' : 'PENDING'}
+      {/* Active and Past Loans Table */}
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl">
+        <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4 border-b border-slate-800 pb-2">My Loan Ledger</h3>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead>
+              <tr className="text-slate-400 border-b border-slate-800">
+                <th className="pb-3 font-semibold">Product</th>
+                <th className="pb-3 font-semibold">Principal (KES)</th>
+                <th className="pb-3 font-semibold">Period</th>
+                <th className="pb-3 font-semibold">Balance Remaining (KES)</th>
+                <th className="pb-3 font-semibold">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/60">
+              {loans.map((loan) => (
+                <tr key={loan.id} className="hover:bg-slate-950/40">
+                  <td className="py-3 font-bold uppercase text-white">{loan.loan_product.replace('_', ' ')}</td>
+                  <td className="py-3 font-mono">KES {Number(loan.principal_amount).toLocaleString()}</td>
+                  <td className="py-3">{loan.repayment_period_months} Months</td>
+                  <td className="py-3 font-mono font-bold text-emerald-400">KES {Number(loan.balance_remaining || loan.principal_amount).toLocaleString()}</td>
+                  <td className="py-3">
+                    <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase ${
+                      loan.status === 'approved' ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' :
+                      loan.status === 'pending' ? 'bg-amber-950 text-amber-400 border border-amber-800' :
+                      'bg-slate-800 text-slate-300'
+                    }`}>
+                      {loan.status}
                     </span>
-                    <span
-                      className={`p-1 rounded-lg font-bold ${
-                        l.chairman_approval
-                          ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
-                          : 'bg-slate-950 text-slate-500'
-                      }`}
-                    >
-                      2. Chair: {l.chairman_approval ? '✓' : 'PENDING'}
-                    </span>
-                    <span
-                      className={`p-1 rounded-lg font-bold ${
-                        l.treasurer_approval
-                          ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
-                          : 'bg-slate-950 text-slate-500'
-                      }`}
-                    >
-                      3. Treas: {l.treasurer_approval ? '✓' : 'PENDING'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+                  </td>
+                </tr>
+              ))}
+              {loans.length === 0 && (
+                <tr>
+                  <td colSpan="5" className="text-center py-6 text-slate-500">No loan records found on your account.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

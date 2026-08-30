@@ -36,24 +36,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('overview');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Auth States must be declared here before any logic uses them
-  const [email, setEmail] = useState(() => localStorage.getItem('kewa_remembered_email') || '');
-  const [password, setPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [fullName, setFullName] = useState('');
-  const [memberNumber, setMemberNumber] = useState('');
-  const [idNumber, setIdNumber] = useState('');
-  const [phone, setPhone] = useState('');
-  const [companyId, setCompanyId] = useState('');
-  const [registrationPin, setRegistrationPin] = useState('1234');
-  const [securityQuestion, setSecurityQuestion] = useState("What is your mother's maiden name?");
-  const [securityAnswer, setSecurityAnswer] = useState('');
-  const [odpcConsent, setOdpcConsent] = useState(false);
-  const profilePhone = profile?.phone || '';
-  
-  // ... rest of your code follows down here
-
-  // Core Data State
+  // 1. Core Data State Declared FIRST (so derived properties can safely reference them)
   const [companies, setCompanies] = useState([]);
   const [profile, setProfile] = useState(null);
   const [savings, setSavings] = useState([]);
@@ -72,6 +55,32 @@ export default function App() {
   const [allPendingClaims, setAllPendingClaims] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
   const [message, setMessage] = useState({ text: '', type: '' });
+
+  // 2. Auth States
+  const [email, setEmail] = useState(() => localStorage.getItem('kewa_remembered_email') || '');
+  const [password, setPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [memberNumber, setMemberNumber] = useState('');
+  const [idNumber, setIdNumber] = useState('');
+  const [phone, setPhone] = useState('');
+  const [companyId, setCompanyId] = useState('');
+  const [registrationPin, setRegistrationPin] = useState('1234');
+  const [securityQuestion, setSecurityQuestion] = useState("What is your mother's maiden name?");
+  const [securityAnswer, setSecurityAnswer] = useState('');
+  const [odpcConsent, setOdpcConsent] = useState(false);
+
+  // 3. Derived Variables & Filters (Declared AFTER core state like `profile` and `allSystemGuarantors`)
+  const profilePhone = profile?.phone || '';
+  const pendingGuaranteesCount = guarantorRequests.filter((g) => g.status === 'pending').length;
+
+  const filteredGuarantorInspectionList = allSystemGuarantors.filter((g) => {
+    const term = (guarantorTrackerSearch || '').toLowerCase();
+    const gName = (g.profiles?.full_name || '').toLowerCase();
+    const bName = (g.loans?.profiles?.full_name || '').toLowerCase();
+    const mNum = (g.profiles?.member_number || '').toLowerCase();
+    return gName.includes(term) || bName.includes(term) || mNum.includes(term);
+  });
 
   // Profile Settings & PIN Modal State
   const [editFullName, setEditFullName] = useState('');
@@ -151,18 +160,6 @@ export default function App() {
   const [batchMonth, setBatchMonth] = useState('AUG-2026');
   const [newNoticeTitle, setNewNoticeTitle] = useState('');
   const [newNoticeContent, setNewNoticeContent] = useState('');
-
-  // Derived Variables & Filters
-  const pendingGuaranteesCount = guarantorRequests.filter((g) => g.status === 'pending').length;
-
-
-  const filteredGuarantorInspectionList = allSystemGuarantors.filter((g) => {
-    const term = (guarantorTrackerSearch || '').toLowerCase();
-    const gName = (g.profiles?.full_name || '').toLowerCase();
-    const bName = (g.loans?.profiles?.full_name || '').toLowerCase();
-    const mNum = (g.profiles?.member_number || '').toLowerCase();
-    return gName.includes(term) || bName.includes(term) || mNum.includes(term);
-  });
 
   const filteredMemberDirectory = allMembers.filter((m) => {
     const term = (memberDirectorySearch || '').toLowerCase();
@@ -1045,7 +1042,7 @@ export default function App() {
               />
             )}
 
-{activeTab === 'loans' && (
+            {activeTab === 'loans' && (
               <LoansTab
                 loanProduct={loanProduct}
                 onProductChange={handleLoanProductChange}
@@ -1234,7 +1231,7 @@ export default function App() {
                 newNoticeContent={newNoticeContent}
                 setNewNoticeContent={setNewNoticeContent}
                 onPublishNotice={handlePublishNotice}
-                auditLogs={auditLogs}
+cientAuditLogs={auditLogs}
                 loading={loading}
               />
             )}

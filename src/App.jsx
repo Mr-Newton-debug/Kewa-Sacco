@@ -453,13 +453,13 @@ export default function App() {
         .order('created_at', { ascending: false });
 
       if (requestsRaw) {
-        // Fetch all loans and profiles to map cleanly
         const { data: allLoansRaw } = await supabase.from('loans').select('*');
-        const { data: allProfilesRaw } = awaitwaanSupabaseProfilesSafely(); // helper or standard query
+        const { data: allProfilesRaw } = await supabase
+          .from('profiles')
+          .select('id, full_name, member_number, phone, company_id, companies(name)');
 
         const hydratedRequests = requestsRaw.map((req) => {
           const matchedLoan = (allLoansRaw || []).find((l) => l.id === req.loan_id) || {};
-          // Try finding borrower from allMembers if already loaded, or fall back to profiles table
           const matchedBorrower = (allMembers || []).find((m) => m.id === matchedLoan.member_id) || 
                                   (allProfilesRaw || []).find((p) => p.id === matchedLoan.member_id) || 
                                   { full_name: 'Cooperative Member', member_number: 'N/A', companies: { name: 'KEWA SACCO' } };

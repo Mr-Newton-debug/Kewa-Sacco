@@ -146,14 +146,18 @@ export default function AuthCard({
             />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1">Branch / Company</label>
+            <label className="block text-xs font-semibold text-slate-300 mb-1">Company / Branch</label>
             <select
-              value={companyId}
+              value={companyId || ''}
               onChange={(e) => setCompanyId(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white"
+              required
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
             >
-              {(companies || []).map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
+              <option value="" disabled>Select your company / branch</option>
+              {(companies || []).map((comp) => (
+                <option key={comp.id} value={comp.id}>
+                  {comp.name}
+                </option>
               ))}
             </select>
           </div>

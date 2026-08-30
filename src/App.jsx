@@ -219,14 +219,15 @@ function MainPortal() {
               </p>
             </div>
 
-            {activeTab === 'overview' && <OverviewTab profile={profile} session={session} />}
-            {activeTab === 'loans' && <LoansTab profile={profile} session={session} />}
-            {activeTab === 'guarantors' && <GuarantorsTab profile={profile} session={session} />}
-            {activeTab === 'documents' && <DocumentsTab profile={profile} session={session} />}
-            {activeTab === 'beneficiaries' && <ProfileWelfareTab profile={profile} session={session} />}
-            {activeTab === 'mpesa' && <MpesaTab profile={profile} session={session} />}
-            {activeTab === 'support' && <SupportTab profile={profile} session={session} />}
-            {activeTab === 'admin' && <LeadershipHubTab profile={profile} session={session} />}
+            {/* Render tabs with session and profile passed safely */}
+            <div className={activeTab === 'overview' ? 'block' : 'hidden'}><OverviewTab profile={profile} session={session} /></div>
+            <div className={activeTab === 'loans' ? 'block' : 'hidden'}><LoansTab profile={profile} session={session} /></div>
+            <div className={activeTab === 'guarantors' ? 'block' : 'hidden'}><GuarantorsTab profile={profile} session={session} /></div>
+            <div className={activeTab === 'documents' ? 'block' : 'hidden'}><DocumentsTab profile={profile} session={session} /></div>
+            <div className={activeTab === 'beneficiaries' ? 'block' : 'hidden'}><ProfileWelfareTab profile={profile} session={session} /></div>
+            <div className={activeTab === 'mpesa' ? 'block' : 'hidden'}><MpesaTab profile={profile} session={session} /></div>
+            <div className={activeTab === 'support' ? 'block' : 'hidden'}><SupportTab profile={profile} session={session} /></div>
+            <div className={activeTab === 'admin' ? 'block' : 'hidden'}><LeadershipHubTab profile={profile} session={session} /></div>
           </div>
         )}
       </main>

@@ -145,17 +145,17 @@ export default function AuthCard({
               className="w-full bg-slate-950 border border-amber-500/60 rounded-xl px-3.5 py-2 text-xs text-white font-mono text-center tracking-widest"
             />
           </div>
-          <div>
+          <div className="relative mb-3">
             <label className="block text-xs font-semibold text-slate-300 mb-1">Company / Branch</label>
             <select
               value={companyId || ''}
               onChange={(e) => setCompanyId(e.target.value)}
               required
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
             >
               <option value="" disabled>Select your company / branch</option>
               {(companies || []).map((comp) => (
-                <option key={comp.id} value={comp.id}>
+                <option key={comp.id} value={comp.id} className="bg-slate-900 text-white py-1">
                   {comp.name}
                 </option>
               ))}

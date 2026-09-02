@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { LifeBuoy, Send, Bot, User } from 'lucide-react';
 
-export default function SupportTab({ profile, session }) {
+export default function SupportTab({ profile }) {
   const [messages, setMessages] = useState([
     { sender: 'ai', text: `Hello ${profile?.full_name || 'Member'}, welcome to KEWA SACCO Support AI. How can I assist you with your shares, loans, or society policies today?` }
   ]);
@@ -47,7 +47,6 @@ export default function SupportTab({ profile, session }) {
           </div>
         </div>
 
-        {/* Chat Messages */}
         <div className="flex-1 overflow-y-auto space-y-3 pr-2">
           {messages.map((m, idx) => (
             <div key={idx} className={`flex gap-3 ${m.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -75,7 +74,6 @@ export default function SupportTab({ profile, session }) {
           )}
         </div>
 
-        {/* Input Form */}
         <form onSubmit={handleSend} className="mt-4 pt-4 border-t border-slate-800 flex gap-2">
           <input
             type="text"

@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../supabaseClient';
-import { Users, CheckCircle, XCircle, ShieldAlert } from 'lucide-react';
+import { supabase } from '../../supabaseClient';
+import { Users, CheckCircle, XCircle } from 'lucide-react';
 
 export default function GuarantorsTab({ profile, session }) {
   const [incomingRequests, setIncomingRequests] = useState([]);
-  const [myGuarantees, setMyGuarantees] = useState([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState({ text: '', type: '' });
 
@@ -19,7 +18,6 @@ export default function GuarantorsTab({ profile, session }) {
       setLoading(true);
       const userId = session.user.id;
 
-      // Fetch requests where current user is the guarantor
       const { data: incoming } = await supabase
         .from('loan_guarantors')
         .select('*, loans(loan_product, principal_amount, member_id, profiles(full_name, member_number))')

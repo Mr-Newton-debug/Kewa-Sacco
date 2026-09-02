@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../supabaseClient';
+import { supabase } from '../../supabaseClient';
 import { User, Shield, HeartHandshake, Phone, Mail, Building } from 'lucide-react';
 
 export default function ProfileWelfareTab({ profile, session }) {
@@ -40,7 +40,6 @@ export default function ProfileWelfareTab({ profile, session }) {
 
   return (
     <div className="space-y-6">
-      {/* Profile Card */}
       <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl">
         <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2 border-b border-slate-800 pb-2">
           <User className="w-4 h-4 text-emerald-400" /> Member Profile & Account Details
@@ -74,7 +73,6 @@ export default function ProfileWelfareTab({ profile, session }) {
         </div>
       </div>
 
-      {/* Beneficiaries & Welfare Summary */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl">
           <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4 flex items-center gap-2 border-b border-slate-800 pb-2">

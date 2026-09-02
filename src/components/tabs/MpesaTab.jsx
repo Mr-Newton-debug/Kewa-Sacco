@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { supabase } from '../supabaseClient';
-import { Smartphone, Send, CheckCircle, ShieldCheck } from 'lucide-react';
+import { supabase } from '../../supabaseClient';
+import { Smartphone, Send, ShieldCheck } from 'lucide-react';
 
 export default function MpesaTab({ profile, session }) {
   const [phone, setPhone] = useState(profile?.phone || '');
@@ -15,7 +15,6 @@ export default function MpesaTab({ profile, session }) {
     setMessage({ text: '', type: '' });
 
     try {
-      // Simulate M-Pesa STK push and record transaction ledger
       const refCode = `KEWA${Math.floor(100000 + Math.random() * 900000)}`;
 
       if (transactionType === 'savings') {

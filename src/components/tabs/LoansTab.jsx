@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../supabaseClient';
+import { supabase } from '../../supabaseClient';
 import { CreditCard, Calculator, FileText, CheckCircle2, AlertCircle } from 'lucide-react';
-import { calculateLoanBreakdown } from '../utils/calculations';
+import { calculateLoanBreakdown } from '../../utils/calculations';
 
 export default function LoansTab({ profile, session }) {
   const [loans, setLoans] = useState([]);
@@ -9,18 +9,13 @@ export default function LoansTab({ profile, session }) {
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState({ text: '', type: '' });
 
-  // Loan application form states
   const [loanProduct, setLoanProduct] = useState('main_loan');
   const [principal, setPrincipal] = useState('');
   const [periodMonths, setPeriodMonths] = useState('12');
-  const [guarantor1, setGuarantor1] = useState('');
-  const [guarantor2, setGuarantor2] = useState('');
-  const [membersList, setMembersList] = useState([]);
 
   useEffect(() => {
     if (session?.user?.id) {
       fetchLoans();
-      fetchEligibleGuarantors();
     }
   }, [session]);
 
@@ -39,15 +34,6 @@ export default function LoansTab({ profile, session }) {
     }
   };
 
-  const fetchEligibleGuarantors = async () => {
-    const { data } = await supabase
-      .from('profiles')
-      .select('id, full_name, member_number')
-      .neq('id', session.user.id);
-    if (data) setMembersList(data);
-  };
-
-  // Live calculation preview
   const interestRate = loanProduct === 'monthly_shylock' ? 5.0 : 1.0;
   const breakdown = calculateLoanBreakdown(principal, interestRate, Number(periodMonths), loanProduct);
 
@@ -85,9 +71,7 @@ export default function LoansTab({ profile, session }) {
 
   return (
     <div className="space-y-6">
-      {/* Loan Application & Calculator Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Form */}
         <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl">
           <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
             <CreditCard className="w-4 h-4 text-emerald-400" /> Apply for SACCO Loan Product
@@ -164,7 +148,6 @@ export default function LoansTab({ profile, session }) {
           </form>
         </div>
 
-        {/* Live Amortization Calculator Box */}
         <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl flex flex-col justify-between">
           <div>
             <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4 flex items-center gap-2 border-b border-slate-800 pb-2">
@@ -197,7 +180,6 @@ export default function LoansTab({ profile, session }) {
         </div>
       </div>
 
-      {/* Active and Past Loans Table */}
       <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl">
         <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4 border-b border-slate-800 pb-2">My Loan Ledger</h3>
         <div className="overflow-x-auto">

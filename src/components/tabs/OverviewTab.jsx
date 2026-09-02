@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../supabaseClient';
+import { supabase } from '../../supabaseClient';
 import { Wallet, ShieldCheck, TrendingUp, AlertCircle, Download } from 'lucide-react';
-import { generatePDFStatement } from '../utils/pdfGenerator';
+import { generatePDFStatement } from '../../utils/pdfGenerator';
 
 export default function OverviewTab({ profile, session }) {
   const [savings, setSavings] = useState([]);
@@ -67,7 +67,6 @@ export default function OverviewTab({ profile, session }) {
 
   return (
     <div className="space-y-6">
-      {/* Top Action Bar */}
       <div className="flex justify-between items-center bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-xl">
         <div>
           <h3 className="text-sm font-bold text-white">Financial Standing</h3>
@@ -81,7 +80,6 @@ export default function OverviewTab({ profile, session }) {
         </button>
       </div>
 
-      {/* Metrics Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-xl">
           <div className="flex items-center justify-between mb-3">
@@ -120,7 +118,6 @@ export default function OverviewTab({ profile, session }) {
         </div>
       </div>
 
-      {/* Official Society Notices */}
       <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl">
         <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4 border-b border-slate-800 pb-2">Official Society Notices & Announcements</h3>
         <div className="space-y-3">

@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../supabaseClient';
-import { ShieldAlert, CheckCircle, XCircle, TrendingUp, Users } from 'lucide-react';
-import { calculateNetSocietyLiquidity } from '../utils/calculations';
+import { supabase } from '../../supabaseClient';
+import { ShieldAlert, CheckCircle, XCircle } from 'lucide-react';
+import { calculateNetSocietyLiquidity } from '../../utils/calculations';
 
-export default function LeadershipHubTab({ profile, session }) {
+export default function LeadershipHubTab({ session }) {
   const [pendingLoans, setPendingLoans] = useState([]);
   const [allSavings, setAllSavings] = useState([]);
   const [allLoans, setAllLoans] = useState([]);
@@ -65,7 +65,6 @@ export default function LeadershipHubTab({ profile, session }) {
 
   return (
     <div className="space-y-6">
-      {/* Liquidity Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-xl">
           <span className="text-xs font-semibold text-slate-400">Total Society Shares Capital</span>
@@ -81,7 +80,6 @@ export default function LeadershipHubTab({ profile, session }) {
         </div>
       </div>
 
-      {/* Pending Loan Approvals */}
       <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl">
         <h3 className="text-sm font-bold text-white mb-2 flex items-center gap-2">
           <ShieldAlert className="w-4 h-4 text-amber-400" /> Pending Loan Approvals & Disbursement Queue

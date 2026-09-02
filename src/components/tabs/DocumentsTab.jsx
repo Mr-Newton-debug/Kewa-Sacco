@@ -1,7 +1,7 @@
 import React from 'react';
-import { FileText, Download, ShieldCheck, BookOpen } from 'lucide-react';
+import { Download, ShieldCheck, BookOpen } from 'lucide-react';
 
-export default function DocumentsTab({ profile, session }) {
+export default function DocumentsTab() {
   const documentsList = [
     {
       id: 1,
